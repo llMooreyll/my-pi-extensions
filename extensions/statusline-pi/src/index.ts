@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { execFileSync } from "node:child_process";
-import * as path from "node:path";
 import {
 	addAssistantMessageCost,
 	aggregateSessionCostFromContext,
@@ -233,12 +232,16 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 					const zone = getZone(usage.usedRatio, usage.contextWindow);
 					const cost = formatCostSection(theme, sessionCost, ctx);
 					const model = formatModelName(ctx, pi);
-					const dir = path.basename(ctx.cwd) || ctx.cwd;
+					const dir = ctx.cwd;
 					const branch = gitInfo.branch ?? footerData.getGitBranch?.() ?? "no-git";
 					const changed = gitInfo.changedFiles;
 					const separator = theme.fg("borderMuted", " │ ");
 
-					const statuslines = formatResponsiveStatusline(
+					const extensionStatuses = Array.from(footerData.getExtensionStatuses?.().values() ?? []).map((status) =>
+						truncateToWidth(status, width),
+					);
+
+					return formatResponsiveStatusline(
 						{
 							dir: theme.fg("mdLink", dir),
 							git: formatGitSection(theme, branch, changed, gitInfo.prNumber),
@@ -257,12 +260,9 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 						},
 						separator,
 						width,
-					);
-					const extensionStatuses = Array.from(footerData.getExtensionStatuses?.().values() ?? []).map((status) =>
-						truncateToWidth(status, width),
+						extensionStatuses,
 					);
 
-					return [...statuslines, ...extensionStatuses];
 				},
 			};
 		});
@@ -432,24 +432,50 @@ export interface StatuslineSegments {
 	model: string;
 }
 
-export function formatResponsiveStatusline(segments: StatuslineSegments, separator: string, width: number): string[] {
+export function formatResponsiveStatusline(
+	segments: StatuslineSegments,
+	separator: string,
+	width: number,
+	extensionStatuses: string[] = [],
+): string[] {
 	const safeWidth = Math.max(1, width);
-	const wideLine = [segments.dir, segments.git, segments.cost, segments.sys, segments.context, segments.speed, segments.model]
-		.filter(Boolean)
-		.join(separator);
-	if (visibleWidth(wideLine) <= safeWidth) return [wideLine];
+	const wideSegments = [segments.dir, segments.git, segments.cost, segments.sys, segments.context, segments.speed, segments.model]
+		.filter(Boolean);
+	const wideLine = wideSegments.join(separator);
+	if (visibleWidth(wideLine) <= safeWidth && extensionStatuses.length === 0) return [wideLine];
 
-	return [
-		...formatStatuslineGroup([segments.dir, segments.compactGit, segments.cost], separator, safeWidth),
-		...formatStatuslineGroup([segments.context, segments.sys, segments.speed, segments.model], separator, safeWidth),
-	];
+	const narrowSegments = [
+		segments.dir,
+		segments.compactGit,
+		segments.cost,
+		segments.sys,
+		segments.context,
+		segments.speed,
+		segments.model,
+		...extensionStatuses,
+	].filter(Boolean);
+	return wrapStatuslineSegments(narrowSegments, separator, safeWidth);
 }
 
-function formatStatuslineGroup(segments: string[], separator: string, width: number): string[] {
-	const line = segments.filter(Boolean).join(separator);
-	if (visibleWidth(line) <= width) return [line];
-	return segments.filter(Boolean).map((segment) => truncateToWidth(segment, width));
+function wrapStatuslineSegments(segments: string[], separator: string, width: number): string[] {
+	const lines: string[] = [];
+	let currentLine = "";
+
+	for (const segment of segments) {
+		const candidate = currentLine ? `${currentLine}${separator}${segment}` : segment;
+		if (visibleWidth(candidate) <= width) {
+			currentLine = candidate;
+			continue;
+		}
+
+		if (currentLine) lines.push(currentLine);
+		currentLine = truncateToWidth(segment, width);
+	}
+
+	if (currentLine) lines.push(currentLine);
+	return lines;
 }
+
 
 export function getNarrowBranchWidth(width: number): number {
 	return Math.max(MIN_NARROW_BRANCH_WIDTH, Math.floor(width * NARROW_BRANCH_WIDTH_RATIO));
@@ -501,14 +527,14 @@ function formatSpeedSection(theme: ExtensionContext["ui"]["theme"], speed: Respo
 }
 
 const ZONE_ICONS = {
-	Plan: "😄",
-	Code: "🙂",
-	Dump: "😐",
-	ExDump: "😟",
-	Dead: "😵",
+	Plan: "(^_^)",
+	Code: "(>_>)",
+	Dump: "(~_~)",
+	ExDump: "(!_!)",
+	Dead: "(x_x)",
 } as const;
 
-function getZoneIcon(zone: string): string {
+export function getZoneIcon(zone: string): string {
 	return ZONE_ICONS[zone as keyof typeof ZONE_ICONS] ?? "•";
 }
 

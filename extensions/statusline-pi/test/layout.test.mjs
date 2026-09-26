@@ -5,6 +5,7 @@ import {
 	formatGitSection,
 	formatResponsiveStatusline,
 	getNarrowBranchWidth,
+	getZoneIcon,
 	truncatePlainTextToWidth,
 } from "../dist/index.js";
 
@@ -19,6 +20,34 @@ function assertWidthSafe(lines, width) {
 }
 
 describe("responsive statusline layout", () => {
+	it("keeps the full working directory path in the directory segment", () => {
+		const path = "/home/moorey/Projects/Pi-extension-dev";
+		const lines = formatResponsiveStatusline(
+			{
+				dir: path,
+				git: "main [0]",
+				compactGit: "main [0]",
+				context: "(^_^) 840,037 (84.0%) Plan",
+				speed: "42.5 tps",
+				cost: "$0.12",
+				sys: "CPU 42% · MEM 68%",
+				model: "openai/gpt-5.5 [T]",
+			},
+			" │ ",
+			200,
+		);
+
+		assert.equal(lines.length, 1);
+		assert.ok(lines[0].includes(path));
+	});
+
+	it("uses fixed-width ASCII kaomoji for context zones", () => {
+		assert.deepEqual(
+			["Plan", "Code", "Dump", "ExDump", "Dead"].map(getZoneIcon),
+			["(^_^)", "(>_>)", "(~_~)", "(!_!)", "(x_x)"],
+		);
+	});
+
 	it("keeps the compact single-line layout when it fits", () => {
 		const separator = " │ ";
 		const segments = {
@@ -64,6 +93,29 @@ describe("responsive statusline layout", () => {
 		assert.ok(lines.some((line) => line.includes("87.5 tps")), "speed segment should remain visible");
 		assert.ok(lines.some((line) => line.includes("advisor:3")), "model segment should remain visible");
 		assert.ok(lines.some((line) => line.includes("[3]") && line.includes("PR #79")), "git metadata should remain visible");
+	});
+
+	it("packs as many segments as fit on each narrow line", () => {
+		const lines = formatResponsiveStatusline(
+			{
+				dir: "/work/project",
+				git: "main [2]",
+				compactGit: "main [2]",
+				context: "(^_^) 58,261 (45.5%) Code",
+				speed: "87.5 tps",
+				cost: "$0.04",
+				sys: "MEM 55%",
+				model: "advisor:3",
+			},
+			" │ ",
+			40,
+			["goal: active", "retry: 1"],
+		);
+
+		assertWidthSafe(lines, 40);
+		assert.ok(lines.some((line) => line.includes("/work/project") && line.includes("main [2]")));
+		assert.ok(lines.some((line) => line.includes("goal: active")));
+		assert.ok(lines.some((line) => line.includes("retry: 1")));
 	});
 
 	it("truncates plain long branch names without ANSI reset artifacts", () => {
