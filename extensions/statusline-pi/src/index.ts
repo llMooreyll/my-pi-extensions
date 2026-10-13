@@ -81,6 +81,8 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 	let lastGitRefresh = 0;
 	let lastPrRefresh = 0;
 	let lastPrBranch: string | undefined;
+	let githubRemoteCwd: string | undefined;
+	let githubRemote = false;
 	let renderRequested: (() => void) | undefined;
 	let responseSpeed: ResponseSpeedInfo | undefined;
 	let completedResponseSpeed = createEmptyResponseSpeedAggregate();
@@ -346,11 +348,20 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		if (!gitInfo.branch) return;
 
 		const now = Date.now();
-		const refreshInterval = gitInfo.prNumber ? PR_REFRESH_MS : GIT_REFRESH_MS;
+		// Back off once this branch has been checked, even when the result was "no PR".
+		// Keying the interval on prNumber alone retried the network call every 5s forever.
+		const refreshInterval = lastPrBranch === gitInfo.branch ? PR_REFRESH_MS : GIT_REFRESH_MS;
 		if (!force && lastPrBranch === gitInfo.branch && now - lastPrRefresh < refreshInterval) return;
 
 		lastPrBranch = gitInfo.branch;
 		lastPrRefresh = now;
+
+		// gh reaches the GitHub API; without a GitHub remote the call cannot succeed,
+		// so skip the round trip instead of paying for it on every refresh.
+		if (!hasGitHubRemote(cwd)) {
+			gitInfo.prNumber = undefined;
+			return;
+		}
 
 		try {
 			const output = execFileSync("gh", ["pr", "view", "--json", "number", "--jq", ".number"], {
@@ -364,6 +375,14 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		} catch {
 			gitInfo.prNumber = undefined;
 		}
+	}
+
+	function hasGitHubRemote(cwd: string): boolean {
+		if (githubRemoteCwd !== cwd) {
+			githubRemoteCwd = cwd;
+			githubRemote = /github\.com[:/]/.test(runGit(cwd, ["remote", "-v"]));
+		}
+		return githubRemote;
 	}
 }
 
