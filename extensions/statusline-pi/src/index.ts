@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import {
 	addAssistantMessageCost,
 	aggregateSessionCostFromContext,
@@ -83,6 +83,7 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 	let lastPrBranch: string | undefined;
 	let githubRemoteCwd: string | undefined;
 	let githubRemote = false;
+	let prLookupInFlight = false;
 	let renderRequested: (() => void) | undefined;
 	let responseSpeed: ResponseSpeedInfo | undefined;
 	let completedResponseSpeed = createEmptyResponseSpeedAggregate();
@@ -363,18 +364,25 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		try {
-			const output = execFileSync("gh", ["pr", "view", "--json", "number", "--jq", ".number"], {
-				cwd,
-				encoding: "utf8",
-				stdio: ["ignore", "pipe", "ignore"],
-				timeout: 3_000,
-			}).trim();
-			const number = Number(output);
-			gitInfo.prNumber = Number.isFinite(number) && number > 0 ? number : undefined;
-		} catch {
-			gitInfo.prNumber = undefined;
-		}
+		if (prLookupInFlight) return;
+		prLookupInFlight = true;
+		const branch = gitInfo.branch;
+
+		// execFile, not execFileSync: this lookup talks to the GitHub API and would
+		// otherwise block the event loop for about a second on every refresh.
+		execFile("gh", ["pr", "view", "--json", "number", "--jq", ".number"], {
+			cwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: 3_000,
+		}, (error, stdout) => {
+			prLookupInFlight = false;
+			// Drop a result for a branch that is no longer checked out.
+			if (gitInfo.branch !== branch) return;
+			const number = Number(String(stdout).trim());
+			gitInfo.prNumber = !error && Number.isFinite(number) && number > 0 ? number : undefined;
+			requestRender();
+		});
 	}
 
 	function hasGitHubRemote(cwd: string): boolean {
