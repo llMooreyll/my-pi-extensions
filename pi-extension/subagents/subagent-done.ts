@@ -176,26 +176,42 @@ export default function (pi: ExtensionAPI) {
     const shouldExit = autoExit && shouldAutoExitOnAgentEnd(userTookOver, messages);
 
     if (shouldExit) {
-      // Surface stopReason: "error" turns (auto-retry exhausted, provider
-      // overload, etc.) to the parent via the .exit sidecar so the watcher
-      // can report a clear failure with the underlying error message.
-      // Without this the parent would only see exit code 0 and a stale
-      // assistant message, mistaking the crash for a successful completion.
+      // Write the .exit sidecar on EVERY auto-exit, not just on error.
+      //
+      // The watcher polls the terminal for the `__SUBAGENT_DONE_<code>__`
+      // sentinel, but the pane is destroyed the moment this process exits
+      // (tmux `remain-on-exit off`). A normal completion therefore races the
+      // 1s screen poll and frequently loses, which left the entry stuck in
+      // `runningSubagents` — the parent showed "still running" indefinitely
+      // and only got a bogus "Subagent cancelled" once some unrelated abort
+      // (session shutdown / module reload) finally fired.
+      //
+      // The sidecar is checked before the screen on every poll tick, so
+      // writing it here makes completion detection independent of how long
+      // the pane survives.
+      //
+      // stopReason: "error" (auto-retry exhausted, provider overload, etc.)
+      // is still surfaced with its message so the parent reports a clear
+      // failure instead of mistaking the crash for a successful completion.
       const errorInfo = findLatestAssistantError(messages);
       const sessionFile = process.env.PI_SUBAGENT_SESSION;
-      if (errorInfo && sessionFile) {
+      if (sessionFile) {
         try {
           writeFileSync(
             `${sessionFile}.exit`,
-            JSON.stringify({
-              type: "error",
-              errorMessage: errorInfo.errorMessage,
-              stopReason: errorInfo.stopReason,
-            }),
+            JSON.stringify(
+              errorInfo
+                ? {
+                    type: "error",
+                    errorMessage: errorInfo.errorMessage,
+                    stopReason: errorInfo.stopReason,
+                  }
+                : { type: "done" },
+            ),
           );
         } catch {
-          // Best effort — even without the sidecar, watcher's session-file
-          // fallback can still recover the errorMessage.
+          // Best effort — the watcher can still fall back to the terminal
+          // sentinel and to the session-file summary.
         }
       }
 
