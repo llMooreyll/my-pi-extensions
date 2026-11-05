@@ -925,6 +925,22 @@ function startWidgetRefresh() {
 }
 
 /**
+ * Session display name for a spawned subagent.
+ *
+ * The `<subagent:...>` prefix makes subagent sessions identifiable in the
+ * `/resume` selector. Without a name pi falls back to the first user message,
+ * which for artifact-delivered tasks is an unreadable `<file name="...">` block.
+ *
+ * This only survives if pi-auto-name is configured with
+ * `replaceExistingName: "never"` — with `"always"` it overwrites the name on
+ * the first input, because the subagent inherits the parent's extension set.
+ */
+function subagentSessionLabel(name: string): string {
+  const trimmed = name.trim() || "subagent";
+  return `<subagent:${trimmed}>`;
+}
+
+/**
  * Launch a subagent: creates the multiplexer pane, builds the command, and
  * sends it. Returns a RunningSubagent — does NOT poll.
  *
@@ -1084,6 +1100,7 @@ async function launchSubagent(
   // Build pi command
   const parts: string[] = ["pi"];
   parts.push("--session", shellEscape(subagentSessionFile));
+  parts.push("--name", shellEscape(subagentSessionLabel(params.name)));
 
   const subagentDonePath = join(SUBAGENTS_DIR, "subagent-done.ts");
   parts.push("-e", shellEscape(subagentDonePath));
