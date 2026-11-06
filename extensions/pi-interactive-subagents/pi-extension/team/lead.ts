@@ -30,6 +30,7 @@ import { pidAlive, randomHex, readJson, truncate, writeJsonAtomic } from "./fsut
 import {
   addWorktree,
   branchExists,
+  countCommits,
   createSnapshot,
   deleteBranch,
   getRepoInfo,
@@ -47,6 +48,7 @@ import {
 } from "./git.ts";
 import {
   deliveredIdsFromEntries,
+  countPending,
   ensureMaildir,
   listPending,
   markDelivered,
@@ -70,12 +72,23 @@ import {
   worktreesRoot,
 } from "./paths.ts";
 import { LEAD_TOOL_GUIDELINES, memberSystemAppendix } from "./prompts.ts";
+import {
+  describeName,
+  describeSend,
+  describeSpawn,
+  failResult,
+  okResult,
+  registerTeamRenderers,
+  teamToolRenderers,
+} from "./render.ts";
+import { renderTeamBanner, type RowState, type TeamRow } from "./ui.ts";
 import type {
   MemberEnd,
   MemberRecord,
   MemberStatus,
   Roster,
   RunInfo,
+  TeamItem,
   TeamMessage,
   WorktreeSidecar,
 } from "./types.ts";
@@ -93,10 +106,6 @@ export interface TeamLeadDeps {
 const MEMBER_ENTRY = join(dirname(fileURLToPath(import.meta.url)), "member.ts");
 
 type CleanupResult = "none" | "removed" | "kept-dirty" | "kept-unintegrated";
-
-function textResult(text: string) {
-  return { content: [{ type: "text" as const, text }], details: {} };
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -172,6 +181,11 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let monitorTimer: ReturnType<typeof setInterval> | null = null;
   const stopDeadlines = new Map<string, number>();
+  // Commits not yet integrated per write member; refreshed by the monitor, read by the banner.
+  const aheadCache = new Map<string, number>();
+  let monitorPass = 0;
+
+  registerTeamRenderers(pi);
 
   // ── helpers ──
 
@@ -195,26 +209,58 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
 
   function notify(text: string, wake: boolean): void {
     pi.sendMessage(
-      { customType: TEAM_NOTICE_TYPE, content: `[team] ${text}`, display: true },
+      {
+        customType: TEAM_NOTICE_TYPE,
+        content: `[team] ${text}`,
+        display: true,
+        details: { level: wake ? "warn" : "info" },
+      },
       { triggerTurn: wake, deliverAs: "steer" },
     );
+  }
+
+  function teamRows(): TeamRow[] {
+    return liveMembers().map((m) => {
+      const status = readStatus(m);
+      return {
+        name: m.name,
+        agent: m.agent,
+        write: m.write,
+        state: (status?.state ?? "starting") as RowState,
+        spawnedAt: m.spawnedAt,
+        model: status?.model,
+        pending: runDir ? countPending(memberInbox(runDir, m.instanceId)) : 0,
+        ahead: aheadCache.get(m.instanceId) ?? 0,
+        error: status?.lastError,
+      };
+    });
   }
 
   function updateWidget(): void {
     if (!ctxRef?.hasUI) return;
     try {
-      const live = liveMembers();
-      if (live.length === 0) {
+      const rows = teamRows();
+      if (rows.length === 0) {
         ctxRef.ui.setWidget("team-status", undefined);
         return;
       }
-      const lines = live.map(
-        (m) =>
-          `${m.name}  ${readStatus(m)?.state ?? "starting"}  ${m.agent}${m.branch ? `  ${m.branch}` : ""}`,
+      ctxRef.ui.setWidget(
+        "team-status",
+        (_tui: any, theme: any) => ({
+          invalidate() {},
+          render: (width: number) => renderTeamBanner(rows, width, theme),
+        }),
+        { placement: "aboveEditor" },
       );
-      ctxRef.ui.setWidget("team-status", ["Team", ...lines], { placement: "belowEditor" });
     } catch {
-      // The widget is cosmetic.
+      // The banner is cosmetic.
+    }
+  }
+
+  function refreshAheadCounts(): void {
+    for (const m of liveMembers()) {
+      if (!m.write || !m.repoTop || !m.branch) continue;
+      aheadCache.set(m.instanceId, countCommits(m.repoTop, m.lastIntegrated ?? m.base ?? m.branch, m.branch));
     }
   }
 
@@ -245,8 +291,10 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
     startTimers();
   }
 
-  function formatForLead(m: TeamMessage): string {
+  /** Text for the model plus the structured item the transcript renderer shows. */
+  function formatForLead(m: TeamMessage): { text: string; item: TeamItem } {
     let text: string;
+    let body = m.body;
     let spillPath = m.spillPath;
     if (m.kind === "report") {
       // Reports reach the lead as a short summary; the full text stays on disk.
@@ -255,11 +303,9 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
         spillPath = join(spillDir(runDir), `${m.id}.md`);
         writeFileSync(spillPath, m.body, "utf8");
       }
-      text = `[team] ${m.from} reports ${m.reportStatus ?? "done"}:\n${truncate(m.body, LEAD_SUMMARY_LIMIT)}`;
-      if (spillPath) text += `\n(full text: ${spillPath})`;
-      return text;
-    }
-    if (m.kind === "question") {
+      body = truncate(m.body, LEAD_SUMMARY_LIMIT);
+      text = `[team] ${m.from} reports ${m.reportStatus ?? "done"}:\n${body}`;
+    } else if (m.kind === "question") {
       text = `[team] ${m.from} asks:\n${m.body}\nAnswer with team_send({ to: "${m.from}", message: ... }).`;
     } else if (m.kind === "cc") {
       text = `[team cc] ${m.body}`;
@@ -267,7 +313,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
       text = `[team] message from ${m.from}:\n${m.body}`;
     }
     if (spillPath) text += `\n(full text: ${spillPath})`;
-    return text;
+    return { text, item: { from: m.from, kind: m.kind, status: m.reportStatus, body, spillPath } };
   }
 
   function pollLeadInbox(): void {
@@ -277,9 +323,14 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
       const pending = listPending(inbox).filter((m) => !delivered.has(m.id));
       if (pending.length === 0) return;
       const wake = pending.some((m) => m.kind !== "cc");
-      const content = pending.map(formatForLead).join("\n\n---\n\n");
+      const formatted = pending.map(formatForLead);
       pi.sendMessage(
-        { customType: TEAM_MESSAGE_TYPE, content, display: true, details: { ids: pending.map((m) => m.id) } },
+        {
+          customType: TEAM_MESSAGE_TYPE,
+          content: formatted.map((f) => f.text).join("\n\n---\n\n"),
+          display: true,
+          details: { ids: pending.map((m) => m.id), items: formatted.map((f) => f.item) },
+        },
         { triggerTurn: wake, deliverAs: "steer" },
       );
       for (const m of pending) delivered.add(m.id);
@@ -295,6 +346,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
     m.ended = end;
     saveRoster();
     stopDeadlines.delete(m.instanceId);
+    aheadCache.delete(m.instanceId);
     // After "left" the user is working in that pane; leave it open.
     if (m.surface && end !== "left") {
       try {
@@ -311,6 +363,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
   function monitorMembers(): void {
     try {
       if (!runDir) return;
+      if (monitorPass++ % 3 === 0) refreshAheadCounts();
       for (const m of liveMembers()) {
         const status = readStatus(m);
         if (!status) {
@@ -444,6 +497,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
 
   pi.registerTool({
     name: "team_spawn",
+    ...teamToolRenderers("team_spawn", { describe: describeSpawn, preview: (a) => (typeof a.task === "string" ? a.task : undefined) }),
     label: "Team Spawn",
     description:
       "Spawn a long-lived team member in its own terminal pane. Returns immediately; the member's reports and questions arrive automatically as team messages, so do not poll or sleep. " +
@@ -484,22 +538,22 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
       const name = params.name.trim();
       const write = params.write === true;
 
-      if (!isMuxAvailable()) return textResult(muxSetupHint());
-      if (!ctx.sessionManager.getSessionFile()) return textResult("Team mode needs a persistent session.");
+      if (!isMuxAvailable()) return failResult(muxSetupHint());
+      if (!ctx.sessionManager.getSessionFile()) return failResult("Team mode needs a persistent session.");
       if (!MEMBER_NAME_RE.test(name) || name === "lead") {
-        return textResult(`Invalid member name "${name}": use lowercase letters, digits and dashes, starting with a letter.`);
+        return failResult(`Invalid member name "${name}": use lowercase letters, digits and dashes, starting with a letter.`);
       }
-      if (findMember(name, false)) return textResult(`A live member named "${name}" already exists.`);
+      if (findMember(name, false)) return failResult(`A live member named "${name}" already exists.`);
       if (liveMembers().length >= MAX_LIVE_MEMBERS) {
-        return textResult(`Team already has ${MAX_LIVE_MEMBERS} live members; stop one first.`);
+        return failResult(`Team already has ${MAX_LIVE_MEMBERS} live members; stop one first.`);
       }
       if (!write && params.link && params.link.length > 0) {
-        return textResult("link is only supported together with write: true.");
+        return failResult("link is only supported together with write: true.");
       }
 
       const defs = deps.loadAgentDefaults(params.agent);
-      if (!defs) return textResult(`Unknown agent "${params.agent}".`);
-      if (defs.cli === "claude") return textResult("Claude Code agents cannot be team members.");
+      if (!defs) return failResult(`Unknown agent "${params.agent}".`);
+      if (defs.cli === "claude") return failResult("Claude Code agents cannot be team members.");
 
       const denied = new Set<string>(
         String(defs.denyTools ?? "")
@@ -512,13 +566,13 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
         .map((s) => s.trim())
         .filter((s) => s && !denied.has(s));
       if (!write && requested.some((t) => t === "edit" || t === "write")) {
-        return textResult(`Agent "${params.agent}" has write tools; spawn it with write: true.`);
+        return failResult(`Agent "${params.agent}" has write tools; spawn it with write: true.`);
       }
       const allowlist = requested.length > 0 ? [...new Set([...requested, ...MEMBER_TOOL_NAMES])].join(",") : null;
 
       const chain = deps.resolveModelChain(params.model ?? defs.model, ctx.modelRegistry);
       if (!chain.primary && chain.unavailable.length > 0) {
-        return textResult(
+        return failResult(
           `None of the configured models is usable: ${chain.unavailable.join(", ")}. ` +
             `Ask the user which model to use; do not pick a model yourself.`,
         );
@@ -527,15 +581,15 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
       let repo = null as ReturnType<typeof getRepoInfo>;
       if (write) {
         repo = getRepoInfo(ctx.cwd);
-        if (!repo) return textResult("The working directory is not inside a git repository; write members need git.");
+        if (!repo) return failResult("The working directory is not inside a git repository; write members need git.");
         const busy = repoBusyReason(repo.top);
-        if (busy) return textResult(`Cannot spawn a write member: ${busy}.`);
+        if (busy) return failResult(`Cannot spawn a write member: ${busy}.`);
       }
 
       try {
         ensureRun(ctx);
       } catch (err) {
-        return textResult(`Could not create the team run: ${(err as Error).message}`);
+        return failResult(`Could not create the team run: ${(err as Error).message}`);
       }
       const currentRun = run!;
       const currentRunDir = runDir!;
@@ -547,7 +601,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
         try {
           base = createSnapshot(repo!.top, `pi-team snapshot ${currentRun.runId} ${name}`);
         } catch (err) {
-          return textResult(`Could not snapshot the working tree: ${(err as Error).message}`);
+          return failResult(`Could not snapshot the working tree: ${(err as Error).message}`);
         }
       }
 
@@ -631,10 +685,12 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
           `PI_TEAM_RUN_DIR=${shellEscape(currentRunDir)}`,
           `PI_TEAM_MEMBER_ID=${shellEscape(instanceId)}`,
           `PI_TEAM_MEMBER_NAME=${shellEscape(name)}`,
+          `PI_TEAM_AGENT=${shellEscape(params.agent)}`,
           `PI_TEAM_LEAD_PID=${process.pid}`,
           `PI_TEAM_SESSION_FILE=${shellEscape(sessionFile)}`,
           `PI_TEAM_WRITE=${write ? 1 : 0}`,
           `PI_TEAM_WORKTREE=${shellEscape(worktree ?? "")}`,
+          `PI_TEAM_BRANCH=${shellEscape(branch ?? "")}`,
           `PI_DENY_TOOLS=${shellEscape([DENIED_FOR_MEMBERS, ...denied].join(","))}`,
         ];
         if (chain.fallbacks.length > 0) {
@@ -671,7 +727,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
         }
         cleanupMemberWorktree(record);
         updateWidget();
-        return textResult(`Spawn failed: ${(err as Error).message}`);
+        return failResult(`Spawn failed: ${(err as Error).message}`);
       }
 
       const lines = [
@@ -680,12 +736,13 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
       ];
       if (write) lines.push(`Worktree: ${worktree}`, `Branch: ${branch}`);
       for (const w of warnings) lines.push(`Warning: ${w}`);
-      return textResult(lines.join("\n"));
+      return okResult(lines.join("\n"));
     },
   });
 
   pi.registerTool({
     name: "team_send",
+    ...teamToolRenderers("team_send", { describe: describeSend, preview: (a) => (typeof a.message === "string" ? a.message : undefined) }),
     label: "Team Send",
     description: "Send a message to a live team member. Its reply arrives automatically as a team message.",
     promptSnippet: "Send a message to a live team member.",
@@ -698,9 +755,9 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
       ctxRef = ctx;
       const to = params.to.trim();
       const m = findMember(to, false);
-      if (!m || !runDir) return textResult(`No live team member named "${to}".`);
+      if (!m || !runDir) return failResult(`No live team member named "${to}".`);
       const state = readStatus(m)?.state;
-      if (state === "stopped" || state === "left") return textResult(`Member "${to}" is no longer running.`);
+      if (state === "stopped" || state === "left") return failResult(`Member "${to}" is no longer running.`);
       try {
         const id = newMessageId();
         const prepared = prepareBody(spillDir(runDir), id, params.message);
@@ -715,20 +772,21 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
           urgent: params.urgent,
         });
       } catch (err) {
-        return textResult(`Could not send the message: ${(err as Error).message}`);
+        return failResult(`Could not send the message: ${(err as Error).message}`);
       }
-      return textResult(`Sent to ${to}. Its reply arrives automatically.`);
+      return okResult(`Sent to ${to}. Its reply arrives automatically.`);
     },
   });
 
   pi.registerTool({
     name: "team_list",
+    ...teamToolRenderers("team_list", { describe: () => "" }),
     label: "Team List",
     description: "List team members with their state, agent, branch and last update.",
     promptSnippet: "List team members and their state.",
     parameters: Type.Object({}),
     async execute() {
-      if (!roster || roster.members.length === 0) return textResult("No team members.");
+      if (!roster || roster.members.length === 0) return okResult("No team members.");
       const lines = roster.members.map((m) => {
         const status = readStatus(m);
         const state = m.ended ?? status?.state ?? "starting";
@@ -737,49 +795,52 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
         if (status?.lastError) line += ` | error: ${status.lastError}`;
         return line;
       });
-      return textResult(lines.join("\n"));
+      return okResult(lines.join("\n"));
     },
   });
 
   pi.registerTool({
     name: "team_interrupt",
+    ...teamToolRenderers("team_interrupt", { describe: describeName }),
     label: "Team Interrupt",
     description: "Abort a member's current turn (like pressing Escape in its pane). The member stays alive.",
     promptSnippet: "Abort a team member's current turn.",
     parameters: Type.Object({ name: Type.String() }),
     async execute(_id, params) {
       const m = findMember(params.name.trim(), false);
-      if (!m || !runDir) return textResult(`No live team member named "${params.name}".`);
+      if (!m || !runDir) return failResult(`No live team member named "${params.name}".`);
       try {
         writeControl(memberControl(runDir, m.instanceId), "interrupt");
       } catch (err) {
-        return textResult(`Could not interrupt: ${(err as Error).message}`);
+        return failResult(`Could not interrupt: ${(err as Error).message}`);
       }
-      return textResult(`Interrupt requested for ${m.name}.`);
+      return okResult(`Interrupt requested for ${m.name}.`);
     },
   });
 
   pi.registerTool({
     name: "team_stop",
+    ...teamToolRenderers("team_stop", { describe: describeName }),
     label: "Team Stop",
     description: "Stop a team member after its current step. Its pane closes; a write member's worktree is removed only when nothing would be lost.",
     promptSnippet: "Stop a team member.",
     parameters: Type.Object({ name: Type.String() }),
     async execute(_id, params) {
       const m = findMember(params.name.trim(), false);
-      if (!m || !runDir) return textResult(`No live team member named "${params.name}".`);
+      if (!m || !runDir) return failResult(`No live team member named "${params.name}".`);
       try {
         writeControl(memberControl(runDir, m.instanceId), "stop");
       } catch (err) {
-        return textResult(`Could not stop: ${(err as Error).message}`);
+        return failResult(`Could not stop: ${(err as Error).message}`);
       }
       stopDeadlines.set(m.instanceId, Date.now() + STOP_TIMEOUT_MS);
-      return textResult(`Stop requested for ${m.name}; it exits after its current step.`);
+      return okResult(`Stop requested for ${m.name}; it exits after its current step.`);
     },
   });
 
   pi.registerTool({
     name: "team_integrate",
+    ...teamToolRenderers("team_integrate", { describe: describeName }),
     label: "Team Integrate",
     description:
       "Apply a write member's committed changes to the main working tree (unstaged). Conflicts leave the tree untouched.",
@@ -788,7 +849,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
     async execute(_id, params) {
       const name = params.name.trim();
       const m = findMember(name, true);
-      if (!m || !m.write || !m.repoTop || !m.branch) return textResult(`${name} is not a write member.`);
+      if (!m || !m.write || !m.repoTop || !m.branch) return failResult(`${name} is not a write member.`);
       try {
         const dirty = !!m.worktree && existsSync(m.worktree) && !isWorktreeClean(m.worktree, m.links);
         const result = integrateBranch(m.repoTop, m.lastIntegrated ?? m.base!, m.branch);
@@ -813,16 +874,17 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
           const kept = keptWorktreeNote(m, cleanup);
           text += cleanup === "removed" ? `\nWorktree of ${name} removed.` : kept ? `\n${kept}` : "";
         }
-        return textResult(text);
+        return result.status === "conflict" ? failResult(text) : okResult(text);
       } catch (err) {
-        if (err instanceof GitError) return textResult(`git error: ${err.message}`);
-        return textResult(`Integration failed: ${(err as Error).message}`);
+        if (err instanceof GitError) return failResult(`git error: ${err.message}`);
+        return failResult(`Integration failed: ${(err as Error).message}`);
       }
     },
   });
 
   pi.registerTool({
     name: "team_sync",
+    ...teamToolRenderers("team_sync", { describe: describeName }),
     label: "Team Sync",
     description:
       "Reset an idle, fully integrated write member's worktree to the current main working tree, so it sees changes integrated from other members.",
@@ -832,15 +894,15 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
       const name = params.name.trim();
       const m = findMember(name, false);
       if (!m || !m.write || !m.worktree || !m.repoTop || !m.branch || !run || !runDir) {
-        return textResult(`${name} must be an idle write member.`);
+        return failResult(`${name} must be an idle write member.`);
       }
-      if (readStatus(m)?.state !== "idle") return textResult(`${name} must be an idle write member.`);
+      if (readStatus(m)?.state !== "idle") return failResult(`${name} must be an idle write member.`);
       try {
         if (!isWorktreeClean(m.worktree, m.links)) {
-          return textResult(`${name} has uncommitted changes; ask it to commit first.`);
+          return failResult(`${name} has uncommitted changes; ask it to commit first.`);
         }
         if (revParse(m.branch, m.repoTop) !== (m.lastIntegrated ?? m.base)) {
-          return textResult(`${name} has commits not yet integrated; run team_integrate first.`);
+          return failResult(`${name} has commits not yet integrated; run team_integrate first.`);
         }
         const snapshot = createSnapshot(m.repoTop, `pi-team sync ${run.runId} ${m.name}`);
         resetWorktree(m.worktree, snapshot);
@@ -856,10 +918,10 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
           kind: "message",
           body: `Your worktree was reset to the lead's current working tree (commit ${snapshot.slice(0, 12)}). Continue from there.`,
         });
-        return textResult(`Synced ${name} to the current working tree.`);
+        return okResult(`Synced ${name} to the current working tree.`);
       } catch (err) {
-        if (err instanceof GitError) return textResult(`git error: ${err.message}`);
-        return textResult(`Sync failed: ${(err as Error).message}`);
+        if (err instanceof GitError) return failResult(`git error: ${err.message}`);
+        return failResult(`Sync failed: ${(err as Error).message}`);
       }
     },
   });

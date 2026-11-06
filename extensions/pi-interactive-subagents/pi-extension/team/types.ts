@@ -74,3 +74,12 @@ export interface WorktreeSidecar {
   runDir: string;
   instanceId: string;
 }
+
+/** One message of a batch as shown in the transcript (stored in `details.items`). */
+export interface TeamItem {
+  from: string;
+  kind: MessageKind;
+  status?: ReportStatus;
+  body: string;
+  spillPath?: string;
+}

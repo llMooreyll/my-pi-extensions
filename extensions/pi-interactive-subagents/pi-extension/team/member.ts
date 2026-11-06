@@ -21,11 +21,9 @@ import {
   writeMessage,
 } from "./mailbox.ts";
 import { leadInbox, memberControl, memberInbox, memberStatusFile, rosterFile, spillDir } from "./paths.ts";
-import type { MemberState, MemberStatus, MessageKind, ReportStatus, Roster, TeamMessage } from "./types.ts";
-
-function textResult(text: string) {
-  return { content: [{ type: "text" as const, text }], details: {} };
-}
+import { describeSend, failResult, okResult, registerTeamRenderers, teamToolRenderers } from "./render.ts";
+import { renderMemberBanner, type RowState } from "./ui.ts";
+import type { MemberState, MemberStatus, MessageKind, ReportStatus, Roster, TeamItem, TeamMessage } from "./types.ts";
 
 export default function teamMember(pi: ExtensionAPI) {
   const instanceId = process.env.PI_TEAM_MEMBER_ID;
@@ -38,6 +36,9 @@ export default function teamMember(pi: ExtensionAPI) {
   const inbox = memberInbox(runDir, instanceId);
   const control = memberControl(runDir, instanceId);
   const statusPath = memberStatusFile(runDir, instanceId);
+  const agentName = process.env.PI_TEAM_AGENT ?? "";
+  const isWrite = process.env.PI_TEAM_WRITE === "1";
+  const branch = process.env.PI_TEAM_BRANCH || undefined;
 
   let ctxRef: ExtensionContext | null = null;
   let active = false;
@@ -53,8 +54,14 @@ export default function teamMember(pi: ExtensionAPI) {
   const failedModels: string[] = [];
   let timer: ReturnType<typeof setInterval> | null = null;
   let firstTick: ReturnType<typeof setTimeout> | null = null;
+  let pendingCount = 0;
+  let leadOnline = true;
+  let lastError: string | undefined;
+  let bannerSignature = "";
 
-  function setState(next: MemberState, lastError?: string): void {
+  registerTeamRenderers(pi);
+
+  function setState(next: MemberState, lastErrorText?: string): void {
     state = next;
     const model = (ctxRef as any)?.model;
     const status: MemberStatus = {
@@ -64,12 +71,47 @@ export default function teamMember(pi: ExtensionAPI) {
       state,
       model: model ? `${model.provider}/${model.id}` : undefined,
       updatedAt: Date.now(),
-      lastError,
+      lastError: lastErrorText,
     };
     try {
       writeJsonAtomic(statusPath, status);
     } catch {
       // The lead notices a stale or missing status through its own timeout.
+    }
+    lastError = lastErrorText;
+    refreshBanner();
+  }
+
+  /** Identity banner above this member's editor; redrawn only when its content changes. */
+  function refreshBanner(): void {
+    const ctx = ctxRef;
+    if (!ctx?.hasUI || !active) return;
+    const model = (ctx as any).model;
+    const info = {
+      name,
+      agent: agentName || "agent",
+      write: isWrite,
+      branch,
+      state: state as RowState,
+      model: model ? `${model.provider}/${model.id}` : undefined,
+      pending: pendingCount,
+      leadAlive: leadOnline,
+      error: lastError,
+    };
+    const signature = JSON.stringify(info);
+    if (signature === bannerSignature) return;
+    bannerSignature = signature;
+    try {
+      ctx.ui.setWidget(
+        "team-member",
+        (_tui: any, theme: any) => ({
+          invalidate() {},
+          render: (width: number) => renderMemberBanner(info, width, theme),
+        }),
+        { placement: "aboveEditor" },
+      );
+    } catch {
+      // The banner is cosmetic.
     }
   }
 
@@ -127,7 +169,9 @@ export default function teamMember(pi: ExtensionAPI) {
       if (!active || !ctxRef) return;
       const ctx = ctxRef;
 
-      if (!leadAlive()) {
+      leadOnline = leadAlive();
+      if (!leadOnline) {
+        refreshBanner();
         ctx.abort();
         ctx.shutdown();
         return;
@@ -155,7 +199,11 @@ export default function teamMember(pi: ExtensionAPI) {
       let pending = listPending(inbox).filter((m) => !delivered.has(m.id));
       // A failed member only takes direction from the lead.
       if (state === "failed") pending = pending.filter((m) => m.from === "lead");
-      if (pending.length === 0) return;
+      pendingCount = pending.length;
+      if (pending.length === 0) {
+        refreshBanner();
+        return;
+      }
 
       const urgent = pending.some((m) => m.urgent);
       const message = {
@@ -165,13 +213,19 @@ export default function teamMember(pi: ExtensionAPI) {
         details: {
           ids: pending.map((m) => m.id),
           messages: pending.map((m) => ({ id: m.id, from: m.from, hop: m.hop })),
+          items: pending.map(
+            (m): TeamItem => ({ from: m.from, kind: m.kind, status: m.reportStatus, body: m.body, spillPath: m.spillPath }),
+          ),
         },
       };
       if (ctx.isIdle()) pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
       else pi.sendMessage(message, { triggerTurn: true, deliverAs: urgent ? "steer" : "followUp" });
       for (const m of pending) delivered.add(m.id);
+      pendingCount = 0;
       if (pending.some((m) => m.from === "lead") && (state === "failed" || state === "awaiting_lead")) {
         setState("working");
+      } else {
+        refreshBanner();
       }
     } catch {
       // One failed tick must not stop the poll loop.
@@ -183,6 +237,9 @@ export default function teamMember(pi: ExtensionAPI) {
     if (ctx.sessionManager.getSessionFile() !== expectedSessionFile) {
       // The user replaced the session in this pane; it is no longer the member.
       active = false;
+      try {
+        ctx.ui.setWidget("team-member", undefined);
+      } catch {}
       setState("left");
       return;
     }
@@ -306,6 +363,10 @@ export default function teamMember(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "team_report",
+    ...teamToolRenderers("team_report", {
+      describe: (a, theme) => (a.status ? theme.fg(a.status === "blocked" ? "warning" : "accent", String(a.status)) : ""),
+      preview: (a) => (typeof a.summary === "string" ? a.summary : undefined),
+    }),
     label: "Team Report",
     description:
       "Report progress or results to the team lead. Use status 'blocked' when you cannot continue without the lead.",
@@ -318,15 +379,19 @@ export default function teamMember(pi: ExtensionAPI) {
       try {
         sendToLead("report", params.summary, { reportStatus: params.status });
       } catch (err) {
-        return textResult(`Could not send the report: ${(err as Error).message}`);
+        return failResult(`Could not send the report: ${(err as Error).message}`);
       }
       reportedThisRun = true;
-      return textResult("Report sent to the lead.");
+      return okResult("Report sent to the lead.");
     },
   });
 
   pi.registerTool({
     name: "team_ask",
+    ...teamToolRenderers("team_ask", {
+      describe: () => "",
+      preview: (a) => (typeof a.question === "string" ? a.question : undefined),
+    }),
     label: "Team Ask",
     description: "Ask the team lead a question. After calling it, end your turn; the answer arrives as a new message.",
     promptSnippet: "Ask the team lead a question and wait for the answer.",
@@ -337,16 +402,20 @@ export default function teamMember(pi: ExtensionAPI) {
       try {
         sendToLead("question", params.question);
       } catch (err) {
-        return textResult(`Could not send the question: ${(err as Error).message}`);
+        return failResult(`Could not send the question: ${(err as Error).message}`);
       }
       reportedThisRun = true;
       setState("awaiting_lead");
-      return textResult("Question sent to the lead. End your turn now; the answer will arrive as a new message.");
+      return okResult("Question sent to the lead. End your turn now; the answer will arrive as a new message.");
     },
   });
 
   pi.registerTool({
     name: "team_send",
+    ...teamToolRenderers("team_send", {
+      describe: describeSend,
+      preview: (a) => (typeof a.message === "string" ? a.message : undefined),
+    }),
     label: "Team Send",
     description:
       "Send a message to the lead (to: \"lead\") or to another live team member by name. Messages to other members are copied to the lead.",
@@ -359,26 +428,26 @@ export default function teamMember(pi: ExtensionAPI) {
     async execute(_id, params) {
       const to = params.to.trim();
       try {
-        if (to === name) return textResult("You cannot message yourself.");
+        if (to === name) return failResult("You cannot message yourself.");
         if (to === "lead") {
           sendToLead("message", params.message, { urgent: params.urgent });
-          return textResult("Sent to lead.");
+          return okResult("Sent to lead.");
         }
 
         const roster = readRoster();
         const record = roster?.members
           .filter((m) => m.name === to && !m.ended)
           .sort((a, b) => b.spawnedAt - a.spawnedAt)[0];
-        if (!record) return textResult(`No live team member named "${to}".`);
+        if (!record) return failResult(`No live team member named "${to}".`);
         const status = readJson<MemberStatus>(memberStatusFile(runDir!, record.instanceId));
         if (status && (status.state === "stopped" || status.state === "left")) {
-          return textResult(`Member "${to}" is no longer running.`);
+          return failResult(`Member "${to}" is no longer running.`);
         }
 
         const hop = (peerHops.get(to) ?? 0) + 1;
         if (hop > PEER_HOP_LIMIT) {
           sendToLead("message", `Peer exchange limit reached between ${name} and ${to}; please coordinate.`);
-          return textResult(
+          return failResult(
             "Peer message limit reached; the lead has been asked to coordinate. Report to the lead instead.",
           );
         }
@@ -402,9 +471,9 @@ export default function teamMember(pi: ExtensionAPI) {
           `${name} → ${to}: ${truncate(params.message, CC_PREVIEW_LIMIT)}`,
           prepared.spillPath ? { spillPath: prepared.spillPath } : {},
         );
-        return textResult(`Sent to ${to} (copied to lead).`);
+        return okResult(`Sent to ${to} (copied to lead).`);
       } catch (err) {
-        return textResult(`Could not send the message: ${(err as Error).message}`);
+        return failResult(`Could not send the message: ${(err as Error).message}`);
       }
     },
   });

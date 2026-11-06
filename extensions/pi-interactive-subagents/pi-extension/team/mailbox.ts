@@ -47,6 +47,15 @@ export function listPending(inboxDir: string): TeamMessage[] {
   return result;
 }
 
+/** Number of files waiting in new/, without parsing them. */
+export function countPending(inboxDir: string): number {
+  try {
+    return readdirSync(join(inboxDir, "new")).filter((f) => f.endsWith(".json")).length;
+  } catch {
+    return 0;
+  }
+}
+
 export function markDelivered(inboxDir: string, id: string): void {
   try {
     renameSync(join(inboxDir, "new", `${id}.json`), join(inboxDir, "cur", `${id}.json`));

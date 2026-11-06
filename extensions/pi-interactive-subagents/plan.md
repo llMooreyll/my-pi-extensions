@@ -1642,3 +1642,9 @@ if (kept.length > 0 && ctx.hasUI) ctx.ui.notify(`pi-team kept ${kept.length} wor
 | `lead.ts` | 成员 agent 定义里的 `deny-tools` 并入 `PI_DENY_TOOLS`，并从 `--tools` 清单中剔除 | 与一次性子代理的行为一致 |
 | `mailbox.ts` | 模块级计数器 `sequence` 保留 | 只用于消息 ID 排序，ID 另含随机后缀，残留不影响正确性 |
 | `lead.ts` | `pollLeadInbox` 对"只含 cc"的批次在 `sendMessage` 之后立即 `markDelivered` | 运行验证发现：不带 `triggerTurn` 的 `sendMessage` 不会向扩展发出 `message_end`，cc 消息会一直留在 `new/`（`/reload` 前不会被移走） |
+
+## 11. UI（运行验证后的补充）
+
+- 团队信息改为 `aboveEditor` 的 banner（`team/ui.ts`），不再是编辑器下方的纯文本行；成员面板里另有一条身份 banner。
+- 边框与状态色全部取自当前 Pi 主题（`accent`/`success`/`warning`/`error`/`muted`/`dim`）；一次性子代理 widget 的边框原先写死 RGB 蓝色，现改用主题 `accent`（`subagents/banner.ts` 的 `paint` 参数）。
+- 团队消息与通知有专用渲染器，团队工具有紧凑的 `renderCall`/`renderResult`（`team/render.ts`）；工具结果的 `details.ok` 只影响颜色。

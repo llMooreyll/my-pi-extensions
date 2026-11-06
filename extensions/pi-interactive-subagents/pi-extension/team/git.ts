@@ -208,6 +208,15 @@ export function revParse(ref: string, cwd: string): string {
   return git(["rev-parse", ref], cwd).trim();
 }
 
+/** Commits on `branch` that are not reachable from `from`; 0 when git cannot tell. */
+export function countCommits(top: string, from: string, branch: string): number {
+  try {
+    return Number.parseInt(git(["rev-list", "--count", `${from}..${branch}`], top).trim(), 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
 export type IntegrateResult =
   | { status: "empty" }
   | { status: "applied"; files: string[]; head: string }
