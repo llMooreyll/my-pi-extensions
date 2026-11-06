@@ -1625,3 +1625,19 @@ if (kept.length > 0 && ctx.hasUI) ctx.ui.notify(`pi-team kept ${kept.length} wor
 | `ctx.modelRegistry.find(provider, id)` | |
 | `ctx.ui.setWidget(key, lines \| undefined)` / `ctx.ui.notify(text, level)` / `ctx.hasUI` | |
 | CLI：`--session`、`--name`、`-e`、`--model`、`--append-system-prompt <file>`、`--tools`、`--approve`、`--no-approve` | 见 `docs/cli.md` |
+
+## 10. 实现与计划的差异记录
+
+实现 P0–P5 时对计划做了以下调整，均为让计划里的行为在边界情况下成立：
+
+| 位置 | 差异 | 原因 |
+|---|---|---|
+| `git.ts` | 新增 `gitBuffer`，`integrateBranch` 用字节流读写补丁，`diff` 加 `--no-ext-diff --no-textconv`，文件名用 `-z` | 补丁含非 UTF-8 内容时不会损坏；外部 diff/textconv 会生成无法 apply 的输出 |
+| `git.ts` | 所有 git 调用设置 `GIT_TERMINAL_PROMPT=0`；`commit-tree` 加 `commit.gpgsign=false` | 子模块更新不会卡在凭据提示；不触发签名 |
+| `git.ts` | `isWorktreeClean(worktree, linkedPaths)`：链接路径的 `??` 条目不算改动 | `.gitignore` 里 `node_modules/` 只匹配目录，worktree 中的符号链接会显示为未跟踪 |
+| `prompts.ts` | `memberSystemAppendix` 增加 `links`，提示成员不要暂存链接路径 | 避免 `git add -A` 把符号链接提交进分支 |
+| `member.ts` | 注册新事件用 `(pi as any).on(...)`，不是 `(pi.on as any)(...)` | 后者丢失 `this` |
+| `lead.ts` | `session_shutdown` 为 async：`quit` 时最多等待 5 秒（`QUIT_TEARDOWN_WAIT_MS`）让成员退出，再关面板、清理；其他 reason 不等待，清理在后台继续 | lead 进程退出后 `setTimeout` 不会触发，面板与 worktree 会残留 |
+| `lead.ts` | 成员状态为 `left` 时不关闭其面板 | 用户正在该面板里使用新会话 |
+| `lead.ts` | 成员 agent 定义里的 `deny-tools` 并入 `PI_DENY_TOOLS`，并从 `--tools` 清单中剔除 | 与一次性子代理的行为一致 |
+| `mailbox.ts` | 模块级计数器 `sequence` 保留 | 只用于消息 ID 排序，ID 另含随机后缀，残留不影响正确性 |

@@ -53,6 +53,7 @@ import {
   type ActivityReadResult,
   type SubagentActivityState,
 } from "./activity.ts";
+import { registerTeamLead } from "../team/lead.ts";
 
 /** Absolute path to `pi-extension/subagents`. https://github.com/nodejs/node/issues/37845 */
 const SUBAGENTS_DIR = dirname(fileURLToPath(import.meta.url));
@@ -2266,5 +2267,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       );
     },
   });
+
+  // Members load this package too; only the lead registers team tools.
+  if (!process.env.PI_TEAM_MEMBER_ID) {
+    registerTeamLead(pi, {
+      loadAgentDefaults,
+      resolveModelChain,
+      getArtifactDir,
+      getShellReadyDelayMs,
+    });
+  }
 }
 // test
