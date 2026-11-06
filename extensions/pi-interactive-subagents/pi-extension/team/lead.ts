@@ -283,6 +283,9 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
         { triggerTurn: wake, deliverAs: "steer" },
       );
       for (const m of pending) delivered.add(m.id);
+      // Pi emits no message_end to extensions for a message sent without triggerTurn,
+      // so a cc-only batch is confirmed here. Losing a cc on a crash is harmless.
+      if (!wake) for (const m of pending) markDelivered(inbox, m.id);
     } catch {
       // One failed poll must not stop the loop.
     }

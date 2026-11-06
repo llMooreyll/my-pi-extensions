@@ -1641,3 +1641,4 @@ if (kept.length > 0 && ctx.hasUI) ctx.ui.notify(`pi-team kept ${kept.length} wor
 | `lead.ts` | 成员状态为 `left` 时不关闭其面板 | 用户正在该面板里使用新会话 |
 | `lead.ts` | 成员 agent 定义里的 `deny-tools` 并入 `PI_DENY_TOOLS`，并从 `--tools` 清单中剔除 | 与一次性子代理的行为一致 |
 | `mailbox.ts` | 模块级计数器 `sequence` 保留 | 只用于消息 ID 排序，ID 另含随机后缀，残留不影响正确性 |
+| `lead.ts` | `pollLeadInbox` 对"只含 cc"的批次在 `sendMessage` 之后立即 `markDelivered` | 运行验证发现：不带 `triggerTurn` 的 `sendMessage` 不会向扩展发出 `message_end`，cc 消息会一直留在 `new/`（`/reload` 前不会被移走） |
