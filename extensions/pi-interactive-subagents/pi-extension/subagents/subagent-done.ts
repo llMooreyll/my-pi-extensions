@@ -8,6 +8,7 @@ import { Box, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { writeFileSync } from "node:fs";
 import { createSubagentActivityRecorder } from "./activity.ts";
+import { parseModelFallbacks, switchToNextModel } from "./model-fallback.ts";
 
 export function shouldMarkUserTookOver(agentStarted: boolean): boolean {
   return agentStarted;
@@ -68,7 +69,7 @@ export function findLatestAssistantError(
   return null;
 }
 
-function describeAssistantModel(messages: any[] | undefined): string {
+export function describeAssistantModel(messages: any[] | undefined): string {
   const last = messages?.findLast?.((msg: any) => msg?.role === "assistant");
   return last?.provider && last?.model ? `${last.provider}/${last.model}` : "the previous model";
 }
@@ -91,10 +92,7 @@ export default function (pi: ExtensionAPI) {
   const deniedToolsValue = process.env.PI_DENY_TOOLS;
   const autoExit = process.env.PI_SUBAGENT_AUTO_EXIT === "1";
   // Ordered models to switch to when a turn ends in an error (set by the parent).
-  const modelFallbacks = (process.env.PI_SUBAGENT_MODEL_FALLBACKS ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+  const modelFallbacks = parseModelFallbacks(process.env.PI_SUBAGENT_MODEL_FALLBACKS);
   const hasModelChain = modelFallbacks.length > 0;
   const failedModels: string[] = [];
   const recorder = createSubagentActivityRecorder({
@@ -262,14 +260,8 @@ export default function (pi: ExtensionAPI) {
     if (hasModelChain) {
       const failure = `${describeAssistantModel(messages)} (${turnError.errorMessage})`;
       failedModels.push(failure);
-      while (modelFallbacks.length > 0) {
-        const next = modelFallbacks.shift()!;
-        const slash = next.indexOf("/");
-        const model = slash > 0 ? ctx.modelRegistry.find(next.slice(0, slash), next.slice(slash + 1)) : undefined;
-        if (!model || !(await pi.setModel(model))) {
-          failedModels.push(`${next} (unknown model or no credentials)`);
-          continue;
-        }
+      const next = await switchToNextModel(pi, ctx.modelRegistry, modelFallbacks, failedModels);
+      if (next) {
         return {
           entries: [
             ...(event as any).entries,
