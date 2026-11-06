@@ -1265,9 +1265,12 @@ async function watchSubagent(
   signal: AbortSignal,
 ): Promise<SubagentResult> {
   const { name, task, surface, startTime, sessionFile } = running;
+  // Capture the controller in effect at launch: session_shutdown replaces the
+  // global one, so reading it again in the catch block would miss this abort.
+  const moduleSignal = getModuleAbortSignal();
 
   try {
-    const result = await pollForExit(surface, AbortSignal.any([signal, getModuleAbortSignal()]), {
+    const result = await pollForExit(surface, AbortSignal.any([signal, moduleSignal]), {
       interval: 1000,
       sessionFile,
       sentinelFile: running.sentinelFile,
@@ -1352,7 +1355,7 @@ async function watchSubagent(
     } catch {}
     runningSubagents.delete(running.id);
 
-    if (signal.aborted) {
+    if (signal.aborted || moduleSignal.aborted) {
       return {
         name,
         task,
@@ -1394,6 +1397,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     }
     const moduleAbort = (globalThis as any)[POLL_ABORT_KEY] as AbortController | undefined;
     if (moduleAbort) moduleAbort.abort();
+    // /new, /resume, /fork and /clone reuse Pi's cached extension factory without
+    // re-importing this module, so the top-level block never installs a fresh
+    // controller. Without this, every later spawn fails at once with
+    // "Aborted while waiting for subagent to finish" until /reload.
+    (globalThis as any)[POLL_ABORT_KEY] = new AbortController();
     for (const [_id, agent] of runningSubagents) {
       agent.abortController?.abort();
     }
