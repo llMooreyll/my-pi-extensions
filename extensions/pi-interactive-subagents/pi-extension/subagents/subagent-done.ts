@@ -183,37 +183,39 @@ export default function (pi: ExtensionAPI) {
     recorder.agentStart();
   });
 
-  pi.on("agent_end", async (event, ctx) => {
-    const messages = (event as any).messages as any[] | undefined;
+  // Messages of the latest low-level run, read again at agent_before_settle.
+  let lastRunMessages: any[] | undefined;
 
-    // A turn that still failed after Pi's own retries moves to the next model in
-    // the chain and continues. A message queued from agent_end starts a fresh run,
-    // and Pi drops the errored assistant message when replaying the history.
-    const turnError = findLatestAssistantError(messages);
-    if (turnError && hasModelChain) {
-      const failure = `${describeAssistantModel(messages)} (${turnError.errorMessage})`;
-      failedModels.push(failure);
-      while (modelFallbacks.length > 0) {
-        const next = modelFallbacks.shift()!;
-        const slash = next.indexOf("/");
-        const model = slash > 0 ? ctx.modelRegistry.find(next.slice(0, slash), next.slice(slash + 1)) : undefined;
-        if (!model || !(await pi.setModel(model))) {
-          failedModels.push(`${next} (unknown model or no credentials)`);
-          continue;
-        }
-        pi.sendMessage(
-          {
-            customType: "subagent_model_fallback",
-            content:
-              `The previous model failed: ${failure}. ` +
-              `Switched to ${next}. Continue the task from where you left off.`,
-            display: true,
-          },
-          { triggerTurn: true, deliverAs: "followUp" },
-        );
-        return;
-      }
+  function writeExitSidecar(errorInfo: SubagentErrorInfo | null): void {
+    const sessionFile = process.env.PI_SUBAGENT_SESSION;
+    if (!sessionFile) return;
+    try {
+      writeFileSync(
+        `${sessionFile}.exit`,
+        JSON.stringify(
+          errorInfo
+            ? {
+                type: "error",
+                errorMessage: errorInfo.errorMessage,
+                stopReason: errorInfo.stopReason,
+              }
+            : { type: "done" },
+        ),
+      );
+    } catch {
+      // Best effort — the watcher can still fall back to the terminal
+      // sentinel and to the session-file summary.
     }
+  }
+
+  pi.on("agent_end", (event, ctx) => {
+    const messages = (event as any).messages as any[] | undefined;
+    lastRunMessages = messages;
+
+    // agent_end fires before Pi decides on an automatic retry. A run that ended
+    // in an error is therefore settled in agent_before_settle, which runs only
+    // once no retry, compaction or queued continuation follows.
+    if (findLatestAssistantError(messages)) return;
 
     const shouldExit = autoExit && shouldAutoExitOnAgentEnd(userTookOver, messages);
 
@@ -235,33 +237,7 @@ export default function (pi: ExtensionAPI) {
       // stopReason: "error" (auto-retry exhausted, provider overload, etc.)
       // is still surfaced with its message so the parent reports a clear
       // failure instead of mistaking the crash for a successful completion.
-      const errorInfo = findLatestAssistantError(messages);
-      if (errorInfo && failedModels.length > 0) {
-        errorInfo.errorMessage =
-          `Every model in the fallback chain failed: ${failedModels.join("; ")}. ` +
-          `Ask the user which model to use; do not pick a model yourself.`;
-      }
-      const sessionFile = process.env.PI_SUBAGENT_SESSION;
-      if (sessionFile) {
-        try {
-          writeFileSync(
-            `${sessionFile}.exit`,
-            JSON.stringify(
-              errorInfo
-                ? {
-                    type: "error",
-                    errorMessage: errorInfo.errorMessage,
-                    stopReason: errorInfo.stopReason,
-                  }
-                : { type: "done" },
-            ),
-          );
-        } catch {
-          // Best effort — the watcher can still fall back to the terminal
-          // sentinel and to the session-file summary.
-        }
-      }
-
+      writeExitSidecar(null);
       recorder.agentEndDone();
       ctx.shutdown();
       return;
@@ -273,6 +249,57 @@ export default function (pi: ExtensionAPI) {
       // the latest agent turn completed normally, not by who initiated it.
       userTookOver = false;
     }
+  });
+
+  pi.on("agent_before_settle", async (event, ctx) => {
+    if ((event as any).outcome !== "error") return;
+    const messages = lastRunMessages;
+    const turnError = findLatestAssistantError(messages);
+    if (!turnError) return;
+
+    // The run still failed after Pi's own retries: move to the next model in the
+    // chain and continue. Pi drops the errored assistant message on replay.
+    if (hasModelChain) {
+      const failure = `${describeAssistantModel(messages)} (${turnError.errorMessage})`;
+      failedModels.push(failure);
+      while (modelFallbacks.length > 0) {
+        const next = modelFallbacks.shift()!;
+        const slash = next.indexOf("/");
+        const model = slash > 0 ? ctx.modelRegistry.find(next.slice(0, slash), next.slice(slash + 1)) : undefined;
+        if (!model || !(await pi.setModel(model))) {
+          failedModels.push(`${next} (unknown model or no credentials)`);
+          continue;
+        }
+        return {
+          entries: [
+            ...(event as any).entries,
+            {
+              type: "custom_message" as const,
+              customType: "subagent_model_fallback",
+              content:
+                `The previous model failed: ${failure}. ` +
+                `Switched to ${next}. Continue the task from where you left off.`,
+              display: true,
+            },
+          ],
+          continue: true,
+        };
+      }
+      turnError.errorMessage =
+        `Every model in the fallback chain failed: ${failedModels.join("; ")}. ` +
+        `Ask the user which model to use; do not pick a model yourself.`;
+    }
+
+    // stopReason "error" (auto-retry exhausted, provider overload, etc.) is
+    // surfaced with its message so the parent reports a clear failure instead
+    // of mistaking the crash for a successful completion.
+    if (autoExit) {
+      writeExitSidecar(turnError);
+      recorder.agentEndDone();
+      ctx.shutdown();
+      return;
+    }
+    recorder.agentEndWaiting();
   });
 
   pi.on("turn_start", (event) => {
