@@ -68,6 +68,11 @@ export function findLatestAssistantError(
   return null;
 }
 
+function describeAssistantModel(messages: any[] | undefined): string {
+  const last = messages?.findLast?.((msg: any) => msg?.role === "assistant");
+  return last?.provider && last?.model ? `${last.provider}/${last.model}` : "the previous model";
+}
+
 export function parseDeniedTools(rawValue: string | undefined): string[] {
   return (rawValue ?? "")
     .split(",")
@@ -85,6 +90,13 @@ export default function (pi: ExtensionAPI) {
   const subagentAgent = process.env.PI_SUBAGENT_AGENT ?? "";
   const deniedToolsValue = process.env.PI_DENY_TOOLS;
   const autoExit = process.env.PI_SUBAGENT_AUTO_EXIT === "1";
+  // Ordered models to switch to when a turn ends in an error (set by the parent).
+  const modelFallbacks = (process.env.PI_SUBAGENT_MODEL_FALLBACKS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const hasModelChain = modelFallbacks.length > 0;
+  const failedModels: string[] = [];
   const recorder = createSubagentActivityRecorder({
     runningChildId: process.env.PI_SUBAGENT_ID,
     activityFile: process.env.PI_SUBAGENT_ACTIVITY_FILE,
@@ -171,8 +183,38 @@ export default function (pi: ExtensionAPI) {
     recorder.agentStart();
   });
 
-  pi.on("agent_end", (event, ctx) => {
+  pi.on("agent_end", async (event, ctx) => {
     const messages = (event as any).messages as any[] | undefined;
+
+    // A turn that still failed after Pi's own retries moves to the next model in
+    // the chain and continues. A message queued from agent_end starts a fresh run,
+    // and Pi drops the errored assistant message when replaying the history.
+    const turnError = findLatestAssistantError(messages);
+    if (turnError && hasModelChain) {
+      const failure = `${describeAssistantModel(messages)} (${turnError.errorMessage})`;
+      failedModels.push(failure);
+      while (modelFallbacks.length > 0) {
+        const next = modelFallbacks.shift()!;
+        const slash = next.indexOf("/");
+        const model = slash > 0 ? ctx.modelRegistry.find(next.slice(0, slash), next.slice(slash + 1)) : undefined;
+        if (!model || !(await pi.setModel(model))) {
+          failedModels.push(`${next} (unknown model or no credentials)`);
+          continue;
+        }
+        pi.sendMessage(
+          {
+            customType: "subagent_model_fallback",
+            content:
+              `The previous model failed: ${failure}. ` +
+              `Switched to ${next}. Continue the task from where you left off.`,
+            display: true,
+          },
+          { triggerTurn: true, deliverAs: "followUp" },
+        );
+        return;
+      }
+    }
+
     const shouldExit = autoExit && shouldAutoExitOnAgentEnd(userTookOver, messages);
 
     if (shouldExit) {
@@ -194,6 +236,11 @@ export default function (pi: ExtensionAPI) {
       // is still surfaced with its message so the parent reports a clear
       // failure instead of mistaking the crash for a successful completion.
       const errorInfo = findLatestAssistantError(messages);
+      if (errorInfo && failedModels.length > 0) {
+        errorInfo.errorMessage =
+          `Every model in the fallback chain failed: ${failedModels.join("; ")}. ` +
+          `Ask the user which model to use; do not pick a model yourself.`;
+      }
       const sessionFile = process.env.PI_SUBAGENT_SESSION;
       if (sessionFile) {
         try {

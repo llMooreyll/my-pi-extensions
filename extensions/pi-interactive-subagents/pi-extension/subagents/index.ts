@@ -96,7 +96,12 @@ const SubagentParams = Type.Object({
   systemPrompt: Type.Optional(
     Type.String({ description: "Appended to system prompt (role instructions)" }),
   ),
-  model: Type.Optional(Type.String({ description: "Model override (overrides agent default)" })),
+  model: Type.Optional(
+    Type.String({
+      description:
+        "Model override (overrides agent default). A comma-separated list of exact provider/id entries is an ordered fallback chain.",
+    }),
+  ),
   skills: Type.Optional(
     Type.String({ description: "Comma-separated skills (overrides agent default)" }),
   ),
@@ -371,6 +376,41 @@ function loadAgentDefaults(agentName: string): AgentDefaults | null {
   }
 
   return null;
+}
+
+type ModelAvailability = Pick<ExtensionContext["modelRegistry"], "find" | "hasConfiguredAuth">;
+
+interface ModelChainResolution {
+  /** Model passed to `--model`; undefined leaves the child on Pi's default model. */
+  primary?: string;
+  /** Remaining usable models, tried in order by the child after a turn fails. */
+  fallbacks: string[];
+  /** Listed models that are unknown or have no configured credentials. */
+  unavailable: string[];
+}
+
+/**
+ * A comma-separated `model` value is an ordered fallback chain. Chain entries
+ * must be exact `provider/id` pairs; entries missing from the registry or
+ * lacking credentials are skipped. A single value keeps the old pass-through so
+ * Pi's CLI can still resolve partial model names.
+ */
+function resolveModelChain(spec: string | undefined, registry: ModelAvailability): ModelChainResolution {
+  const entries = (spec ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (entries.length <= 1) return { primary: entries[0], fallbacks: [], unavailable: [] };
+
+  const usable: string[] = [];
+  const unavailable: string[] = [];
+  for (const entry of entries) {
+    const slash = entry.indexOf("/");
+    const model = slash > 0 ? registry.find(entry.slice(0, slash), entry.slice(slash + 1)) : undefined;
+    if (model && registry.hasConfiguredAuth(model)) usable.push(entry);
+    else unavailable.push(entry);
+  }
+  return { primary: usable[0], fallbacks: usable.slice(1), unavailable };
 }
 
 function formatElapsed(seconds: number): string {
@@ -949,7 +989,7 @@ function subagentSessionLabel(name: string): string {
 async function launchSubagent(
   params: typeof SubagentParams.static,
   ctx: { sessionManager: { getSessionFile(): string | null; getSessionId(): string; getSessionDir(): string }; cwd: string },
-  options?: { surface?: string },
+  options?: { surface?: string; modelFallbacks?: string[] },
 ): Promise<RunningSubagent> {
   const startTime = Date.now();
   const id = Math.random().toString(16).slice(2, 10);
@@ -1153,6 +1193,9 @@ async function launchSubagent(
   }
   if (agentDefs?.autoExit) {
     envParts.push(`PI_SUBAGENT_AUTO_EXIT=1`);
+  }
+  if (options?.modelFallbacks?.length) {
+    envParts.push(`PI_SUBAGENT_MODEL_FALLBACKS=${shellEscape(options.modelFallbacks.join(","))}`);
   }
   envParts.push(`PI_SUBAGENT_SESSION=${shellEscape(subagentSessionFile)}`);
   envParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
@@ -1471,8 +1514,28 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           };
         }
 
+        // Resolve a model fallback chain before creating a pane, so an unusable
+        // chain is reported to the caller instead of silently picking a model.
+        let launchParams = params;
+        let modelFallbacks: string[] = [];
+        const spawnAgentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
+        if (spawnAgentDefs?.cli !== "claude") {
+          const chain = resolveModelChain(params.model ?? spawnAgentDefs?.model, ctx.modelRegistry);
+          if (!chain.primary && chain.unavailable.length > 0) {
+            const message =
+              `None of the configured subagent models is usable (unknown or no credentials): ` +
+              `${chain.unavailable.join(", ")}. Ask the user which model to use; do not pick a model yourself.`;
+            return {
+              content: [{ type: "text", text: message }],
+              details: { error: "no usable model", unavailable: chain.unavailable },
+            };
+          }
+          if (chain.primary) launchParams = { ...params, model: chain.primary };
+          modelFallbacks = chain.fallbacks;
+        }
+
         // Launch the subagent (creates pane, sends command)
-        const running = await launchSubagent(params, ctx);
+        const running = await launchSubagent(launchParams, ctx, { modelFallbacks });
 
         // Create a separate AbortController for the watcher
         // (the tool's signal completes when we return)
