@@ -1,0 +1,13 @@
+[Unit]
+Description=pi-remote host daemon
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/Pi-extension-dev/extensions/pi-remote/packages/hostd
+ExecStart=/usr/bin/node src/main.ts serve
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

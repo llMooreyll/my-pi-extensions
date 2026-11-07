@@ -27,3 +27,11 @@
 12. **role 为 `system` 的消息不转发**：pi 1.5.0 每次运行会发出一条 `role:"system"` 的系统提示消息（`agent-session.js:1346`），体积大且不应显示。快照/历史同样过滤。
 13. compat 为 `untested` 时 notify/status/widget 也不转发（它们与对话框包装在同一个 `patchUi` 里），与计划代码一致。
 14. 测试用的默认模型 `zero-cat/deepseek-v4.1-flash-1017` 余额不足（403 insufficient_user_quota），验收中用 `--model antigravity-vps/gemini-3.8-flash-high` 启动 pi；`set_model` 实测不会改写 settings.json 的 defaultModel。
+
+## M5～M6 实测
+
+15. **spawner 启动失败时保留 pane**：计划的 `exec pi ...` 在命令不存在时 pane 立即消失，`spawn_timeout` 拿不到输出。改为 `pi ... || { echo "[pi-remote] pi exited with code $?"; sleep 120; }`，正常退出（code 0）时窗口照常关闭；超时报告输出后主动 `kill-pane`。用户的 zshrc 会打印 fastfetch，所以报错文本里会先出现那段 logo。
+16. `SettingsManager` 写回 settings.json 时去掉了文件末尾换行；验收后已把 settings.json 恢复为修改前的原字节（`cmp` 一致，`packages` 中 bridge 移到首位这一项除外）。
+17. 中继已部署到 TencentVPS：容器 `pi-relay`（`--restart unless-stopped`，端口 7443），镜像在 VPS 上本地构建，npm 直连可用；中继密钥在本机 `~/.config/pi-remote/relay-secret`。
+18. M6 验收第 3 条"另一个网络的电脑经中继访问"没有可用的第二台电脑；本机经中继访问成功，M7 中 Waydroid 也经中继访问。第 6 条"本机断网"无 sudo 无法模拟，改为把 VPS 上的 pi-relay 停 60 秒再启动，检查 hostd 自动恢复。
+19. hostd 已安装为 systemd 用户服务（`~/.config/systemd/user/pi-hostd.service` 是指向仓库的符号链接）。
