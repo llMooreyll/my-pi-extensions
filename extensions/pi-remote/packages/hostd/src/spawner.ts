@@ -51,7 +51,8 @@ export async function spawnPi(opts: { cwd: string; sessionFile?: string; trust: 
   const token = randomUUID();
   const args = [cfg.piCommand, opts.trust === "approve" ? "--approve" : "--no-approve"];
   if (opts.sessionFile) args.push("--session", opts.sessionFile);
-  const inner = "exec " + args.map(shQuote).join(" ");
+  // Keep the pane open for a while when pi fails to start, so spawn_timeout can report its output.
+  const inner = `${args.map(shQuote).join(" ")} || { echo "[pi-remote] pi exited with code $?"; sleep 120; }`;
   const shellCmd = `${cfg.spawnShell} -lic ${shQuote(inner)}`;
   const windowName = basename(cwd).slice(0, 30) || "pi";
   const wait = waitForSpawnToken(token, 45_000);
@@ -65,7 +66,8 @@ export async function spawnPi(opts: { cwd: string; sessionFile?: string; trust: 
   try {
     return await wait;
   } catch {
-    const tail = await execFileP("tmux", ["capture-pane", "-p", "-t", paneId, "-S", "-20"]).then((r) => r.stdout, () => "(pane is gone)");
+    const tail = await execFileP("tmux", ["capture-pane", "-p", "-t", paneId, "-S", "-20"]).then((r) => r.stdout.trimEnd(), () => "(pane is gone)");
+    await execFileP("tmux", ["kill-pane", "-t", paneId]).catch(() => {});
     throw err("spawn_timeout", `pi did not register within 45s. tmux pane ${paneId} last lines:\n${tail}`);
   }
 }
