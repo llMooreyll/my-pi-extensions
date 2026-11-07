@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Pressable, ScrollView, View } from "react-native";
 import type { CommandInfo, DeliverAs, ImageInput, RpivPrompt, UiResponse, WireMessage } from "@pi-remote/protocol";
 import { ConfirmDialog, ErrorDialog, TrustDialog } from "../../ds/common";
-import { Button, Rule, Screen, Spinner, Ticker, Txt } from "../../ds/primitives";
+import { Button, Rule, Screen, Spinner, Txt } from "../../ds/primitives";
 import { F, MARGIN, STATUS_WORD, THINK_LEVELS, statusColor, thinkColor, thinkIndex, usePalette } from "../../ds/tokens";
 import { baseName, processTitle, textOf } from "../../lib/format";
 import { openProcess } from "../../lib/nav";
@@ -35,8 +35,13 @@ function Spec({ label, value, subs, onPress, a11y, color, bar, meter }: {
     <Pressable accessibilityRole={onPress ? "button" : undefined} accessibilityLabel={a11y} onPress={onPress} disabled={!onPress}
       style={({ pressed }) => ({ flex: 1, paddingTop: 9, paddingBottom: 8, paddingHorizontal: 10, backgroundColor: pressed ? p.tint : "transparent", gap: 2 })}>
       <Txt v="label" soft>{label}{onPress ? "  ›" : ""}</Txt>
-      <Txt v="bodyBold" color={color ?? p.ink} lines={1} style={{ fontSize: 14.5, lineHeight: 19 }}>{value}</Txt>
-      <Ticker items={subs ?? []} />
+      <Txt v="bodyBold" color={color ?? p.ink} lines={1} fit={0.75} style={{ fontSize: 14.5, lineHeight: 19 }}>{value}</Txt>
+      {subs?.length ? (
+        // All the detail on one line the user can swipe sideways; nothing moves by itself.
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginRight: -10 }} contentContainerStyle={{ paddingRight: 10 }}>
+          <Txt v="mono" soft style={{ fontSize: 10.5, lineHeight: 15 }}>{subs.filter(Boolean).join("  ·  ")}</Txt>
+        </ScrollView>
+      ) : null}
       {bar ? (
         <View style={{ height: 3, backgroundColor: p.faint, marginTop: 4 }}>
           <View style={{ height: 3, width: `${Math.max(2, Math.min(100, bar.pct))}%`, backgroundColor: bar.color }} />
@@ -217,7 +222,7 @@ export default function SessionScreen() {
   // The subagent and team banners are drawn for a terminal (box-drawing text); the crew tray replaces them.
   const widgets = Object.entries(view?.extWidgets ?? {}).filter(([k]) => !/^(subagent-status|team-status|team-member)$/.test(k));
   const panelsShown = panelsOpen ?? false;
-  const statusLine = Object.values(view?.extStatus ?? {}).join("   ");
+  const statusLine = Object.values(view?.extStatus ?? {}).join("   ·   ");
   const role = info?.role;
   const gone = view?.gone || (!procInfo && conn === "ready");
 
@@ -227,7 +232,7 @@ export default function SessionScreen() {
         ruleColor={status === "running" ? p.blue : status === "waiting_ui" ? p.pink : undefined}
         titleNode={
           <>
-            <Txt v="label" a11y="session-status" color={statusColor(p, status)} style={{ fontFamily: status === "idle" ? F.mono : F.monoBold }}>
+            <Txt v="label" lines={1} a11y="session-status" color={statusColor(p, status)} style={{ fontFamily: status === "idle" ? F.mono : F.monoBold }}>
               {status === "idle" ? "○" : status === "running" ? "▶" : "◆"} {STATUS_WORD[status]}<Txt v="label" soft>{info ? `  ·  ${baseName(info.cwd)}` : ""}</Txt>
             </Txt>
             <Txt v="title" lines={2}>{info ? processTitle(info) : "Session"}</Txt>
@@ -269,7 +274,11 @@ export default function SessionScreen() {
               </Txt>
             ) : null}
             {parent ? <Word a11y="chip-parent" label="started by" value={`← ${processTitle(parent)}`} color={p.blue} onPress={() => openProcess(parent.processId)} /> : null}
-            {statusLine ? <Txt v="mono" faint lines={1} a11y="session-ext-status" style={{ fontSize: 10.5 }}>{statusLine}</Txt> : null}
+            {statusLine ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} accessibilityLabel="session-ext-status" style={{ marginHorizontal: -MARGIN }} contentContainerStyle={{ paddingHorizontal: MARGIN }}>
+                <Txt v="mono" soft style={{ fontSize: 10.5 }}>{statusLine}</Txt>
+              </ScrollView>
+            ) : null}
           </View>
         ) : null}
 

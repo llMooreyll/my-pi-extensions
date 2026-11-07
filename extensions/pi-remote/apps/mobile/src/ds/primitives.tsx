@@ -28,7 +28,7 @@ const VARIANT: Record<TxtVariant, TextStyle> = {
 
 export function Txt(props: {
   children: ReactNode; v?: TxtVariant; color?: string; soft?: boolean; faint?: boolean; style?: StyleProp<TextStyle>;
-  lines?: number; a11y?: string; selectable?: boolean; center?: boolean; cjk?: TextStyle;
+  lines?: number; a11y?: string; selectable?: boolean; center?: boolean; cjk?: TextStyle; fit?: number;
 }) {
   const p = usePalette();
   const color = props.color ?? (props.faint ? p.faint : props.soft ? p.soft : p.ink);
@@ -36,6 +36,7 @@ export function Txt(props: {
   const cjk = v !== "mono" && hasCJK(childText(props.children)) ? { ...CJK_ROLE[v], ...props.cjk } : null;
   return (
     <Text accessibilityLabel={props.a11y} numberOfLines={props.lines} selectable={props.selectable}
+      adjustsFontSizeToFit={props.fit !== undefined} minimumFontScale={props.fit}
       style={[VARIANT[v], { color }, props.center ? { textAlign: "center" } : null, props.style, cjk]}>
       {props.children}
     </Text>
@@ -242,38 +243,6 @@ export function Spinner(props: { color?: string }) {
     return () => clearInterval(t);
   }, []);
   return <Txt v="mono" color={props.color ?? p.ink} a11y="spinner">{TEST_HOOKS ? "…" : FRAMES[i]}</Txt>;
-}
-
-/**
- * Secondary lines that take turns: one line shows at a time and slides up to the next every few seconds.
- * Used where there is more to say than the cell can hold. Test builds show the first line only.
- */
-export function Ticker(props: { items: string[]; color?: string; every?: number; style?: StyleProp<TextStyle> }) {
-  const p = usePalette();
-  const items = props.items.filter(Boolean);
-  const key = items.join("\u0001");
-  const [i, setI] = useState(0);
-  const slide = useRef(new Animated.Value(1)).current;
-  useEffect(() => { setI(0); }, [key]);
-  useEffect(() => {
-    if (TEST_HOOKS || items.length < 2) return;
-    const t = setInterval(() => {
-      Animated.timing(slide, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
-        setI((x) => (x + 1) % items.length);
-        Animated.timing(slide, { toValue: 1, duration: 220, useNativeDriver: true }).start();
-      });
-    }, props.every ?? 3200);
-    return () => clearInterval(t);
-  }, [key]);
-  if (!items.length) return null;
-  const cur = items[Math.min(i, items.length - 1)]!;
-  return (
-    <View style={{ height: 15, justifyContent: "center" }}>
-      <Animated.View style={{ opacity: slide, transform: [{ translateY: slide.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }] }}>
-        <Txt v="mono" color={props.color ?? p.soft} lines={1} style={[{ fontSize: 10.5, lineHeight: 14 }, props.style]}>{cur}</Txt>
-      </Animated.View>
-    </View>
-  );
 }
 
 /* ───────────────────────────── pages ───────────────────────────── */

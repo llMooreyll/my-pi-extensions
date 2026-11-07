@@ -133,8 +133,10 @@ export default function Home() {
         <View>
           <Pad style={{ paddingTop: 14, paddingBottom: 16, gap: 12 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }}>
-              <Txt v="display" style={{ fontSize: 40, lineHeight: 44 }}>pi <Txt v="display" style={{ fontFamily: F.serifItalic, fontSize: 40, lineHeight: 44 }} color={p.pink}>remote</Txt></Txt>
-              <View style={{ flexDirection: "row", gap: 16, paddingBottom: 4 }}>
+              <Txt v="display" a11y="home-title" lines={1} fit={0.7} style={{ flexShrink: 1, fontSize: 42, lineHeight: 46, letterSpacing: -0.5 }}>
+                pi<Txt v="display" color={p.faint} style={{ fontSize: 42, lineHeight: 46 }}>/</Txt><Txt v="display" color={p.pink} style={{ fontFamily: F.serifItalic, fontSize: 42, lineHeight: 46 }}>remote</Txt>
+              </Txt>
+              <View style={{ flexDirection: "row", gap: 12, paddingBottom: 4, marginLeft: 10 }}>
                 <Figure n={procs.length} label="live" color={p.ink} />
                 <Figure n={running} label="working" color={running ? p.blue : p.faint} />
                 <Figure n={waiting.length} label="need you" color={waiting.length ? p.pink : p.faint} />
