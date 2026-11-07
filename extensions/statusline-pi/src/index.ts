@@ -396,23 +396,12 @@ function getUsage(ctx: ExtensionContext): {
 	};
 }
 
-function getZone(contextUsageRatio: number, contextWindow: number): string {
-	if (contextWindow >= 500_000) {
-		// 1M-class model zones
-		const used = contextWindow * contextUsageRatio;
-		if (used < 150_000) return "Plan";
-		if (used < 250_000) return "Code";
-		if (used < 400_000) return "Dump";
-		if (used < 450_000) return "ExDump";
-		return "Dead";
-	} else {
-		// Standard model zones
-		if (contextUsageRatio < 0.4) return "Plan";
-		if (contextUsageRatio < 0.7) return "Code";
-		if (contextUsageRatio < 0.75) return "Dump";
-		if (contextUsageRatio < 0.8) return "ExDump";
-		return "Dead";
-	}
+function getZone(contextUsageRatio: number, _contextWindow?: number): string {
+	if (contextUsageRatio < 0.4) return "Plan";
+	if (contextUsageRatio < 0.7) return "Code";
+	if (contextUsageRatio < 0.75) return "Dump";
+	if (contextUsageRatio < 0.8) return "ExDump";
+	return "Dead";
 }
 
 export interface StatuslineSegments {
