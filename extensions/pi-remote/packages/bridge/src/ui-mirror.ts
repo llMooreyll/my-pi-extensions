@@ -7,7 +7,7 @@ import { latestUncoveredRpiv } from "./rpiv.ts";
 import { refreshStatus } from "./snapshot.ts";
 import { g, type Placement } from "./state.ts";
 import type { DistributiveOmit } from "./types.ts";
-import { renderFactoryText } from "./widget-text.ts";
+import { stripAnsi, renderFactoryText } from "./widget-text.ts";
 
 const PATCHED = Symbol.for("pi-remote.uiPatched");
 
@@ -153,7 +153,15 @@ export function patchUi(ui: ExtensionUIContext): void {
   ui.custom = ((factory: Parameters<CustomFn>[0], options: Parameters<CustomFn>[1]) => mirrorCustom(o.custom, factory, options)) as CustomFn;
 
   ui.notify = (message, type) => { o.notify(message, type); emitSafe({ type: "notify", message: String(message), level: type ?? "info" }); };
-  ui.setStatus = (key, text) => { o.setStatus(key, text); emitSafe({ type: "ext_status", key, ...(text ? { text } : {}) }); trackStatus(key, text); };
+  ui.setStatus = (key, text) => {
+    o.setStatus(key, text);
+    try {
+      const plain = text ? stripAnsi(String(text)) : undefined;
+      if (g().extStatus.get(key) === plain) return;   // many extensions refresh status every second
+      emitSafe({ type: "ext_status", key, ...(plain ? { text: plain } : {}) });
+      trackStatus(key, plain);
+    } catch (e) { logError("setStatus mirror", e); }
+  };
   ui.setWidget = ((key: string, content: unknown, options?: { placement?: Placement }) => {
     o.setWidget(key, content, options);
     try {
@@ -165,7 +173,7 @@ export function patchUi(ui: ExtensionUIContext): void {
         return;
       }
       g().widgetFactories.delete(key);
-      const lines = Array.isArray(content) ? content.map(String) : undefined;
+      const lines = Array.isArray(content) ? content.map((l) => stripAnsi(String(l))) : undefined;
       emitSafe({ type: "ext_widget", key, ...(lines && lines.length ? { lines } : {}), placement });
       trackWidget(key, lines, placement);
     } catch (e) { logError("setWidget mirror", e); }

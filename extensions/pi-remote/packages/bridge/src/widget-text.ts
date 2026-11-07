@@ -3,6 +3,8 @@ import { logError } from "./log.ts";
 
 const ANSI = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
 
+export const stripAnsi = (s: string) => s.replace(ANSI, "");
+
 /** A fake TUI for component factories: every method is a no-op, size is fixed. */
 function stubTui(): unknown {
   const target: Record<string, unknown> = { terminal: { columns: WIDGET_RENDER_COLUMNS, rows: 30 }, requestRender() {} };

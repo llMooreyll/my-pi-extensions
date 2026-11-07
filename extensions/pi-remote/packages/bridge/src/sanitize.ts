@@ -79,7 +79,9 @@ export function sanitize(message: unknown): WireMessage {
 export function entryMessage(entry: unknown): WireMessage | undefined {
   const e = entry as Obj;
   switch (e?.type) {
-    case "message": return { ...sanitize(e.message), entryId: e.id as string };
+    case "message":
+      if ((e.message as Obj)?.role === "system") return undefined;
+      return { ...sanitize(e.message), entryId: e.id as string };
     case "custom_message":
       if (e.display !== true) return undefined;
       return { role: "custom", customType: e.customType, content: stripImages(e.content), details: e.details, timestamp: e.timestamp, entryId: e.id as string };

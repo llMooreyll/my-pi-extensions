@@ -60,7 +60,8 @@ export function rebuildChildren(): void {
   s.childSessionFiles = out;
 }
 
-const isHiddenCustom = (m: Obj) => m?.role === "custom" && m.display === false;
+/** Hidden custom messages and the per-run system prompt message are never shown to the user. */
+const isHiddenCustom = (m: Obj) => (m?.role === "custom" && m.display === false) || m?.role === "system";
 
 export function registerEventForwarders(pi: ExtensionAPI): void {
   on(pi, "agent_start", () => { emitSafe({ type: "agent_start" }); refreshStatus(); });

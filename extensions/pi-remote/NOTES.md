@@ -22,3 +22,8 @@
 7. hostd 的 `EventRing.since(seq)` 在 `seq > lastSeq` 时返回 null（走快照），而不是空数组。
 8. `get_settings` 用 `SettingsManager.getGlobalSettings()`（只读全局设置），与只写全局设置一致。
 9. hostd 读写路径支持环境变量 `PI_REMOTE_CONFIG_DIR` 覆盖（只用于测试），dev-client 凭据路径支持 `PI_REMOTE_DEV_CLIENT` 覆盖。
+10. **bridge 在 `ExtensionRunner.prototype.setUIContext` 上挂钩打补丁**（仅限 `SUPPORTED_PI_VERSIONS`）。原因：`session_start` 是第一个事件，加载顺序在 bridge 之前的扩展（包括 `-e` 指定的扩展）在它们自己的 `session_start` 里设置的 widget/status 会漏掉。实测 rpc-demo（`-e` 加载）的 widget 因此能出现在快照里。另外把 bridge 移到了 `~/.pi/agent/settings.json` 的 `packages` 第一位（其余字段未动）。
+11. **状态文字去掉 ANSI 转义并去重**：run-timer 等扩展每秒刷新状态，内容不变时不再转发。字符串数组 widget 也去掉 ANSI。
+12. **role 为 `system` 的消息不转发**：pi 1.5.0 每次运行会发出一条 `role:"system"` 的系统提示消息（`agent-session.js:1346`），体积大且不应显示。快照/历史同样过滤。
+13. compat 为 `untested` 时 notify/status/widget 也不转发（它们与对话框包装在同一个 `patchUi` 里），与计划代码一致。
+14. 测试用的默认模型 `zero-cat/deepseek-v4.1-flash-1017` 余额不足（403 insufficient_user_quota），验收中用 `--model antigravity-vps/gemini-3.8-flash-high` 启动 pi；`set_model` 实测不会改写 settings.json 的 defaultModel。
