@@ -29,7 +29,7 @@ function UiRequestView({ req, onRespond }: { req: UiRequest; onRespond: (r: UiRe
       <View accessibilityLabel="ui-card" style={{ gap: 8 }}>
         <Txt v="lead">{req.title || "An extension opened its own screen on the computer."}</Txt>
         <Txt v="small" soft>It can only be used there. You can close it from here.</Txt>
-        <Button a11y="ui-custom-cancel" label="close it on the computer" color={p.pink} disabled={dis} onPress={() => void answer({ cancelled: true })} />
+        <Button kind="outline" a11y="ui-custom-cancel" label="close it on the computer" color={p.pink} style={{ alignSelf: "flex-start" }} disabled={dis} onPress={() => void answer({ cancelled: true })} />
       </View>
     );
   }
@@ -49,7 +49,7 @@ function UiRequestView({ req, onRespond }: { req: UiRequest; onRespond: (r: UiRe
       {req.kind === "confirm" ? (
         <View style={{ flexDirection: "row", gap: 10 }}>
           <Button kind="solid" a11y="ui-confirm" label="Yes" disabled={dis} onPress={() => void answer({ confirmed: true })} style={{ flex: 1 }} />
-          <Button kind="solid" a11y="ui-cancel" label="No" color={p.soft} disabled={dis} onPress={() => void answer({ confirmed: false })} style={{ flex: 1 }} />
+          <Button kind="outline" a11y="ui-cancel" label="No" disabled={dis} onPress={() => void answer({ confirmed: false })} style={{ flex: 1 }} />
         </View>
       ) : null}
       {req.kind === "input" || req.kind === "editor" ? <Button kind="solid" a11y="ui-submit" label="Send answer" disabled={dis} onPress={() => void answer({ value })} /> : null}

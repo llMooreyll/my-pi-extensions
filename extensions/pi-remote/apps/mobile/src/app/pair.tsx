@@ -82,7 +82,7 @@ export default function PairScreen() {
       <SectionHead n="03" title="…or paste it" />
       <Pad indent style={{ paddingTop: 10, gap: 12 }}>
         <Field a11y="pair-text-input" label="the JSON printed under the QR code" value={text} onChangeText={setText} placeholder='{"v":2,"kind":"pair",…}' multiline mono autoCapitalize="none" autoCorrect={false} style={{ minHeight: 70 }} />
-        <Button a11y="pair-text-submit" label="pair with this text" busy={busy} disabled={!text.trim()} onPress={() => accept(text, false)} />
+        <Button kind="outline" a11y="pair-text-submit" label="pair with this text" style={{ alignSelf: "flex-start" }} busy={busy} disabled={!text.trim()} onPress={() => accept(text, false)} />
       </Pad>
       {error ? <Pad indent style={{ paddingTop: 18 }}><Txt v="body" color={p.danger} a11y="pair-error">{error}</Txt></Pad> : null}
       {already ? <Pad indent style={{ paddingTop: 18 }}><Button a11y="pair-back" label="keep the current computer" onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} /></Pad> : null}
@@ -90,7 +90,7 @@ export default function PairScreen() {
       <Dialog visible={!!confirmQr} title="Pair with this computer?" a11y="pair-confirm-card" onClose={() => setConfirmQr(undefined)}
         actions={<>
           <Button kind="solid" a11y="pair-confirm-button" label="Pair" onPress={() => confirmQr && void doPair(confirmQr)} />
-          <Button a11y="pair-confirm-cancel" label="cancel" onPress={() => setConfirmQr(undefined)} />
+          <Button kind="outline" a11y="pair-confirm-cancel" label="cancel" onPress={() => setConfirmQr(undefined)} />
         </>}>
         {confirmQr ? (
           <View style={{ gap: 8 }}>

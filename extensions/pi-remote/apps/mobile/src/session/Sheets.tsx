@@ -1,11 +1,24 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import type { ForkPoint, ModelSummary, ProcessInfo, SessionListItem, TreeNodeWire } from "@pi-remote/protocol";
 import { Button, Choice, Field, Sheet, Spinner, Toggle, Txt } from "../ds/primitives";
-import { usePalette } from "../ds/tokens";
+import { F, usePalette } from "../ds/tokens";
+import { useTestAction } from "../lib/test-hooks";
 import { relTime } from "../lib/format";
 import { openProcess } from "../lib/nav";
 import { call, errCode, errText } from "../net/connection";
+
+/** A filter / scope chip: ruled, filled with ink when selected. */
+function Seg({ label, on, onPress, a11y }: { label: string; on: boolean; onPress: () => void; a11y: string }) {
+  const p = usePalette();
+  useTestAction(a11y, onPress);
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={a11y} onPress={onPress} hitSlop={4}
+      style={{ paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1, borderColor: on ? p.ink : p.faint, backgroundColor: on ? p.ink : "transparent" }}>
+      <Txt v="label" color={on ? p.invert : p.soft} style={{ fontFamily: on ? F.monoBold : F.mono }}>{label}</Txt>
+    </Pressable>
+  );
+}
 
 const Err = ({ text, a11y }: { text?: string; a11y: string }) => {
   const p = usePalette();
@@ -126,9 +139,9 @@ export function ResumeSheet({ processId, cwd, currentFile, onClose }: { processI
   };
   return (
     <Sheet visible a11y="resume-sheet" kicker="switch this pi to" title="Another session" onClose={onClose}>
-      <View style={{ flexDirection: "row", gap: 18, marginTop: 12 }}>
-        <Button a11y="resume-scope-project" label="this project" color={all ? p.soft : p.pink} onPress={() => setAll(false)} />
-        <Button a11y="resume-scope" label="all projects" color={all ? p.pink : p.soft} onPress={() => setAll(true)} />
+      <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+        <Seg a11y="resume-scope-project" label="this project" on={!all} onPress={() => setAll(false)} />
+        <Seg a11y="resume-scope" label="all projects" on={all} onPress={() => setAll(true)} />
       </View>
       <Err text={error} a11y="resume-error" />
       {!items && !error ? <Spinner /> : null}
@@ -191,11 +204,11 @@ export function TreeSheet({ processId, running, defaultFilter, onClose }: { proc
           <Toggle a11y="tree-summarize" value={summarize} onChange={setSummarize} label="Summarise the branch you leave" hint="Costs a model call; keeps a note of what was tried." />
           {summarize ? <Field a11y="tree-instructions" value={instr} onChangeText={setInstr} placeholder="what the summary should focus on (optional)" /> : null}
           <Button kind="solid" a11y="tree-go" label="Jump here" busy={busy} onPress={() => void go()} />
-          <Button a11y="tree-cancel" label="cancel" onPress={() => setTarget(undefined)} style={{ marginTop: 8 }} />
+          <Button kind="outline" a11y="tree-cancel" label="cancel" onPress={() => setTarget(undefined)} style={{ marginTop: 8 }} />
         </View>
       ) : undefined}>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14, marginTop: 12 }}>
-        {FILTERS.map((x) => <Button key={x.f} a11y={`tree-filter-${x.f}`} label={x.label} color={x.f === filter ? p.pink : p.soft} onPress={() => setFilter(x.f)} />)}
+        {FILTERS.map((x) => <Seg key={x.f} a11y={`tree-filter-${x.f}`} label={x.label} on={x.f === filter} onPress={() => setFilter(x.f)} />)}
       </View>
       {running ? <Txt v="small" color={p.blue} style={{ marginTop: 10 }}>pi is working. Wait until it is idle to jump.</Txt> : null}
       <Err text={error} a11y="tree-error" />
@@ -236,7 +249,7 @@ export function InfoSheet({ info, onClose, renameFirst }: { info: ProcessInfo; o
               try { await call("set_name", { processId: info.processId, name }); setRenaming(false); onClose(); } catch (e) { setError(errText(e)); }
             }} />
           </>
-        ) : <Button a11y="session-rename" label="rename" onPress={() => setRenaming(true)} />}
+        ) : <Button kind="outline" compact a11y="session-rename" label="rename" style={{ alignSelf: "flex-start" }} onPress={() => setRenaming(true)} />}
       </View>
       <View style={{ marginTop: 12 }}>
         <Line k="folder" v={info.cwd} />
@@ -257,10 +270,10 @@ export function InfoSheet({ info, onClose, renameFirst }: { info: ProcessInfo; o
           {confirmKill ? (
             <>
               <Txt v="body">Quit this pi on the computer? Its session file is kept.</Txt>
-              <Button kind="solid" a11y="session-shutdown-confirm" color={p.danger} label="Quit it" onPress={async () => { try { await call("shutdown", { processId: info.processId }); onClose(); } catch (e) { setError(errText(e)); } }} />
-              <Button a11y="session-shutdown-cancel" label="keep it running" onPress={() => setConfirmKill(false)} />
+              <Button kind="danger" a11y="session-shutdown-confirm" label="Quit it" onPress={async () => { try { await call("shutdown", { processId: info.processId }); onClose(); } catch (e) { setError(errText(e)); } }} />
+              <Button kind="outline" a11y="session-shutdown-cancel" label="keep it running" onPress={() => setConfirmKill(false)} />
             </>
-          ) : <Button a11y="session-shutdown" label="quit this pi on the computer" color={p.danger} onPress={() => setConfirmKill(true)} />}
+          ) : <Button kind="danger" a11y="session-shutdown" label="Quit this pi on the computer" arrow="■" onPress={() => setConfirmKill(true)} />}
         </View>
       ) : null}
     </Sheet>

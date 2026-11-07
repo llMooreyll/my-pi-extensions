@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { CommandInfo, DeliverAs, ImageInput } from "@pi-remote/protocol";
-import { Button, Spinner, Txt } from "../ds/primitives";
+import { Spinner, Txt } from "../ds/primitives";
 import { F, MARGIN, usePalette } from "../ds/tokens";
 import { BUILTIN_COMMANDS } from "../lib/slash";
 import { testLog, useTestAction, useTestInput } from "../lib/test-hooks";
@@ -69,6 +69,7 @@ export function Composer(p: ComposerProps) {
     } finally { setSending(false); }
   };
   useTestAction("composer-send", p.disabled ? undefined : () => void send());
+  useTestAction("composer-stop", p.running ? p.onAbort : undefined);
   useTestAction("composer-mode-steer", p.running ? () => setMode("steer") : undefined);
   useTestAction("composer-mode-followup", p.running ? () => setMode("followUp") : undefined);
   useTestAction("composer-commands", p.onOpenCommands);
@@ -84,17 +85,19 @@ export function Composer(p: ComposerProps) {
         </ScrollView>
       ) : null}
       {p.running ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 16, paddingHorizontal: MARGIN, paddingTop: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: MARGIN, paddingTop: 10 }}>
           <Spinner color={c.blue} />
-          <Txt v="label" color={c.blue}>working</Txt>
+          <Txt v="label" color={c.blue} style={{ fontFamily: F.monoBold }}>working</Txt>
           <View style={{ flex: 1 }} />
-          <Pressable accessibilityRole="button" accessibilityLabel="composer-mode-steer" onPress={() => setMode("steer")} hitSlop={8}>
-            <Txt v="label" color={mode === "steer" ? c.ink : c.faint} style={{ textDecorationLine: mode === "steer" ? "underline" : "none" }}>send now</Txt>
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="composer-mode-followup" onPress={() => setMode("followUp")} hitSlop={8}>
-            <Txt v="label" color={mode === "followUp" ? c.ink : c.faint} style={{ textDecorationLine: mode === "followUp" ? "underline" : "none" }}>send after</Txt>
-          </Pressable>
-          <Button a11y="composer-stop" label="stop" color={c.danger} onPress={p.onAbort} />
+          <Txt v="label" soft>deliver</Txt>
+          <View style={{ flexDirection: "row", borderWidth: 1, borderColor: c.ink }}>
+            {(["steer", "followUp"] as const).map((m) => (
+              <Pressable key={m} accessibilityRole="button" accessibilityLabel={m === "steer" ? "composer-mode-steer" : "composer-mode-followup"} onPress={() => setMode(m)}
+                style={{ paddingHorizontal: 9, paddingVertical: 4, backgroundColor: mode === m ? c.ink : "transparent" }}>
+                <Txt v="label" color={mode === m ? c.invert : c.soft} style={{ fontFamily: mode === m ? F.monoBold : F.mono }}>{m === "steer" ? "now" : "after"}</Txt>
+              </Pressable>
+            ))}
+          </View>
         </View>
       ) : null}
       {images.length ? (
@@ -126,8 +129,15 @@ export function Composer(p: ComposerProps) {
           submitBehavior="newline"
           placeholder={p.disabled ? "not connected" : p.running ? (mode === "steer" ? "steer pi while it works…" : "queue a message for later…") : "write to pi…"}
           placeholderTextColor={c.faint}
-          style={{ flex: 1, maxHeight: 170, minHeight: 54, color: c.ink, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 14, fontFamily: F.sans, fontSize: 16.5 }}
+          style={{ flex: 1, maxHeight: 170, minHeight: 54, color: c.ink, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 14, fontFamily: F.cjkSans, fontSize: 16 }}
         />
+        {p.running ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="composer-stop" onPress={p.onAbort}
+            style={({ pressed }) => ({ width: 58, alignSelf: "stretch", backgroundColor: c.danger, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.8 : 1 })}>
+            <Txt v="title" color="#FFFFFF">■</Txt>
+            <Txt v="label" color="#FFFFFF" style={{ fontSize: 9 }}>stop</Txt>
+          </Pressable>
+        ) : null}
         <Pressable accessibilityRole="button" accessibilityLabel="composer-send" onPress={() => void send()} disabled={!canSend}
           style={({ pressed }) => ({ width: 58, alignSelf: "stretch", backgroundColor: canSend ? (p.running && mode === "steer" ? c.blue : c.ink) : c.tint, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.8 : 1 })}>
           {sending ? <Spinner color={c.invert} /> : <Txt v="title" color={canSend ? c.invert : c.faint}>→</Txt>}

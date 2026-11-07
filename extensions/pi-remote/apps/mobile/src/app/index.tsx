@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ProcessInfo, ProjectItem, SessionListItem } from "@pi-remote/protocol";
-import { ConnLine, ErrorDialog, TrustDialog } from "../ds/common";
+import { ConnStatus, ErrorDialog, TrustDialog } from "../ds/common";
 import { Button, Field, Pad, Row, Rule, SectionHead, Spinner, StatusText, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { baseName, plainPreview, processTitle, relTime } from "../lib/format";
@@ -59,12 +59,23 @@ function ProcRows({ node, depth, index }: { node: Node; depth: number; index: st
   );
 }
 
+/** A big number with a mono caption, like a figure in a newspaper. */
+function Figure({ n, label, color }: { n: number; label: string; color: string }) {
+  return (
+    <View>
+      <Txt v="headline" color={color} style={{ fontSize: 38, lineHeight: 40 }}>{n}</Txt>
+      <Txt v="label" color={color}>{label}</Txt>
+    </View>
+  );
+}
+
 function FilterWord(props: { label: string; active: boolean; onPress: () => void; a11y: string }) {
   const p = usePalette();
   useTestAction(props.a11y, props.onPress);
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={props.a11y} onPress={props.onPress} hitSlop={6}>
-      <Txt v="label" color={props.active ? p.ink : p.soft} style={{ textDecorationLine: props.active ? "underline" : "none", fontFamily: props.active ? F.monoBold : F.mono }}>{props.label}</Txt>
+    <Pressable accessibilityRole="button" accessibilityLabel={props.a11y} onPress={props.onPress} hitSlop={4}
+      style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: props.active ? p.ink : "transparent", borderWidth: 1, borderColor: props.active ? p.ink : p.faint }}>
+      <Txt v="label" color={props.active ? p.invert : p.soft} style={{ fontFamily: props.active ? F.monoBold : F.mono, textTransform: "none" }}>{props.label}</Txt>
     </Pressable>
   );
 }
@@ -121,17 +132,20 @@ export default function Home() {
         stickyHeaderIndices={[1]}
       >
         <View>
-          <Pad style={{ paddingTop: 18 }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+          <Pad style={{ paddingTop: 16, paddingBottom: 18, gap: 14 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <Txt v="label" soft>{today}</Txt>
-              <Button a11y="home-settings" label="settings" onPress={() => router.push("/settings")} />
+              <Button kind="outline" compact a11y="home-settings" label="settings" onPress={() => router.push("/settings")} />
             </View>
-            <Txt v="display" style={{ marginTop: 10 }}>pi <Txt v="display" style={{ fontFamily: F.serifItalic }} color={p.pink}>remote</Txt></Txt>
-            <Txt v="label" soft style={{ marginTop: 6 }}>{procs.length} live · {running} working · {waiting.length} waiting for you</Txt>
+            <Txt v="display">pi <Txt v="display" style={{ fontFamily: F.serifItalic }} color={p.pink}>remote</Txt></Txt>
+            <ConnStatus />
+            <View style={{ flexDirection: "row", gap: 26 }}>
+              <Figure n={procs.length} label="live" color={p.ink} />
+              <Figure n={running} label="working" color={running ? p.blue : p.faint} />
+              <Figure n={waiting.length} label="need you" color={waiting.length ? p.pink : p.faint} />
+            </View>
           </Pad>
-          <Rule weight={2} style={{ marginTop: 14 }} />
-          <ConnLine />
-          <Rule />
+          <Rule weight={2} />
 
           {flow.busy ? (
             <Pad style={{ paddingVertical: 14, flexDirection: "row", gap: 10 }}><Spinner color={p.blue} /><Txt v="label" color={p.blue} a11y="home-busy">{flow.busy}</Txt></Pad>
@@ -162,7 +176,7 @@ export default function Home() {
           <Pad indent style={{ paddingTop: 8 }}>
             <Field a11y="home-search" value={query} onChangeText={setQuery} placeholder="search words, names, folders" autoCapitalize="none" autoCorrect={false} />
           </Pad>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16, paddingVertical: 12, paddingLeft: MARGIN + GUTTER, paddingRight: MARGIN }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 10, paddingLeft: MARGIN + GUTTER, paddingRight: MARGIN }}>
             {[undefined, ...projects.slice(0, 14).map((x) => x.cwd)].map((cwd) => (
               <FilterWord key={cwd ?? "all"} label={cwd ? baseName(cwd) : "all"} active={filter === cwd} onPress={() => setFilter(cwd)} a11y={`filter-${cwd ? baseName(cwd) : "all"}`} />
             ))}
@@ -172,7 +186,7 @@ export default function Home() {
         <View>
           {!sessions && conn === "ready" ? <Pad indent style={{ paddingVertical: 14 }}><Spinner /></Pad> : null}
           {shown.map((s, i) => (
-            <Row key={s.sessionFile} a11y={`session-item-${i}`} index={relTime(s.modified).replace(" ago", "")} onPress={() => open(s)} dense
+            <Row key={s.sessionFile} a11y={`session-item-${i}`} index={relTime(s.modified).replace(" ago", "")} indexStyle={{ textTransform: "none" }} onPress={() => open(s)} dense
               trailing={s.liveProcessId ? <Txt v="label" color={p.blue}>● live</Txt> : undefined}>
               <Txt v="body" lines={2}>{s.name || s.firstMessage || "(empty session)"}</Txt>
               <Txt v="mono" soft lines={1} style={{ fontSize: 11 }}>{baseName(s.cwd)} · {s.messageCount} messages</Txt>

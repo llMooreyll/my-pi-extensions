@@ -1,6 +1,7 @@
 import MarkdownIt from "markdown-it";
 import { memo, useMemo, type ReactNode } from "react";
 import { Linking, ScrollView, Text, View, type TextStyle } from "react-native";
+import { hasCJK } from "../ds/cjk";
 import { F, usePalette, type Palette } from "../ds/tokens";
 import { latexToUnicode } from "../lib/latex";
 
@@ -91,12 +92,21 @@ function toTree(tokens: any[]): Node[] {
 
 /* ───────────── rendering ───────────── */
 
-interface Ctx { p: Palette; base: TextStyle; key: { n: number } }
+interface Ctx { p: Palette; base: TextStyle; key: { n: number }; quote?: boolean }
+
+const inlineText = (tokens: any[] | undefined) => (tokens ?? []).map((t) => t.content ?? "").join("");
+
+/** Body style for one paragraph: Chinese gets Hei with generous leading; quotes get Song. */
+function paraStyle(c: Ctx, tokens: any[] | undefined): TextStyle {
+  if (!hasCJK(inlineText(tokens))) return c.base;
+  return { ...c.base, fontFamily: c.quote ? F.cjkSerif : F.cjkSans, fontSize: 15.5, lineHeight: 27, letterSpacing: 0.2 };
+}
 const k = (c: Ctx) => `m${c.key.n++}`;
 
 function inline(tokens: any[] | undefined, c: Ctx): ReactNode[] {
   const out: ReactNode[] = [];
   if (!tokens) return out;
+  const cjk = hasCJK(inlineText(tokens));
   const stack: { style: TextStyle; href?: string; items: ReactNode[] }[] = [{ style: {}, items: out }];
   const push = (n: ReactNode) => stack[stack.length - 1]!.items.push(n);
   const open = (style: TextStyle, href?: string) => stack.push({ style, href, items: [] });
@@ -110,13 +120,14 @@ function inline(tokens: any[] | undefined, c: Ctx): ReactNode[] {
       case "text": push(t.content); break;
       case "softbreak": push(" "); break;
       case "hardbreak": push("\n"); break;
-      case "strong_open": open({ fontFamily: F.sansBold }); break;
-      case "em_open": open({ fontFamily: F.serifItalic, fontSize: (c.base.fontSize ?? 15.5) + 2.5 }); break;
+      // Chinese has no italics: emphasis switches to Song, strong to bold Hei.
+      case "strong_open": open({ fontFamily: cjk ? F.cjkSansBold : F.sansBold }); break;
+      case "em_open": open(cjk ? { fontFamily: F.cjkSerif } : { fontFamily: F.serifItalic, fontSize: (c.base.fontSize ?? 15.5) + 2.5 }); break;
       case "s_open": open({ textDecorationLine: "line-through" }); break;
       case "link_open": open({ color: c.p.blue, textDecorationLine: "underline" }, t.attrGet?.("href") ?? undefined); break;
       case "strong_close": case "em_close": case "s_close": case "link_close": if (stack.length > 1) close(); break;
       case "code_inline": push(<Text key={k(c)} style={{ fontFamily: F.mono, fontSize: (c.base.fontSize ?? 15.5) - 2.5, backgroundColor: c.p.tint }}>{` ${t.content} `}</Text>); break;
-      case "math_inline": push(<Text key={k(c)} style={{ fontFamily: F.serifItalic, fontSize: (c.base.fontSize ?? 15.5) + 3 }}>{latexToUnicode(t.content)}</Text>); break;
+      case "math_inline": push(<Text key={k(c)} style={{ fontFamily: F.serifItalic, fontSize: (c.base.fontSize ?? 15.5) + 2 }}>{latexToUnicode(t.content)}</Text>); break;
       case "image": push(<Text key={k(c)} style={{ color: c.p.soft }}>[image: {t.content || t.attrGet?.("src")}]</Text>); break;
       case "html_inline": push(t.content); break;
       default: if (t.content) push(t.content);
@@ -125,6 +136,15 @@ function inline(tokens: any[] | undefined, c: Ctx): ReactNode[] {
   while (stack.length > 1) close();
   return out;
 }
+
+const CJK_HEADINGS: Record<string, TextStyle> = {
+  h1: { fontFamily: F.cjkSerifBold, fontSize: 23, lineHeight: 34 },
+  h2: { fontFamily: F.cjkSerifBold, fontSize: 19.5, lineHeight: 30 },
+  h3: { fontFamily: F.cjkSansBold, fontSize: 16.5, lineHeight: 27 },
+  h4: { fontFamily: F.cjkSansMed, fontSize: 14, lineHeight: 23 },
+  h5: { fontFamily: F.cjkSansMed, fontSize: 13.5, lineHeight: 22 },
+  h6: { fontFamily: F.cjkSans, fontSize: 13.5, lineHeight: 22 },
+};
 
 const HEADINGS: Record<string, TextStyle> = {
   h1: { fontFamily: F.serif, fontSize: 29, lineHeight: 33, letterSpacing: -0.4 },
@@ -142,12 +162,14 @@ function blocks(nodes: Node[], c: Ctx, depth = 0, tight = false): ReactNode[] {
     switch (n.type) {
       case "paragraph": {
         const inl = n.children[0]?.inline;
-        return <Text key={k(c)} style={[c.base, { marginBottom: gap }]}>{inline(inl, c)}</Text>;
+        return <Text key={k(c)} style={[paraStyle(c, inl), { marginBottom: gap }]}>{inline(inl, c)}</Text>;
       }
-      case "inline": return <Text key={k(c)} style={c.base}>{inline(n.inline, c)}</Text>;
+      case "inline": return <Text key={k(c)} style={paraStyle(c, n.inline)}>{inline(n.inline, c)}</Text>;
       case "heading": {
         const inl = n.children[0]?.inline;
-        return <Text key={k(c)} style={[c.base, HEADINGS[n.tag] ?? HEADINGS.h3, { marginTop: i === 0 ? 0 : 12, marginBottom: last ? 0 : 6 }]}>{inline(inl, c)}</Text>;
+        const table = hasCJK(inlineText(inl)) ? CJK_HEADINGS : HEADINGS;
+        const hs = table[n.tag] ?? table.h3;
+        return <Text key={k(c)} style={[c.base, hs, n.tag >= "h4" ? { color: c.p.soft } : null, { marginTop: i === 0 ? 0 : 14, marginBottom: last ? 0 : 6 }]}>{inline(inl, c)}</Text>;
       }
       case "bullet_list":
       case "ordered_list": {
@@ -156,7 +178,7 @@ function blocks(nodes: Node[], c: Ctx, depth = 0, tight = false): ReactNode[] {
         return (
           <View key={k(c)} style={{ marginBottom: gap }}>
             {n.children.map((item, j) => (
-              <View key={k(c)} style={{ flexDirection: "row", alignItems: "baseline", marginBottom: j === n.children.length - 1 ? 0 : 5 }}>
+              <View key={k(c)} style={{ flexDirection: "row", alignItems: "baseline", marginBottom: j === n.children.length - 1 ? 0 : 6 }}>
                 <Text style={[c.base, { width, fontFamily: F.mono, fontSize: 12, color: c.p.soft }]}>{ordered ? `${(n.start ?? 1) + j}.` : depth % 2 ? "◦" : "–"}</Text>
                 <View style={{ flex: 1 }}>{blocks(item.children, c, depth + 1, true)}</View>
               </View>
@@ -167,7 +189,7 @@ function blocks(nodes: Node[], c: Ctx, depth = 0, tight = false): ReactNode[] {
       case "blockquote":
         return (
           <View key={k(c)} style={{ borderLeftWidth: 1, borderLeftColor: c.p.soft, paddingLeft: 12, marginBottom: gap }}>
-            {blocks(n.children, { ...c, base: { ...c.base, color: c.p.soft } }, depth, tight)}
+            {blocks(n.children, { ...c, quote: true, base: { ...c.base, color: c.p.soft } }, depth, tight)}
           </View>
         );
       case "fence":
@@ -205,7 +227,7 @@ function Table({ node, c, gap }: { node: Node; c: Ctx; gap: number }) {
         {rows.map((r, i) => (
           <View key={i} style={{ flexDirection: "row", borderBottomWidth: 1, borderBottomColor: r.head ? c.p.ink : c.p.faint }}>
             {r.cells.map((cell, j) => (
-              <Text key={j} style={[c.base, { width: 150, paddingVertical: 6, paddingRight: 12 }, r.head ? { fontFamily: F.mono, fontSize: 10.5, letterSpacing: 1.2, textTransform: "uppercase", color: c.p.soft } : { fontSize: 14, lineHeight: 20 }]}>
+              <Text key={j} style={[paraStyle(c, cell.children[0]?.inline), { width: 150, paddingVertical: 7, paddingRight: 12 }, r.head ? { fontFamily: hasCJK(inlineText(cell.children[0]?.inline)) ? F.cjkSansMed : F.mono, fontSize: 11, letterSpacing: 0.8, color: c.p.soft } : { fontSize: 14, lineHeight: 21 }]}>
                 {inline(cell.children[0]?.inline, c)}
               </Text>
             ))}

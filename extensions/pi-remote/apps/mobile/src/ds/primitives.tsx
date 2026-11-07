@@ -6,6 +6,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TEST_HOOKS, useTestAction, useTestInput } from "../lib/test-hooks";
+import { CJK_ROLE, childText, hasCJK } from "./cjk";
 import { F, GUTTER, MARGIN, STATUS_WORD, statusColor, usePalette, type Status } from "./tokens";
 
 /* ───────────────────────────── type ───────────────────────────── */
@@ -27,13 +28,15 @@ const VARIANT: Record<TxtVariant, TextStyle> = {
 
 export function Txt(props: {
   children: ReactNode; v?: TxtVariant; color?: string; soft?: boolean; faint?: boolean; style?: StyleProp<TextStyle>;
-  lines?: number; a11y?: string; selectable?: boolean; center?: boolean;
+  lines?: number; a11y?: string; selectable?: boolean; center?: boolean; cjk?: TextStyle;
 }) {
   const p = usePalette();
   const color = props.color ?? (props.faint ? p.faint : props.soft ? p.soft : p.ink);
+  const v = props.v ?? "body";
+  const cjk = v !== "mono" && hasCJK(childText(props.children)) ? { ...CJK_ROLE[v], ...props.cjk } : null;
   return (
     <Text accessibilityLabel={props.a11y} numberOfLines={props.lines} selectable={props.selectable}
-      style={[VARIANT[props.v ?? "body"], { color }, props.center ? { textAlign: "center" } : null, props.style]}>
+      style={[VARIANT[v], { color }, props.center ? { textAlign: "center" } : null, props.style, cjk]}>
       {props.children}
     </Text>
   );
@@ -52,7 +55,7 @@ export function Rule(props: { color?: string; weight?: number; style?: StyleProp
  */
 export function Row(props: {
   children: ReactNode; a11y?: string; onPress?: () => void; index?: string; indexColor?: string; trailing?: ReactNode;
-  disabled?: boolean; first?: boolean; accent?: string; style?: StyleProp<ViewStyle>; dense?: boolean;
+  disabled?: boolean; first?: boolean; accent?: string; style?: StyleProp<ViewStyle>; dense?: boolean; indexStyle?: StyleProp<TextStyle>;
 }) {
   const p = usePalette();
   useTestAction(props.a11y, props.onPress, !props.disabled);
@@ -64,7 +67,7 @@ export function Row(props: {
     }, props.style]}>
       <View style={{ width: GUTTER + MARGIN, paddingLeft: MARGIN }}>
         {props.accent ? <View style={{ position: "absolute", left: 0, top: -15, bottom: -15, width: 3, backgroundColor: props.accent }} /> : null}
-        {props.index ? <Txt v="label" color={props.indexColor ?? p.soft}>{props.index}</Txt> : null}
+        {props.index ? <Txt v="label" color={props.indexColor ?? p.soft} style={props.indexStyle}>{props.index}</Txt> : null}
       </View>
       <View style={{ flex: 1, gap: 3 }}>{props.children}</View>
       {props.trailing ? <View style={{ paddingLeft: 10, alignItems: "flex-end" }}>{props.trailing}</View> : null}
@@ -97,8 +100,8 @@ export function SectionHead(props: { n: string; title: string; right?: ReactNode
 export function StatusText(props: { status: Status; count?: number; a11y?: string }) {
   const p = usePalette();
   return (
-    <Txt v="label" color={statusColor(p, props.status)} a11y={props.a11y}>
-      {props.status === "idle" ? "○" : "●"} {STATUS_WORD[props.status]}{props.count && props.count > 1 ? ` · ${props.count}` : ""}
+    <Txt v="label" color={statusColor(p, props.status)} a11y={props.a11y} style={{ fontFamily: props.status === "idle" ? F.mono : F.monoBold, fontSize: 11.5 }}>
+      {props.status === "idle" ? "○" : props.status === "running" ? "▶" : "◆"} {STATUS_WORD[props.status]}{props.count && props.count > 1 ? ` · ${props.count}` : ""}
     </Txt>
   );
 }
@@ -106,17 +109,20 @@ export function StatusText(props: { status: Status; count?: number; a11y?: strin
 /* ───────────────────────────── actions ───────────────────────────── */
 
 /**
- * Two kinds of action only.
- * "solid": a flat ink bar with the label left and an arrow right — the one primary thing on a screen.
- * "text":  an underlined mono word.
+ * Four kinds of action, by weight:
+ * "solid":   flat ink bar, label left, arrow right — the one primary thing on a screen.
+ * "danger":  the same bar in red, for things that cannot be undone or that cut the connection.
+ * "outline": a ruled box with a mono label — secondary actions that still need to look pressable.
+ * "text":    an underlined mono word — tertiary, low-stakes actions.
  */
 export function Button(props: {
-  label: string; a11y: string; onPress: () => void; kind?: "solid" | "text"; color?: string; disabled?: boolean; busy?: boolean;
+  label: string; a11y: string; onPress: () => void; kind?: "solid" | "danger" | "outline" | "text"; color?: string; disabled?: boolean; busy?: boolean;
   arrow?: string; style?: StyleProp<ViewStyle>; compact?: boolean;
 }) {
   const p = usePalette();
+  const kind = props.kind ?? "text";
   useTestAction(props.a11y, props.onPress, !props.disabled && !props.busy);
-  if ((props.kind ?? "text") === "text") {
+  if (kind === "text") {
     return (
       <Pressable accessibilityRole="button" accessibilityLabel={props.a11y} onPress={props.onPress} disabled={props.disabled || props.busy} hitSlop={10} style={props.style}>
         {({ pressed }) => (
@@ -127,13 +133,27 @@ export function Button(props: {
       </Pressable>
     );
   }
-  const bg = props.color ?? p.ink;
+  if (kind === "outline") {
+    const col = props.color ?? p.ink;
+    return (
+      <Pressable accessibilityRole="button" accessibilityLabel={props.a11y} onPress={props.onPress} disabled={props.disabled || props.busy} hitSlop={6} style={props.style}>
+        {({ pressed }) => (
+          <View style={{ borderWidth: 1.5, borderColor: col, paddingHorizontal: 11, paddingVertical: props.compact ? 5 : 8, backgroundColor: pressed ? p.tint : "transparent", opacity: props.disabled ? 0.35 : 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            {props.busy ? <Spinner color={col} /> : null}
+            <Txt v="label" color={col} style={{ fontFamily: F.monoBold }}>{props.label}</Txt>
+          </View>
+        )}
+      </Pressable>
+    );
+  }
+  const bg = kind === "danger" ? p.danger : props.color ?? p.ink;
+  const fg = kind === "danger" ? "#FFFFFF" : p.invert;
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={props.a11y} onPress={props.onPress} disabled={props.disabled || props.busy} style={props.style}>
       {({ pressed }) => (
         <View style={{ backgroundColor: bg, opacity: props.disabled ? 0.3 : pressed ? 0.82 : 1, flexDirection: "row", alignItems: "center", paddingHorizontal: 18, paddingVertical: props.compact ? 11 : 16 }}>
-          <Txt v="bodyBold" color={p.invert} style={{ flex: 1, fontSize: props.compact ? 14.5 : 16 }}>{props.label}</Txt>
-          {props.busy ? <Spinner color={p.invert} /> : <Txt v="lead" color={p.invert}>{props.arrow ?? "→"}</Txt>}
+          <Txt v="bodyBold" color={fg} style={{ flex: 1, fontSize: props.compact ? 14.5 : 16 }}>{props.label}</Txt>
+          {props.busy ? <Spinner color={fg} /> : <Txt v="lead" color={fg}>{props.arrow ?? "→"}</Txt>}
         </View>
       )}
     </Pressable>
@@ -159,27 +179,35 @@ export function Field(props: TextInputProps & { a11y: string; value: string; onC
         {...rest}
         style={[{
           color: p.ink, borderBottomWidth: focus ? 2 : 1, borderBottomColor: focus ? p.ink : p.soft, paddingVertical: 8, paddingHorizontal: 0,
-          fontFamily: mono ? F.mono : F.sans, fontSize: mono ? 13.5 : 16,
+          fontFamily: mono ? F.mono : F.cjkSans, fontSize: mono ? 13.5 : 16,
         }, style]}
       />
     </View>
   );
 }
 
-/** "On / Off" set as type; the active word is inked and underlined. */
-export function Toggle(props: { value: boolean; onChange: (v: boolean) => void; a11y: string; label: string; hint?: string }) {
+/** A labelled switch: two ruled cells, the active one filled with ink. */
+export function Toggle(props: { value: boolean; onChange: (v: boolean) => void; a11y: string; label: string; hint?: string; unset?: boolean }) {
   const p = usePalette();
   const flip = () => props.onChange(!props.value);
   useTestAction(props.a11y, flip);
+  const cell = (on: boolean, text: string) => (
+    <View style={{ paddingHorizontal: 9, paddingVertical: 4, backgroundColor: on && !props.unset ? (props.value ? p.ok : p.ink) : "transparent" }}>
+      <Txt v="label" color={props.unset ? p.soft : on ? "#FFFFFF" : p.faint} style={{ fontFamily: on && !props.unset ? F.monoBold : F.mono }}>{text}</Txt>
+    </View>
+  );
   return (
     <Pressable accessibilityRole="switch" accessibilityState={{ checked: props.value }} accessibilityLabel={props.a11y} onPress={flip}
-      style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: p.faint, gap: 12 }}>
+      style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: p.faint, gap: 14, backgroundColor: pressed ? p.tint : "transparent" })}>
       <View style={{ flex: 1 }}>
         <Txt v="body">{props.label}</Txt>
         {props.hint ? <Txt v="small" soft>{props.hint}</Txt> : null}
       </View>
-      <Txt v="label" color={props.value ? p.ink : p.faint} style={{ textDecorationLine: props.value ? "underline" : "none" }}>on</Txt>
-      <Txt v="label" color={!props.value ? p.ink : p.faint} style={{ textDecorationLine: !props.value ? "underline" : "none" }}>off</Txt>
+      {props.unset ? <Txt v="label" soft>default</Txt> : null}
+      <View style={{ flexDirection: "row", borderWidth: 1, borderColor: props.unset ? p.faint : p.ink }}>
+        {cell(props.value, "on")}
+        {cell(!props.value, "off")}
+      </View>
     </Pressable>
   );
 }
@@ -220,7 +248,7 @@ export function Spinner(props: { color?: string }) {
 
 export function Screen(props: {
   children: ReactNode; title?: string; kicker?: string; back?: boolean; right?: ReactNode; scroll?: boolean;
-  footer?: ReactNode; titleNode?: ReactNode; onTitlePress?: () => void; a11yTitle?: string;
+  footer?: ReactNode; titleNode?: ReactNode; onTitlePress?: () => void; a11yTitle?: string; ruleColor?: string;
 }) {
   const p = usePalette();
   const insets = useSafeAreaInsets();
@@ -229,7 +257,7 @@ export function Screen(props: {
   useTestAction(props.a11yTitle, props.onTitlePress);
   return (
     <View style={{ flex: 1, backgroundColor: p.paper }}>
-      <View style={{ paddingTop: insets.top + 10, paddingHorizontal: MARGIN, paddingBottom: 12, flexDirection: "row", alignItems: "flex-end", gap: 12 }}>
+      <View style={{ paddingTop: insets.top + 10, paddingHorizontal: MARGIN, paddingBottom: 12, flexDirection: "row", alignItems: "center", gap: 12 }}>
         {props.back ? (
           <Pressable accessibilityRole="button" accessibilityLabel="nav-back" hitSlop={14} onPress={goBack} style={{ width: GUTTER - 12 }}>
             <Txt v="title">←</Txt>
@@ -245,7 +273,7 @@ export function Screen(props: {
         </Pressable>
         {props.right}
       </View>
-      <Rule weight={2} />
+      <Rule weight={props.ruleColor ? 4 : 2} color={props.ruleColor} />
       {props.scroll === false ? <View style={{ flex: 1 }}>{props.children}</View> : (
         <ScrollView contentContainerStyle={{ paddingBottom: 48 + insets.bottom }} keyboardShouldPersistTaps="handled">{props.children}</ScrollView>
       )}

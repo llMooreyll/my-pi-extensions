@@ -22,17 +22,40 @@ import { Transcript } from "../../session/Transcript";
 
 type Confirm = { title: string; body?: string; label?: string; run: () => Promise<void> };
 
-/** An inline control set as an underlined word: "model gemini ▾". */
+/** One cell of the spec strip under the header: caption, value, optional second line or bar. */
+function Spec({ label, value, sub, onPress, a11y, color, bar }: { label: string; value: string; sub?: string; onPress?: () => void; a11y: string; color?: string; bar?: { pct: number; color: string } }) {
+  const p = usePalette();
+  useTestAction(a11y, onPress);
+  return (
+    <Pressable accessibilityRole={onPress ? "button" : undefined} accessibilityLabel={a11y} onPress={onPress} disabled={!onPress}
+      style={({ pressed }) => ({ flex: 1, paddingVertical: 9, paddingHorizontal: 10, backgroundColor: pressed ? p.tint : "transparent", gap: 2 })}>
+      <Txt v="label" soft>{label}{onPress ? "  ›" : ""}</Txt>
+      <Txt v="bodyBold" color={color ?? p.ink} lines={1} style={{ fontSize: 14.5, lineHeight: 19 }}>{value}</Txt>
+      {sub ? <Txt v="mono" soft lines={1} style={{ fontSize: 10.5, lineHeight: 14 }}>{sub}</Txt> : null}
+      {bar ? (
+        <View style={{ height: 3, backgroundColor: p.faint, marginTop: 5 }}>
+          <View style={{ height: 3, width: `${Math.max(2, Math.min(100, bar.pct))}%`, backgroundColor: bar.color }} />
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
+/** A labelled link set as an underlined word, for parent / children. */
 function Word({ label, value, onPress, a11y, color }: { label: string; value: string; onPress?: () => void; a11y: string; color?: string }) {
   const p = usePalette();
   useTestAction(a11y, onPress);
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={a11y} onPress={onPress} disabled={!onPress} hitSlop={6} style={{ flexDirection: "row", gap: 5, alignItems: "baseline" }}>
+    <Pressable accessibilityRole="button" accessibilityLabel={a11y} onPress={onPress} disabled={!onPress} hitSlop={6} style={{ flexDirection: "row", gap: 6, alignItems: "baseline" }}>
       <Txt v="label" soft>{label}</Txt>
-      <Txt v="mono" color={color ?? p.ink} style={{ textDecorationLine: onPress ? "underline" : "none", fontSize: 12 }}>{value}</Txt>
+      <Txt v="small" color={color ?? p.ink} style={{ textDecorationLine: onPress ? "underline" : "none" }}>{value}</Txt>
     </Pressable>
   );
 }
+
+const THINK_COLOR = (p: ReturnType<typeof usePalette>, level: string) => (level === "off" ? p.soft : level === "minimal" || level === "low" ? p.ink : p.blue);
+
+const fmtTokens = (n: number | null) => (n == null ? "?" : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
 export default function SessionScreen() {
   const p = usePalette();
@@ -51,7 +74,7 @@ export default function SessionScreen() {
   const [error, setError] = useState<string | undefined>();
   const [hideThinking, setHideThinking] = useState(false);
   const [treeFilter, setTreeFilter] = useState<string | undefined>();
-  const [panelsOpen, setPanelsOpen] = useState(true);
+  const [panelsOpen, setPanelsOpen] = useState<boolean | undefined>(undefined);
   const flow = useOpenFlow();
   const info = view?.info ?? procInfo;
 
@@ -164,6 +187,8 @@ export default function SessionScreen() {
   const status = info?.status ?? "idle";
   const usage = info?.contextUsage?.percent;
   const widgets = Object.entries(view?.extWidgets ?? {});
+  // Subagent / team panels are worth seeing by default; other extension panels start folded.
+  const panelsShown = panelsOpen ?? widgets.some(([k]) => /subagent|team/.test(k));
   const statusLine = Object.values(view?.extStatus ?? {}).join("   ");
   const role = info?.role;
   const gone = view?.gone || (!procInfo && conn === "ready");
@@ -171,32 +196,43 @@ export default function SessionScreen() {
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: p.paper }} behavior="height">
       <Screen back scroll={false} a11yTitle="session-title" onTitlePress={info ? () => setSheet("session") : undefined}
+        ruleColor={status === "running" ? p.blue : status === "waiting_ui" ? p.pink : undefined}
         titleNode={
           <>
-            <Txt v="label" color={statusColor(p, status)} a11y="session-status">{status === "idle" ? "○" : "●"} {STATUS_WORD[status]}{info ? ` — ${baseName(info.cwd)}` : ""}</Txt>
+            <Txt v="label" a11y="session-status" color={statusColor(p, status)} style={{ fontFamily: status === "idle" ? F.mono : F.monoBold }}>
+              {status === "idle" ? "○" : status === "running" ? "▶" : "◆"} {STATUS_WORD[status]}<Txt v="label" soft>{info ? `  ·  ${baseName(info.cwd)}` : ""}</Txt>
+            </Txt>
             <Txt v="title" lines={2}>{info ? processTitle(info) : "Session"}</Txt>
           </>
         }
-        right={<Button a11y="session-commands" label="commands" onPress={() => setSheet("deck")} disabled={!ready} />}>
+        right={<Button kind="outline" compact a11y="session-commands" label="≡ commands" onPress={() => setSheet("deck")} disabled={!ready} />}>
         {info ? (
-          <View style={{ paddingHorizontal: MARGIN, paddingVertical: 9, gap: 6, borderBottomWidth: 1, borderBottomColor: p.faint }}>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 16, rowGap: 6 }}>
-              <Word a11y="chip-model" label="model" value={info.model ? info.model.id : "none"} onPress={ready ? () => setSheet("model") : undefined} />
-              <Word a11y="chip-thinking" label="thinking" value={info.thinkingLevel} onPress={ready ? () => setSheet("thinking") : undefined} />
-              {usage != null ? <Word a11y="chip-context" label="context" value={`${usage.toFixed(0)}%`} color={usage > 80 ? p.danger : undefined} /> : null}
-            </View>
+          <View style={{ flexDirection: "row", borderBottomWidth: 1, borderBottomColor: p.ink }}>
+            <Spec a11y="chip-model" label="model" value={info.model ? (info.model.name || info.model.id) : "none"} sub={info.model ? `${info.model.provider}${info.model.input.includes("image") ? " · images" : ""}` : "choose one"}
+              color={info.model ? p.ink : p.danger} onPress={ready ? () => setSheet("model") : undefined} />
+            <View style={{ width: 1, backgroundColor: p.faint }} />
+            <Spec a11y="chip-thinking" label="thinking" value={info.thinkingLevel} sub={info.model?.reasoning ? "reasoning model" : "no reasoning"} color={THINK_COLOR(p, info.thinkingLevel)} onPress={ready ? () => setSheet("thinking") : undefined} />
+            <View style={{ width: 1, backgroundColor: p.faint }} />
+            <Spec a11y="chip-context" label="context" value={usage != null ? `${usage.toFixed(0)}%` : "—"}
+              sub={info.contextUsage ? `${fmtTokens(info.contextUsage.tokens)} / ${fmtTokens(info.contextUsage.contextWindow)}` : undefined}
+              color={usage != null && usage > 80 ? p.danger : p.ink}
+              bar={usage != null ? { pct: usage, color: usage > 80 ? p.danger : usage > 50 ? p.pink : p.blue } : undefined} />
+          </View>
+        ) : null}
+        {info && (role?.kind !== "main" || parent || children.length || statusLine) ? (
+          <View style={{ paddingHorizontal: MARGIN, paddingVertical: 8, gap: 5, borderBottomWidth: 1, borderBottomColor: p.faint }}>
             {role && role.kind !== "main" ? (
-              <Txt v="small" soft a11y="session-role">
-                {role.kind === "subagent" ? `Subagent “${role.name}”${role.agent ? `, agent ${role.agent}` : ""}${role.autoExit ? ", quits when done" : ""}.`
-                  : `Team member “${role.name}”${role.agent ? `, agent ${role.agent}` : ""}, ${role.write ? `writes to ${role.branch ?? "its branch"}` : "read-only"}.`}
+              <Txt v="small" a11y="session-role" color={p.blue}>
+                {role.kind === "subagent" ? `Subagent “${role.name}”${role.agent ? ` · ${role.agent}` : ""}${role.autoExit ? " · quits when done" : ""}`
+                  : `Team member “${role.name}”${role.agent ? ` · ${role.agent}` : ""} · ${role.write ? `writes ${role.branch ?? "its branch"}` : "read-only"}`}
               </Txt>
             ) : null}
             {parent ? <Word a11y="chip-parent" label="started by" value={`← ${processTitle(parent)}`} color={p.blue} onPress={() => openProcess(parent.processId)} /> : null}
             {children.length ? (
-              <View accessibilityLabel="child-strip" style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 14, rowGap: 4 }}>
-                <Txt v="label" soft>its subtasks</Txt>
+              <View accessibilityLabel="child-strip" style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 14, rowGap: 4, alignItems: "baseline" }}>
+                <Txt v="label" soft>subtasks</Txt>
                 {children.map((c) => (
-                  <Word key={c.processId} a11y={`child-${c.processId}`} label={c.status === "idle" ? "○" : "●"} color={statusColor(p, c.status)}
+                  <Word key={c.processId} a11y={`child-${c.processId}`} label={c.status === "idle" ? "○" : c.status === "running" ? "▶" : "◆"} color={statusColor(p, c.status)}
                     value={c.role.kind === "main" ? processTitle(c) : c.role.name} onPress={() => openProcess(c.processId)} />
                 ))}
               </View>
@@ -233,10 +269,10 @@ export default function SessionScreen() {
 
         {widgets.length ? (
           <View style={{ borderTopWidth: 1, borderTopColor: p.faint }}>
-            <Pressable accessibilityRole="button" accessibilityLabel="panels-toggle" onPress={() => setPanelsOpen(!panelsOpen)} style={{ paddingHorizontal: MARGIN, paddingVertical: 6 }}>
-              <Txt v="label" soft>{panelsOpen ? "−" : "+"} panels from extensions · {widgets.length}</Txt>
+            <Pressable accessibilityRole="button" accessibilityLabel="panels-toggle" onPress={() => setPanelsOpen(!panelsShown)} style={{ paddingHorizontal: MARGIN, paddingVertical: 6 }}>
+              <Txt v="label" soft>{panelsShown ? "−" : "+"} extension panels · {widgets.map(([k]) => k).join(", ")}</Txt>
             </Pressable>
-            {panelsOpen ? (
+            {panelsShown ? (
               <ScrollView style={{ maxHeight: 150 }} contentContainerStyle={{ paddingHorizontal: MARGIN, paddingBottom: 8 }}>
                 {widgets.map(([k, w]) => (
                   <ScrollView key={k} horizontal accessibilityLabel={`widget-${k}`}>

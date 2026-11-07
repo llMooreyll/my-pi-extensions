@@ -16,17 +16,18 @@ export interface Palette {
   invert: string;     // text on solid ink
   pink: string;
   blue: string;
+  ok: string;         // connected / healthy
   danger: string;
   addBg: string; delBg: string;
 }
 
 const light: Palette = {
   scheme: "light", paper: "#F3F0E9", tint: "#E7E2D7", ink: "#141413", soft: "#67625A", faint: "#C9C3B6", invert: "#F3F0E9",
-  pink: "#F2287F", blue: "#2346F5", danger: "#E2381B", addBg: "#DCEFCB", delBg: "#F9D5DF",
+  pink: "#F2287F", blue: "#2346F5", ok: "#178A4C", danger: "#D8341A", addBg: "#DCEFCB", delBg: "#F9D5DF",
 };
 const dark: Palette = {
   scheme: "dark", paper: "#0F0F0E", tint: "#1C1C1A", ink: "#EFEBE2", soft: "#97928A", faint: "#33322F", invert: "#0F0F0E",
-  pink: "#FF4C9B", blue: "#7088FF", danger: "#FF6B47", addBg: "#1D3216", delBg: "#3E1424",
+  pink: "#FF4C9B", blue: "#7088FF", ok: "#4CC584", danger: "#FF6B47", addBg: "#1D3216", delBg: "#3E1424",
 };
 
 export function usePalette(): Palette {
@@ -41,6 +42,13 @@ export const F = {
   sansBold: "SpaceGrotesk-Bold",
   mono: "JetBrainsMono-Regular",
   monoBold: "JetBrainsMono-Bold",
+  // Chinese: Source Han / Noto CJK subset to GB2312 (assets/fonts). The Latin faces above have no CJK glyphs,
+  // so any text containing Chinese switches to these families as a whole (see cjk.ts).
+  cjkSerif: "NotoSerifSC-Regular",
+  cjkSerifBold: "NotoSerifSC-Bold",
+  cjkSans: "NotoSansSC-Regular",
+  cjkSansMed: "NotoSansSC-Medium",
+  cjkSansBold: "NotoSansSC-Bold",
 } as const;
 
 export const FONT_FILES = {
@@ -51,6 +59,11 @@ export const FONT_FILES = {
   "SpaceGrotesk-Bold": require("../../assets/fonts/SpaceGrotesk-Bold.ttf"),
   "JetBrainsMono-Regular": require("../../assets/fonts/JetBrainsMono-Regular.ttf"),
   "JetBrainsMono-Bold": require("../../assets/fonts/JetBrainsMono-Bold.ttf"),
+  "NotoSerifSC-Regular": require("../../assets/fonts/NotoSerifSC-Regular.otf"),
+  "NotoSerifSC-Bold": require("../../assets/fonts/NotoSerifSC-Bold.otf"),
+  "NotoSansSC-Regular": require("../../assets/fonts/NotoSansSC-Regular.otf"),
+  "NotoSansSC-Medium": require("../../assets/fonts/NotoSansSC-Medium.otf"),
+  "NotoSansSC-Bold": require("../../assets/fonts/NotoSansSC-Bold.otf"),
 };
 
 /** Left margin of the page grid; the index column sits inside it. */

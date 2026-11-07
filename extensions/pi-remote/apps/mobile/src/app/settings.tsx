@@ -7,7 +7,7 @@ import { stopForeground } from "../bg/foreground";
 import { reloadPrefs } from "../bg/notifications";
 import { openBatteryOptimization } from "../bg/platform";
 import { Button, Choice, Field, Pad, Screen, SectionHead, Sheet, Spinner, Toggle, Txt } from "../ds/primitives";
-import { GUTTER, MARGIN, usePalette } from "../ds/tokens";
+import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { clearTrust, loadHosts, loadPrefs, saveHosts, savePrefs, type AppPrefs, type SavedHost } from "../lib/credentials";
 import { useTestAction } from "../lib/test-hooks";
 import { call, connection, errText } from "../net/connection";
@@ -87,7 +87,7 @@ function Connection() {
   return (
     <Pad indent style={{ paddingTop: 10, gap: 6 }}>
       <Txt v="title" a11y="settings-hostname">{host.endpoint.hostName}</Txt>
-      <Txt v="label" color={linked ? p.blue : p.pink}>{linked ? `● connected ${st.via === "direct" ? "directly" : "via relay"}` : `○ ${st.conn}`}</Txt>
+      <Txt v="label" color={linked ? p.ok : p.pink} style={{ fontFamily: F.monoBold, fontSize: 12 }}>{linked ? `● connected ${st.via === "direct" ? "directly" : "via relay"}` : `● ${st.conn === "backoff" ? "offline" : st.conn}`}</Txt>
       {st.lastError ? <Txt v="small" color={p.pink}>{st.lastError}</Txt> : null}
       <View style={{ marginTop: 8 }}>
         <Fact k="key" v={fingerprint(host.endpoint.hostKey)} a11y="settings-fingerprint" />
@@ -101,9 +101,9 @@ function Connection() {
         <Field a11y="settings-relay-input" label="relay" value={relay} onChangeText={setRelay} placeholder="ws://203.0.113.5:7443" mono autoCapitalize="none" autoCorrect={false} />
         <Field a11y="settings-direct-input" label="direct, same network (optional)" value={direct} onChangeText={setDirect} placeholder="ws://192.168.1.10:7444" mono autoCapitalize="none" autoCorrect={false} />
         <Button kind="solid" a11y="settings-save-conn" label="Save and reconnect" onPress={() => void save()} />
-        <View style={{ flexDirection: "row", gap: 20 }}>
-          <Button a11y="settings-test-conn" label="test each address" onPress={() => void test()} />
-          <Button a11y="settings-scan-endpoint" label="scan pi-hostd qr" onPress={async () => {
+        <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
+          <Button kind="outline" compact a11y="settings-test-conn" label="test each address" onPress={() => void test()} />
+          <Button kind="outline" compact a11y="settings-scan-endpoint" label="scan pi-hostd qr" onPress={async () => {
             if (!perm?.granted) { const r = await requestPerm(); if (!r.granted) { setMsg("Camera permission was denied."); return; } }
             setScanning(true);
           }} />
@@ -111,17 +111,21 @@ function Connection() {
         {msg ? <Txt v="small" a11y="settings-conn-msg">{msg}</Txt> : null}
         {tests ? <View accessibilityLabel="settings-test-results">{tests.map((t, i) => <Txt key={i} v="mono" a11y={`settings-test-${i}`} color={t.startsWith("✕") ? p.danger : p.ink}>{t}</Txt>)}</View> : null}
         <Field a11y="settings-endpoint-input" label="or paste the output of pi-hostd qr" value={paste} onChangeText={setPaste} placeholder='{"v":2,"kind":"endpoint",…}' mono multiline autoCapitalize="none" autoCorrect={false} />
-        <Button a11y="settings-endpoint-apply" label="apply connection details" disabled={!paste.trim()} onPress={() => { void applyEndpoint(paste); setPaste(""); }} />
+        <Button kind="outline" compact a11y="settings-endpoint-apply" label="apply connection details" style={{ alignSelf: "flex-start" }} disabled={!paste.trim()} onPress={() => { void applyEndpoint(paste); setPaste(""); }} />
       </View>
-      <Txt v="em" style={{ marginTop: 22 }}>Unpair</Txt>
-      {confirmUnpair ? (
-        <View style={{ gap: 10 }}>
-          <Txt v="body">Forget this computer on the phone. Also revoke it on the computer:</Txt>
-          <Txt v="mono" selectable>pi-hostd devices revoke {host.deviceId}</Txt>
-          <Button kind="solid" a11y="settings-unpair-yes" color={p.danger} label="Forget this computer" onPress={async () => { await saveHosts([]); connection.disconnect(); await stopForeground(); router.replace("/pair"); }} />
-          <Button a11y="settings-unpair-no" label="keep it" onPress={() => setConfirmUnpair(false)} />
-        </View>
-      ) : <Button a11y="settings-unpair" label="unpair this phone" color={p.danger} onPress={() => setConfirmUnpair(true)} />}
+      <View style={{ marginTop: 30, borderTopWidth: 2, borderTopColor: p.danger, paddingTop: 14, gap: 10 }}>
+        <Txt v="label" color={p.danger} style={{ fontFamily: F.monoBold }}>danger zone</Txt>
+        <Txt v="title">Unpair this phone</Txt>
+        <Txt v="small" soft>The phone forgets this computer and its key. To use it again you must pair from scratch with pi-hostd pair.</Txt>
+        {confirmUnpair ? (
+          <View style={{ gap: 10 }}>
+            <Txt v="body">Also revoke the phone on the computer, so the old key stops working:</Txt>
+            <Txt v="mono" selectable>pi-hostd devices revoke {host.deviceId}</Txt>
+            <Button kind="danger" a11y="settings-unpair-yes" label="Yes, forget this computer" onPress={async () => { await saveHosts([]); connection.disconnect(); await stopForeground(); router.replace("/pair"); }} />
+            <Button kind="outline" a11y="settings-unpair-no" label="keep it paired" onPress={() => setConfirmUnpair(false)} />
+          </View>
+        ) : <Button kind="danger" a11y="settings-unpair" label="Unpair this phone" onPress={() => setConfirmUnpair(true)} />}
+      </View>
       <Modal visible={scanning} onRequestClose={() => setScanning(false)}>
         <View style={{ flex: 1, backgroundColor: "black" }}>
           <CameraView style={{ flex: 1 }} barcodeScannerSettings={{ barcodeTypes: ["qr"] }} onBarcodeScanned={({ data }) => { setScanning(false); void applyEndpoint(data); }} />
@@ -136,7 +140,8 @@ function SettingRow({ d, value, onSet, onPick }: { d: RemoteSettingDef; value: u
   const p = usePalette();
   const note = d.applies === "reload" ? "running pis reload when idle" : d.applies === "new_session" ? "for new sessions" : "only this app";
   useTestAction(`setting-${d.key}`, d.type === "enum" ? onPick : undefined);
-  if (d.type === "boolean") return <Toggle a11y={`setting-switch-${d.key}`} value={value === true} onChange={(v) => onSet(v)} label={d.label} hint={note} />;
+  // Unset booleans show "default": pi's built-in default differs per setting, so do not pretend it is off.
+  if (d.type === "boolean") return <Toggle a11y={`setting-switch-${d.key}`} value={value === true} unset={value === undefined} onChange={(v) => onSet(v)} label={d.label} hint={note} />;
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={`setting-${d.key}`} onPress={onPick}
       style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: p.faint, backgroundColor: pressed ? p.tint : "transparent", gap: 12 })}>
@@ -144,7 +149,7 @@ function SettingRow({ d, value, onSet, onPick }: { d: RemoteSettingDef; value: u
         <Txt v="body">{d.label}</Txt>
         <Txt v="small" soft>{note}</Txt>
       </View>
-      <Txt v="mono" a11y={`setting-value-${d.key}`} style={{ textDecorationLine: "underline" }}>{value === undefined ? "default" : String(value)}</Txt>
+      <Txt v="mono" a11y={`setting-value-${d.key}`} color={value === undefined ? p.soft : p.ink} style={{ fontFamily: value === undefined ? F.mono : F.monoBold }}>{value === undefined ? "default" : String(value)}  ›</Txt>
     </Pressable>
   );
 }
@@ -185,9 +190,9 @@ function PhoneSettings() {
     <Pad indent style={{ paddingTop: 6, gap: 4 }}>
       <Toggle a11y="settings-keepalive" value={prefs.keepAlive} onChange={(v) => void update({ ...prefs, keepAlive: v })} label="Stay connected in the background" hint="keeps a small notification; needed for alerts" />
       <Toggle a11y="settings-notify-child" value={prefs.notifyChildDone} onChange={(v) => void update({ ...prefs, notifyChildDone: v })} label="Alert when a subagent finishes" hint="you are always alerted when one needs you" />
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 20, marginTop: 14 }}>
-        <Button a11y="settings-battery" label="battery optimisation" onPress={() => { openBatteryOptimization().catch(() => Linking.openSettings()); }} />
-        <Button a11y="settings-clear-trust" label="forget trust choices" onPress={async () => { await clearTrust(); setMsg("Trust choices forgotten."); }} />
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
+        <Button kind="outline" compact a11y="settings-battery" label="battery optimisation" onPress={() => { openBatteryOptimization().catch(() => Linking.openSettings()); }} />
+        <Button kind="outline" compact a11y="settings-clear-trust" label="forget trust choices" onPress={async () => { await clearTrust(); setMsg("Trust choices forgotten."); }} />
       </View>
       {msg ? <Txt v="small" soft style={{ marginTop: 8 }}>{msg}</Txt> : null}
     </Pad>

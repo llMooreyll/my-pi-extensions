@@ -7,10 +7,13 @@ import { useTestAction } from "../lib/test-hooks";
 import { connection } from "../net/connection";
 import { useStore } from "../state/store";
 import { Button, Dialog, Toggle, Txt } from "./primitives";
-import { MARGIN, usePalette } from "./tokens";
+import { F, usePalette } from "./tokens";
 
-/** One line of mono under the masthead: where we are connected, or why not. */
-export function ConnLine() {
+/**
+ * Connection state as the first thing under the masthead: a coloured state word, the computer's name,
+ * the route, and — when not connected — the reason and a retry button.
+ */
+export function ConnStatus() {
   const p = usePalette();
   const conn = useStore((s) => s.conn);
   const via = useStore((s) => s.via);
@@ -23,18 +26,22 @@ export function ConnLine() {
     else router.push("/settings");
   };
   useTestAction("conn-bar", onPress);
-  const color = ok ? p.soft : conn === "connecting" ? p.soft : p.pink;
+  const color = ok ? p.ok : conn === "connecting" ? p.soft : p.pink;
+  const word = ok ? "connected" : conn === "no_credentials" ? "not paired" : conn === "connecting" ? "connecting" : "offline";
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel="conn-bar" onPress={onPress} style={{ paddingHorizontal: MARGIN, paddingVertical: 8, gap: 2 }}>
-      <Txt v="label" a11y="conn-state" color={color} lines={1}>
-        {ok ? `● ${host ?? "computer"} — ${via === "direct" ? "direct" : "via relay"}`
-          : conn === "no_credentials" ? "○ not paired — tap to pair"
-          : conn === "connecting" ? "○ connecting…"
-          : "● offline — tap to retry"}
-      </Txt>
+    <View style={{ gap: 4 }}>
+      <Pressable accessibilityRole="button" accessibilityLabel="conn-bar" onPress={onPress} style={{ flexDirection: "row", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+        <Txt v="label" a11y="conn-state" color={color} style={{ fontFamily: F.monoBold, fontSize: 12 }}>● {word}</Txt>
+        {host && conn !== "no_credentials" ? <Txt v="lead" lines={1}>{host}</Txt> : null}
+        {ok ? <Txt v="small" soft a11y="conn-via">{via === "direct" ? "direct, same network" : "via relay"}</Txt> : null}
+      </Pressable>
       {!ok && lastError ? <Txt v="small" a11y="conn-error" color={color} lines={2}>{lastError}</Txt> : null}
-      {ok ? <View accessibilityLabel="conn-via" /> : null}
-    </Pressable>
+      {!ok ? (
+        <View style={{ flexDirection: "row", marginTop: 6 }}>
+          <Button kind="outline" compact a11y="conn-retry" color={color} label={conn === "no_credentials" ? "pair this phone" : "retry now"} onPress={onPress} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -51,6 +58,7 @@ export function ErrorDialog(props: { text?: string; onClose: () => void }) {
 }
 
 export function TrustDialog(props: { cwd?: string; onChoose: (t: Trust) => void; onCancel: () => void }) {
+  const p = usePalette();
   const [remember, setRemember] = useState(false);
   const choose = async (t: Trust) => {
     if (remember && props.cwd) await rememberTrust(props.cwd, t);
@@ -60,8 +68,8 @@ export function TrustDialog(props: { cwd?: string; onChoose: (t: Trust) => void;
     <Dialog visible={!!props.cwd} title="Trust this project?" a11y="trust-dialog" onClose={props.onCancel}>
       <Txt v="mono" soft lines={3}>{props.cwd}</Txt>
       <Txt v="body">A trusted project may load its own extensions, skills and prompts from <Txt v="mono">.pi/</Txt>. Choose safe mode for code you did not write.</Txt>
-      <Button kind="solid" a11y="trust-approve" label="Trust and load project files" onPress={() => void choose("approve")} />
-      <Button kind="solid" a11y="trust-deny" label="Safe mode" arrow="→" onPress={() => void choose("deny")} />
+      <Button kind="solid" a11y="trust-deny" label="Safe mode" onPress={() => void choose("deny")} />
+      <Button kind="outline" a11y="trust-approve" label="trust and load .pi files" color={p.danger} onPress={() => void choose("approve")} />
       <Toggle a11y="trust-remember" value={remember} onChange={setRemember} label="Remember for this project" />
       <Button a11y="trust-cancel" label="cancel" onPress={props.onCancel} />
     </Dialog>
@@ -73,8 +81,8 @@ export function ConfirmDialog(props: { title?: string; body?: string; confirmLab
   return (
     <Dialog visible={!!props.title} title={props.title ?? ""} a11y="session-confirm" color={props.danger ? p.danger : undefined} onClose={props.onCancel}
       actions={<>
-        <Button kind="solid" a11y="session-confirm-yes" color={props.danger ? p.danger : undefined} label={props.confirmLabel ?? "Confirm"} onPress={props.onConfirm} />
-        <Button a11y="session-confirm-no" label="cancel" onPress={props.onCancel} />
+        <Button kind={props.danger ? "danger" : "solid"} a11y="session-confirm-yes" label={props.confirmLabel ?? "Confirm"} onPress={props.onConfirm} />
+        <Button kind="outline" a11y="session-confirm-no" label="cancel" onPress={props.onCancel} />
       </>}>
       {props.body ? <Txt v="body">{props.body}</Txt> : null}
     </Dialog>
