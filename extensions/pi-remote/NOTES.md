@@ -35,3 +35,14 @@
 17. 中继已部署到 TencentVPS：容器 `pi-relay`（`--restart unless-stopped`，端口 7443），镜像在 VPS 上本地构建，npm 直连可用；中继密钥在本机 `~/.config/pi-remote/relay-secret`。
 18. M6 验收第 3 条"另一个网络的电脑经中继访问"没有可用的第二台电脑；本机经中继访问成功，M7 中 Waydroid 也经中继访问。第 6 条"本机断网"无 sudo 无法模拟，改为把 VPS 上的 pi-relay 停 60 秒再启动，检查 hostd 自动恢复。
 19. hostd 已安装为 systemd 用户服务（`~/.config/systemd/user/pi-hostd.service` 是指向仓库的符号链接）。
+
+## M7 实测与偏差
+
+20. App：Expo SDK 58、React Native 0.88.1、React 19.3，新架构。App 不加入 npm workspaces，protocol 通过 `file:../../packages/protocol` 链接，metro 的 watchFolders 指向它。
+21. `react-native-markdown-display` 依赖的 markdown-it 需要 `punycode`，额外安装了用户态包 `punycode@2`。
+22. Hermes 的 TextDecoder 不一定支持 `fatal`，加了 `src/lib/text-polyfill.js`（无依赖）。
+23. Android 边到边显示：输入栏、底部弹层加了安全区底部内边距，否则会被系统导航栏挡住。
+24. 消息列表改成倒置 FlatList（最新消息在 offset 0），普通 FlatList 的 scrollToEnd 在虚拟化下到不了底。
+25. 测试钩子额外加了 `piremote://test/press?label=`、`piremote://test/labels`：run-timer 每秒刷新状态行，界面一直不空闲，uiautomator dump 会一直等待；测试构建里转圈动画换成静态的"…"。这些只在 `EXPO_PUBLIC_TEST_HOOKS=1` 时生效。
+26. Waydroid 上已通过的验收：e2ee 握手与深链接配对、直连与中继切换、hostd 停止/恢复与中继重启后自动重连、首页打开旧会话（信任对话框）、手机发消息与电脑同步、流式输出、插话/排队/停止、edit diff 着色、hostd 停 30 秒后消息不丢不重（快照对比 seq 与条数一致）、select/input 对话框双向、ask_user_question 问卷。
+27. 未在 Waydroid 上验收（功能已实现）：M7e 第 7 条 custom 取消、M7f 原生命令与设置页、M7g 图片、M7h 通知与前台服务、M7i 子 agent/team 界面、M7j 连接设置与迁移；M8 的 README 未写。
