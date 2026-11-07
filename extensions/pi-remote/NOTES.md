@@ -57,3 +57,5 @@
     - 对话框和问卷固定显示在输入栏上方的粉色区域，不会被忽略。
     - 运行中改为"send now / send after / stop"，取代原来的"steer / queue"。
 30. 新增 Web 构建，用于设计预览和浏览器直接使用：`*.web.ts` 替换了安全存储（改用 localStorage）、前台服务和通知。启动方式：`EXPO_PUBLIC_TEST_HOOKS=1 npx expo start --web --port 8090`。为此新配对了一台 Web 设备，`devices.json` 中会多出一项。
+31. **验收 D-A8 的修复**（问卷对应的 custom() 卡片偶尔单独显示）：原因不只是 2 秒时间窗。rpiv-ask-user-question 在内联位置被让出时会重新 mount 一次 custom()（`ask-user-question.ts` 397–402 行，STACKED_OVERLAY），第二次 mount 可能发生在问卷事件很久之后。现在的规则：custom() 打开时，只要有仍在打开的问卷，就归到最近打开的那个，不设时间窗；反过来，custom() 先于问卷事件 3 秒内打开的，会在问卷事件到达时补上 `coveredBy` 并重新发送 `ui_request`。已在运行的 pi 需要 `/reload` 或重启后才会加载新 bridge。
+32. Markdown 改为自己用 markdown-it 渲染（不再依赖 react-native-markdown-display），支持 `$…$`、`$$…$$`、`\(…\)`、`\[…\]` 公式：手机上没有排版引擎，公式转成 Unicode（`src/lib/latex.ts`：希腊字母和运算符、上下标、`\frac`→a/b、`\sqrt`→√、`\mathbb`→ℝ 等）。复杂公式（矩阵、多行对齐）只能近似显示。
