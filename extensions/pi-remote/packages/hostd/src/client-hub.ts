@@ -170,6 +170,9 @@ class ClientHub {
     c.subs.set(processId, sub);
     try {
       const snapshot = await registry.request(processId, "get_snapshot", { maxMessages: runtime.config.snapshotMessages }, 15_000) as Snapshot;
+      // The bridge cannot know the parent link; hostd derives it (links.ts), so graft it back on.
+      const parent = registry.get(processId)?.info.parentProcessId;
+      if (parent) snapshot.info = { ...snapshot.info, parentProcessId: parent };
       return {
         res: { mode: "snapshot", snapshot },
         after: () => {

@@ -18,7 +18,7 @@ export interface ContextUsageWire {
 /** 进程角色，由 bridge 从环境变量判断（7.6.1） */
 export type ProcessRole =
   | { kind: "main" }
-  | { kind: "subagent"; subagentId: string; name: string; agent?: string; autoExit: boolean }
+  | { kind: "subagent"; subagentId: string; name: string; agent?: string; autoExit: boolean; parentSessionId?: string }
   | { kind: "team_member"; memberId: string; name: string; agent?: string; write: boolean;
       branch?: string; worktree?: string; leadPid: number; runDir?: string };
 

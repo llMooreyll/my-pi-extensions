@@ -12,9 +12,14 @@ export function detectRole(): ProcessRole {
     };
   }
   if (e.PI_SUBAGENT_ID) {
+    // The launcher keeps the child's activity file under artifacts/<parent session id>/, which names the
+    // parent even when the subagent tool was called indirectly (e.g. through codemode) and its result
+    // therefore carries no session file for the parent to remember.
+    const parentSessionId = /[\\/]artifacts[\\/]([^\\/]+)[\\/]subagent-activity[\\/]/.exec(e.PI_SUBAGENT_ACTIVITY_FILE ?? "")?.[1];
     return {
       kind: "subagent", subagentId: e.PI_SUBAGENT_ID, name: e.PI_SUBAGENT_NAME || e.PI_SUBAGENT_ID,
       agent: e.PI_SUBAGENT_AGENT || undefined, autoExit: e.PI_SUBAGENT_AUTO_EXIT === "1",
+      ...(parentSessionId ? { parentSessionId } : {}),
     };
   }
   return { kind: "main" };

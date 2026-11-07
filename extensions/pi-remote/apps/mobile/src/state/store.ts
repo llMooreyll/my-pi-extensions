@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { BridgeEvent, OpResult, ProcessInfo } from "@pi-remote/protocol";
 import type { SavedHost } from "../lib/credentials";
 import { applyEvent, fromSnapshot } from "./view-reducer";
-import type { ProcessView } from "./types";
+import type { ProcessView, Queued } from "./types";
 
 export type ConnState = "no_credentials" | "connecting" | "ready" | "backoff";
 const MAX_VIEWS = 5;
@@ -69,9 +69,13 @@ export const store = {
     const views = { ...get().views };
     if (r.mode === "snapshot") {
       const prev = views[pid];
-      views[pid] = { ...fromSnapshot(r.snapshot), lastViewedAt: prev?.lastViewedAt ?? Date.now() };
-      // Keep the process list in sync with the freshest info.
-      set({ views, procs: { ...get().procs, [pid]: r.snapshot.info } });
+      views[pid] = { ...fromSnapshot(r.snapshot), queued: prev?.queued ?? [], lastViewedAt: prev?.lastViewedAt ?? Date.now() };
+      // Keep the process list in sync with the freshest info. The parent link is derived by hostd and
+      // not part of what the bridge reports, so a snapshot must not wipe it (it made children fall out of the tree).
+      const parent = r.snapshot.info.parentProcessId ?? get().procs[pid]?.parentProcessId;
+      const fresh = parent ? { ...r.snapshot.info, parentProcessId: parent } : r.snapshot.info;
+      views[pid] = { ...views[pid]!, info: fresh };
+      set({ views, procs: { ...get().procs, [pid]: fresh } });
     } else {
       const v = views[pid];
       if (v) views[pid] = { ...v, resyncing: false };
@@ -84,6 +88,16 @@ export const store = {
     const views = { ...get().views };
     delete views[pid];
     set({ views });
+  },
+
+  addQueued(pid: string, q: Queued) {
+    const v = get().views[pid];
+    if (v) set({ views: { ...get().views, [pid]: { ...v, queued: [...v.queued, q] } } });
+  },
+
+  removeQueued(pid: string, id: string) {
+    const v = get().views[pid];
+    if (v && v.queued.some((q) => q.id === id)) set({ views: { ...get().views, [pid]: { ...v, queued: v.queued.filter((q) => q.id !== id) } } });
   },
 
   touchView(pid: string) {

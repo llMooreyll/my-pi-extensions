@@ -6,7 +6,11 @@ const realCache = new Map<string, string>();
 const norm = (f?: string) => {
   if (!f) return undefined;
   let r = realCache.get(f);
-  if (r === undefined) { try { r = realpathSync(f); } catch { r = f; } realCache.set(f, r); }
+  if (r === undefined) {
+    // A session file that does not exist yet (the child has just been launched) must not be cached
+    // as itself: once it exists and resolves through a symlink the two sides would never match.
+    try { r = realpathSync(f); realCache.set(f, r); } catch { return f; }
+  }
   return r;
 };
 
@@ -22,6 +26,8 @@ export function recompute(): ProcessInfo[] {
     } else if (role.kind === "subagent") {
       const mine = norm(e.info.sessionFile);
       parent = mine ? all.find((x) => x !== e && (x.info.childSessionFiles ?? []).some((c) => norm(c) === mine))?.info.processId : undefined;
+      // Fallback: the parent's session id, taken from the launch environment (see bridge/src/role.ts).
+      if (!parent && role.parentSessionId) parent = all.find((x) => x !== e && x.info.sessionId === role.parentSessionId)?.info.processId;
     }
     if (parent !== e.info.parentProcessId) {
       if (parent === undefined) delete e.info.parentProcessId; else e.info.parentProcessId = parent;

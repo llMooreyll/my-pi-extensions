@@ -63,8 +63,8 @@ function ProcRows({ node, depth, index }: { node: Node; depth: number; index: st
 function Figure({ n, label, color }: { n: number; label: string; color: string }) {
   return (
     <View>
-      <Txt v="headline" color={color} style={{ fontSize: 38, lineHeight: 40 }}>{n}</Txt>
-      <Txt v="label" color={color}>{label}</Txt>
+      <Txt v="headline" color={color} style={{ fontSize: 30, lineHeight: 32, textAlign: "right" }}>{n}</Txt>
+      <Txt v="label" color={color} style={{ fontSize: 9.5, textAlign: "right" }}>{label}</Txt>
     </View>
   );
 }
@@ -119,7 +119,6 @@ export default function Home() {
     else void flow.openSession(s.sessionFile, s.cwd);
   };
 
-  const today = new Date().toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
   const running = procs.filter((x) => x.status === "running").length;
 
   return (
@@ -132,17 +131,18 @@ export default function Home() {
         stickyHeaderIndices={[1]}
       >
         <View>
-          <Pad style={{ paddingTop: 16, paddingBottom: 18, gap: 14 }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Txt v="label" soft>{today}</Txt>
-              <Button kind="outline" compact a11y="home-settings" label="settings" onPress={() => router.push("/settings")} />
+          <Pad style={{ paddingTop: 14, paddingBottom: 16, gap: 12 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }}>
+              <Txt v="display" style={{ fontSize: 40, lineHeight: 44 }}>pi <Txt v="display" style={{ fontFamily: F.serifItalic, fontSize: 40, lineHeight: 44 }} color={p.pink}>remote</Txt></Txt>
+              <View style={{ flexDirection: "row", gap: 16, paddingBottom: 4 }}>
+                <Figure n={procs.length} label="live" color={p.ink} />
+                <Figure n={running} label="working" color={running ? p.blue : p.faint} />
+                <Figure n={waiting.length} label="need you" color={waiting.length ? p.pink : p.faint} />
+              </View>
             </View>
-            <Txt v="display">pi <Txt v="display" style={{ fontFamily: F.serifItalic }} color={p.pink}>remote</Txt></Txt>
-            <ConnStatus />
-            <View style={{ flexDirection: "row", gap: 26 }}>
-              <Figure n={procs.length} label="live" color={p.ink} />
-              <Figure n={running} label="working" color={running ? p.blue : p.faint} />
-              <Figure n={waiting.length} label="need you" color={waiting.length ? p.pink : p.faint} />
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <View style={{ flex: 1 }}><ConnStatus /></View>
+              <Button kind="outline" compact a11y="home-settings" label="settings" onPress={() => router.push("/settings")} />
             </View>
           </Pad>
           <Rule weight={2} />
@@ -163,12 +163,12 @@ export default function Home() {
             </>
           ) : null}
 
-          <SectionHead n="01" title="Live on the computer" right={<Txt v="label" soft>{procs.length}</Txt>} />
+          <SectionHead n="01" title="Live on the computer" color={p.blue} right={<Txt v="label" color={p.blue} style={{ fontFamily: F.monoBold }}>● {procs.length}</Txt>} />
           {procs.length === 0 ? (
             <Pad indent style={{ paddingVertical: 16 }}><Txt v="body" soft a11y="home-no-procs">Nothing is running. Reopen a session below or start a new one.</Txt></Pad>
           ) : tree.map((n, i) => <ProcRows key={n.info.processId} node={n} depth={0} index={String(i + 1).padStart(2, "0")} />)}
 
-          <SectionHead n="02" title="Recent sessions" right={<Txt v="label" soft>{shown.length}{sessions && shown.length !== sessions.length ? ` of ${sessions.length}` : ""}</Txt>} />
+          <SectionHead n="02" title="Recent sessions" color={p.soft} right={<Txt v="label" soft>{shown.length}{sessions && shown.length !== sessions.length ? ` of ${sessions.length}` : ""}</Txt>} />
         </View>
 
         {/* Sticky: search and folder filters stay on screen while the list scrolls. */}

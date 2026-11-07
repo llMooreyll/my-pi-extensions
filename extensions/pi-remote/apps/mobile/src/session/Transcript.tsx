@@ -5,7 +5,7 @@ import { Button, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { stripAnsi, textOf } from "../lib/format";
 import { useTestAction } from "../lib/test-hooks";
-import type { AssistantDraft, Block as ContentBlock } from "../state/types";
+import type { AssistantDraft, Block as ContentBlock, Queued } from "../state/types";
 import { CustomCard } from "./CustomCard";
 import { Markdown } from "./Markdown";
 import { ToolCard } from "./ToolCard";
@@ -14,10 +14,12 @@ type Item = (
   | { key: string; kind: "msg"; m: WireMessage; idx: number }
   | { key: string; kind: "draft"; d: AssistantDraft }
   | { key: string; kind: "tool"; id: string; name: string; args: unknown; partialText: string }
+  | { key: string; kind: "queued"; q: Queued }
 ) & { label?: boolean };
 
 /** Who "speaks" an item; the margin label is printed only when the speaker changes. */
 function speaker(i: Item): string {
+  if (i.kind === "queued") return "you";
   if (i.kind !== "msg") return "pi";
   switch (i.m.role) {
     case "user": return "you";
@@ -92,6 +94,24 @@ const Row = memo(function Row({ item, ctx }: { item: Item; ctx: Ctx }) {
   const p = usePalette();
   const lab = (s: string) => (item.label ? s : "");
   if (item.kind === "draft") return <Margin label={lab("pi")} color={p.blue} a11y="msg-inflight"><Blocks blocks={item.d.content} ctx={ctx} prefix="draft" streaming /></Margin>;
+  if (item.kind === "queued") {
+    const q = item.q;
+    return (
+      <View accessibilityLabel="msg-queued" style={{ marginTop: 14, opacity: 0.78 }}>
+        <View style={{ height: 1, backgroundColor: p.faint, marginBottom: 2 }} />
+        <Margin label="you" color={p.pink}>
+          <Txt v={q.text.length > 280 ? "body" : "em"} selectable style={q.text.length > 280 ? undefined : { fontSize: 22, lineHeight: 27 }} color={p.soft}>{q.text}</Txt>
+          {q.images ? <Txt v="label" color={p.pink} style={{ marginTop: 4 }}>+ {q.images} image{q.images > 1 ? "s" : ""}</Txt> : null}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+            <View style={{ borderWidth: 1, borderColor: q.mode === "steer" ? p.blue : p.soft, paddingHorizontal: 6, paddingVertical: 2 }}>
+              <Txt v="label" color={q.mode === "steer" ? p.blue : p.soft} style={{ fontFamily: F.monoBold, fontSize: 9.5 }}>{q.mode === "steer" ? "queued · steer" : "queued · after run"}</Txt>
+            </View>
+            <Txt v="small" soft lines={1} style={{ flex: 1, fontSize: 12 }}>{q.mode === "steer" ? "pi reads it at its next break" : "pi reads it when this run ends"}</Txt>
+          </View>
+        </Margin>
+      </View>
+    );
+  }
   if (item.kind === "tool") return <Margin label=""><ToolCard id={item.id} name={item.name} args={item.args} running={{ partialText: item.partialText }} /></Margin>;
   const m = item.m as WireMessage & Record<string, any>;
   const a11y = `msg-${item.idx}`;
@@ -137,7 +157,7 @@ const Row = memo(function Row({ item, ctx }: { item: Item; ctx: Ctx }) {
 });
 
 export function Transcript(props: {
-  messages: WireMessage[]; inflight?: AssistantDraft; running?: Record<string, { toolName: string; args: unknown; partialText: string }>;
+  messages: WireMessage[]; inflight?: AssistantDraft; queued?: Queued[]; running?: Record<string, { toolName: string; args: unknown; partialText: string }>;
   hasMoreBefore: boolean; onLoadMore?: () => Promise<void>; hideThinking?: boolean; header?: ReactElement | null;
 }) {
   const p = usePalette();
@@ -161,10 +181,12 @@ export function Transcript(props: {
     });
     if (props.inflight) out.push({ key: "inflight", kind: "draft", d: props.inflight });
     for (const [id, t] of Object.entries(running)) if (!calls.has(id)) out.push({ key: `run-${id}`, kind: "tool", id, name: t.toolName, args: t.args, partialText: t.partialText });
+    // Queued messages are not in the conversation yet, so they close the list.
+    for (const q of props.queued ?? []) out.push({ key: q.id, kind: "queued", q });
     let prev = "";
     for (const it of out) { const sp = speaker(it); it.label = sp !== prev; prev = sp; }
     return { items: out, ctx: { results, running, hideThinking: !!props.hideThinking } as Ctx };
-  }, [props.messages, props.inflight, running, props.hideThinking]);
+  }, [props.messages, props.inflight, props.queued, running, props.hideThinking]);
 
   // Inverted list: offset 0 is the newest entry, so new output stays in view.
   const data = useMemo(() => [...items].reverse(), [items]);

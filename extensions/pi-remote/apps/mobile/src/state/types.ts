@@ -8,6 +8,9 @@ export type Block =
 
 export interface AssistantDraft { role: "assistant"; content: Block[] }
 
+/** A message sent while pi was busy: pi has it queued, but it is not part of the conversation yet. */
+export interface Queued { id: string; text: string; mode: "steer" | "followUp"; images: number; at: number }
+
 export interface Toast { id: string; text: string; level: string; at: number }
 
 export interface ProcessView {
@@ -22,6 +25,7 @@ export interface ProcessView {
   extStatus: Record<string, string>;
   extWidgets: Record<string, { lines: string[]; placement: string }>;
   toasts: Toast[];
+  queued: Queued[];
   /** Local-only: a subscribe is in flight; incoming events are dropped until it resolves. */
   resyncing?: boolean;
   lastViewedAt: number;

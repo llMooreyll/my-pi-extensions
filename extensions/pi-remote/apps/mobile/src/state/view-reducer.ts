@@ -1,4 +1,5 @@
 import type { AssistantDelta, BridgeEvent, Snapshot, WireMessage } from "@pi-remote/protocol";
+import { textOf } from "../lib/format";
 import type { AssistantDraft, Block, ProcessView, Toast } from "./types";
 
 let toastSeq = 0;
@@ -19,6 +20,7 @@ export function fromSnapshot(s: Snapshot): ProcessView {
     extStatus: s.extStatus,
     extWidgets: s.extWidgets,
     toasts: [],
+    queued: [],
     lastViewedAt: Date.now(),
   };
 }
@@ -52,15 +54,23 @@ export interface ReduceResult { view: ProcessView; needsResync?: boolean }
 export function applyEvent(v: ProcessView, ev: BridgeEvent, seq: number): ReduceResult {
   const n: ProcessView = { ...v, seq };
   switch (ev.type) {
-    case "session_changed": n.info = ev.info; return { view: n, needsResync: true };
+    case "session_changed": n.info = ev.info; n.queued = []; return { view: n, needsResync: true };
     case "info": n.info = ev.info; break;
     case "agent_start": break;
-    case "agent_settled": n.inflight = undefined; n.runningTools = {}; break;
+    // Once pi is idle nothing is waiting any more: delivered, or dropped by an abort.
+    case "agent_settled": n.inflight = undefined; n.runningTools = {}; n.queued = []; break;
     case "message_start": if (ev.message.role === "assistant") n.inflight = { role: "assistant", content: [] }; break;
     case "message_update": n.inflight = applyDelta(v.inflight, ev.delta); break;
     case "message_end":
       n.messages = [...v.messages, ev.message];
       if (ev.message.role === "assistant") n.inflight = undefined;
+      if (ev.message.role === "user" && v.queued.length) {
+        // The queued message has been delivered: it now appears in the conversation for real.
+        const c = (ev.message as { content?: unknown }).content;
+        const text = (typeof c === "string" ? c : textOf(c)).trim();
+        const at = v.queued.findIndex((q) => q.text.trim() === text);
+        if (at >= 0) n.queued = v.queued.filter((_, i) => i !== at);
+      }
       break;
     case "tool_start": n.runningTools = { ...v.runningTools, [ev.toolCallId]: { toolName: ev.toolName, args: ev.args, partialText: "" } }; break;
     case "tool_update": {

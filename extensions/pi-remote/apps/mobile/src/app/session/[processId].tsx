@@ -1,11 +1,12 @@
+import { drafts } from "../../lib/drafts";
 import * as Clipboard from "expo-clipboard";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Pressable, ScrollView, View } from "react-native";
 import type { CommandInfo, DeliverAs, ImageInput, RpivPrompt, UiResponse, WireMessage } from "@pi-remote/protocol";
 import { ConfirmDialog, ErrorDialog, TrustDialog } from "../../ds/common";
-import { Button, Rule, Screen, Spinner, Txt } from "../../ds/primitives";
-import { F, MARGIN, STATUS_WORD, statusColor, usePalette } from "../../ds/tokens";
+import { Button, Rule, Screen, Spinner, Ticker, Txt } from "../../ds/primitives";
+import { F, MARGIN, STATUS_WORD, THINK_LEVELS, statusColor, thinkColor, thinkIndex, usePalette } from "../../ds/tokens";
 import { baseName, processTitle, textOf } from "../../lib/format";
 import { openProcess } from "../../lib/nav";
 import { useOpenFlow } from "../../lib/open";
@@ -16,25 +17,34 @@ import { ensureView } from "../../net/sync";
 import { store, useStore } from "../../state/store";
 import { AttentionDock, RpivSheet } from "../../session/Attention";
 import { CommandsSheet, type DeckAction } from "../../session/Commands";
+import { CrewTray } from "../../session/CrewTray";
 import { Composer } from "../../session/Composer";
 import { CompactSheet, ForkSheet, InfoSheet, ModelSheet, ResumeSheet, ThinkingSheet, TreeSheet } from "../../session/Sheets";
 import { Transcript } from "../../session/Transcript";
 
 type Confirm = { title: string; body?: string; label?: string; run: () => Promise<void> };
 
-/** One cell of the spec strip under the header: caption, value, optional second line or bar. */
-function Spec({ label, value, sub, onPress, a11y, color, bar }: { label: string; value: string; sub?: string; onPress?: () => void; a11y: string; color?: string; bar?: { pct: number; color: string } }) {
+/** One cell of the spec strip under the header: caption, value, a rotating line of detail, optional bar or meter. */
+function Spec({ label, value, subs, onPress, a11y, color, bar, meter }: {
+  label: string; value: string; subs?: string[]; onPress?: () => void; a11y: string; color?: string;
+  bar?: { pct: number; color: string }; meter?: { level: number; of: number; color: string };
+}) {
   const p = usePalette();
   useTestAction(a11y, onPress);
   return (
     <Pressable accessibilityRole={onPress ? "button" : undefined} accessibilityLabel={a11y} onPress={onPress} disabled={!onPress}
-      style={({ pressed }) => ({ flex: 1, paddingVertical: 9, paddingHorizontal: 10, backgroundColor: pressed ? p.tint : "transparent", gap: 2 })}>
+      style={({ pressed }) => ({ flex: 1, paddingTop: 9, paddingBottom: 8, paddingHorizontal: 10, backgroundColor: pressed ? p.tint : "transparent", gap: 2 })}>
       <Txt v="label" soft>{label}{onPress ? "  ›" : ""}</Txt>
       <Txt v="bodyBold" color={color ?? p.ink} lines={1} style={{ fontSize: 14.5, lineHeight: 19 }}>{value}</Txt>
-      {sub ? <Txt v="mono" soft lines={1} style={{ fontSize: 10.5, lineHeight: 14 }}>{sub}</Txt> : null}
+      <Ticker items={subs ?? []} />
       {bar ? (
-        <View style={{ height: 3, backgroundColor: p.faint, marginTop: 5 }}>
+        <View style={{ height: 3, backgroundColor: p.faint, marginTop: 4 }}>
           <View style={{ height: 3, width: `${Math.max(2, Math.min(100, bar.pct))}%`, backgroundColor: bar.color }} />
+        </View>
+      ) : null}
+      {meter ? (
+        <View style={{ flexDirection: "row", gap: 2, marginTop: 4 }}>
+          {Array.from({ length: meter.of }, (_, i) => <View key={i} style={{ flex: 1, height: 3, backgroundColor: i <= meter.level ? meter.color : p.faint }} />)}
         </View>
       ) : null}
     </Pressable>
@@ -52,8 +62,6 @@ function Word({ label, value, onPress, a11y, color }: { label: string; value: st
     </Pressable>
   );
 }
-
-const THINK_COLOR = (p: ReturnType<typeof usePalette>, level: string) => (level === "off" ? p.soft : level === "minimal" || level === "low" ? p.ink : p.blue);
 
 const fmtTokens = (n: number | null) => (n == null ? "?" : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
@@ -77,6 +85,19 @@ export default function SessionScreen() {
   const [panelsOpen, setPanelsOpen] = useState<boolean | undefined>(undefined);
   const flow = useOpenFlow();
   const info = view?.info ?? procInfo;
+  // An unsent message belongs to the conversation, not to the screen: restore it when coming back.
+  const draftKey = info?.sessionId || undefined;
+  const restored = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!draftKey) return;
+    const have = drafts.peek(draftKey);
+    if (have !== undefined) { restored.current = draftKey; if (have) setText(have); return; }
+    let live = true;
+    void drafts.load(draftKey).then((t) => { if (!live) return; restored.current = draftKey; if (t) setText((cur) => cur || t); });
+    return () => { live = false; };
+  }, [draftKey]);
+  // Saving waits for the restore, otherwise the empty initial text would overwrite the stored draft.
+  useEffect(() => { if (draftKey && restored.current === draftKey) drafts.save(draftKey, text); }, [draftKey, text]);
 
   useFocusEffect(useCallback(() => {
     store.setActive(pid);
@@ -105,8 +126,10 @@ export default function SessionScreen() {
     if (rpivOpen && view && !view.pendingRpiv.some((r) => r.toolCallId === rpivOpen.toolCallId)) setRpivOpen(undefined);
   }, [view?.pendingRpiv, rpivOpen]);
 
-  const children = useMemo(() => Object.values(procsMap).filter((x) => x.parentProcessId === pid), [procsMap, pid]);
-  const parent = info?.parentProcessId ? procsMap[info.parentProcessId] : undefined;
+  const children = useMemo(() => Object.values(procsMap).filter((x) => x.parentProcessId === pid).sort((a, b) => a.processId < b.processId ? -1 : 1), [procsMap, pid]);
+  // The parent link is derived by hostd and lives on the process list, not in session events.
+  const parentId = procInfo?.parentProcessId ?? info?.parentProcessId;
+  const parent = parentId ? procsMap[parentId] : undefined;
   // Only "running" shows the steer/stop bar; while a dialog waits, the dock above the composer is what matters.
   const running = info?.status === "running";
   const waiting = info?.status === "waiting_ui";
@@ -160,7 +183,12 @@ export default function SessionScreen() {
         try {
           // While a dialog is open pi may still be mid-run; queue the message rather than fail.
           const mode = deliverAs ?? (waiting ? "followUp" : undefined);
-          await call("prompt", { processId: pid, text: input, ...(images.length ? { images } : {}), ...(mode ? { deliverAs: mode } : {}) }, 30_000);
+          // Show the message at once as "queued": pi only reports it when it actually takes it up.
+          const queuedId = mode ? `q${Date.now()}${Math.random().toString(36).slice(2, 6)}` : undefined;
+          if (mode && queuedId) store.addQueued(pid, { id: queuedId, text: input, mode, images: images.length, at: Date.now() });
+          try {
+            await call("prompt", { processId: pid, text: input, ...(images.length ? { images } : {}), ...(mode ? { deliverAs: mode } : {}) }, 30_000);
+          } catch (e) { if (queuedId) store.removeQueued(pid, queuedId); throw e; }
           clear();
           return true;
         } catch (e) {
@@ -186,9 +214,9 @@ export default function SessionScreen() {
 
   const status = info?.status ?? "idle";
   const usage = info?.contextUsage?.percent;
-  const widgets = Object.entries(view?.extWidgets ?? {});
-  // Subagent / team panels are worth seeing by default; other extension panels start folded.
-  const panelsShown = panelsOpen ?? widgets.some(([k]) => /subagent|team/.test(k));
+  // The subagent and team banners are drawn for a terminal (box-drawing text); the crew tray replaces them.
+  const widgets = Object.entries(view?.extWidgets ?? {}).filter(([k]) => !/^(subagent-status|team-status|team-member)$/.test(k));
+  const panelsShown = panelsOpen ?? false;
   const statusLine = Object.values(view?.extStatus ?? {}).join("   ");
   const role = info?.role;
   const gone = view?.gone || (!procInfo && conn === "ready");
@@ -208,18 +236,31 @@ export default function SessionScreen() {
         right={<Button kind="outline" compact a11y="session-commands" label="≡ commands" onPress={() => setSheet("deck")} disabled={!ready} />}>
         {info ? (
           <View style={{ flexDirection: "row", borderBottomWidth: 1, borderBottomColor: p.ink }}>
-            <Spec a11y="chip-model" label="model" value={info.model ? (info.model.name || info.model.id) : "none"} sub={info.model ? `${info.model.provider}${info.model.input.includes("image") ? " · images" : ""}` : "choose one"}
+            <Spec a11y="chip-model" label="model" value={info.model ? (info.model.name || info.model.id) : "none"}
+              subs={info.model ? [
+                info.model.provider,
+                info.model.id !== info.model.name ? info.model.id : "",
+                info.model.input.includes("image") ? "reads images" : "text only",
+                info.model.reasoning ? "reasoning model" : "no reasoning",
+                info.contextUsage ? `${fmtTokens(info.contextUsage.contextWindow)} context window` : "",
+              ] : ["choose one"]}
               color={info.model ? p.ink : p.danger} onPress={ready ? () => setSheet("model") : undefined} />
             <View style={{ width: 1, backgroundColor: p.faint }} />
-            <Spec a11y="chip-thinking" label="thinking" value={info.thinkingLevel} sub={info.model?.reasoning ? "reasoning model" : "no reasoning"} color={THINK_COLOR(p, info.thinkingLevel)} onPress={ready ? () => setSheet("thinking") : undefined} />
+            <Spec a11y="chip-thinking" label="thinking" value={info.thinkingLevel} color={thinkColor(p, info.thinkingLevel)}
+              subs={info.model?.reasoning ? [`level ${thinkIndex(info.thinkingLevel)} of ${THINK_LEVELS.length - 1}`, "tap to change"] : ["model does not reason"]}
+              meter={{ level: thinkIndex(info.thinkingLevel), of: THINK_LEVELS.length, color: thinkColor(p, info.thinkingLevel) }}
+              onPress={ready ? () => setSheet("thinking") : undefined} />
             <View style={{ width: 1, backgroundColor: p.faint }} />
-            <Spec a11y="chip-context" label="context" value={usage != null ? `${usage.toFixed(0)}%` : "—"}
-              sub={info.contextUsage ? `${fmtTokens(info.contextUsage.tokens)} / ${fmtTokens(info.contextUsage.contextWindow)}` : undefined}
+            <Spec a11y="chip-context" label="context" value={usage != null ? `${usage.toFixed(usage < 10 ? 1 : 0)}%` : "?"}
+              subs={info.contextUsage ? (info.contextUsage.tokens != null ? [
+                `${fmtTokens(info.contextUsage.tokens)} used of ${fmtTokens(info.contextUsage.contextWindow)}`,
+                `${fmtTokens(Math.max(0, info.contextUsage.contextWindow - info.contextUsage.tokens))} left`,
+              ] : ["known after the next reply", `window ${fmtTokens(info.contextUsage.contextWindow)}`]) : []}
               color={usage != null && usage > 80 ? p.danger : p.ink}
               bar={usage != null ? { pct: usage, color: usage > 80 ? p.danger : usage > 50 ? p.pink : p.blue } : undefined} />
           </View>
         ) : null}
-        {info && (role?.kind !== "main" || parent || children.length || statusLine) ? (
+        {info && (role?.kind !== "main" || parent || statusLine) ? (
           <View style={{ paddingHorizontal: MARGIN, paddingVertical: 8, gap: 5, borderBottomWidth: 1, borderBottomColor: p.faint }}>
             {role && role.kind !== "main" ? (
               <Txt v="small" a11y="session-role" color={p.blue}>
@@ -228,15 +269,6 @@ export default function SessionScreen() {
               </Txt>
             ) : null}
             {parent ? <Word a11y="chip-parent" label="started by" value={`← ${processTitle(parent)}`} color={p.blue} onPress={() => openProcess(parent.processId)} /> : null}
-            {children.length ? (
-              <View accessibilityLabel="child-strip" style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 14, rowGap: 4, alignItems: "baseline" }}>
-                <Txt v="label" soft>subtasks</Txt>
-                {children.map((c) => (
-                  <Word key={c.processId} a11y={`child-${c.processId}`} label={c.status === "idle" ? "○" : c.status === "running" ? "▶" : "◆"} color={statusColor(p, c.status)}
-                    value={c.role.kind === "main" ? processTitle(c) : c.role.name} onPress={() => openProcess(c.processId)} />
-                ))}
-              </View>
-            ) : null}
             {statusLine ? <Txt v="mono" faint lines={1} a11y="session-ext-status" style={{ fontSize: 10.5 }}>{statusLine}</Txt> : null}
           </View>
         ) : null}
@@ -250,7 +282,7 @@ export default function SessionScreen() {
         {loadError ? <Txt v="small" color={p.danger} style={{ padding: MARGIN }}>{loadError}</Txt> : null}
 
         {view ? (
-          <Transcript messages={view.messages} inflight={view.inflight} running={view.runningTools} hasMoreBefore={view.hasMoreBefore} onLoadMore={loadMore} hideThinking={hideThinking} />
+          <Transcript messages={view.messages} inflight={view.inflight} running={view.runningTools} queued={view.queued} hasMoreBefore={view.hasMoreBefore} onLoadMore={loadMore} hideThinking={hideThinking} />
         ) : (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
             {conn === "ready" && procInfo ? <Spinner /> : <Txt v="em" soft>{conn === "ready" ? "" : "Not connected."}</Txt>}
@@ -284,6 +316,7 @@ export default function SessionScreen() {
           </View>
         ) : null}
 
+        <CrewTray children={children} all={Object.values(procsMap)} />
         <AttentionDock ui={view?.pendingUi ?? []} rpiv={view?.pendingRpiv ?? []} onRespond={respondUi} onOpenRpiv={setRpivOpen} />
         <Composer
           disabled={!ready}

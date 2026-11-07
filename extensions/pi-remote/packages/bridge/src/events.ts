@@ -63,6 +63,17 @@ export function rebuildChildren(): void {
 /** Hidden custom messages and the per-run system prompt message are never shown to the user. */
 const isHiddenCustom = (m: Obj) => (m?.role === "custom" && m.display === false) || m?.role === "system";
 
+/**
+ * Context usage grows with every assistant reply, not only when the run settles, and the TUI footer
+ * re-reads it on each render. Emit it on every change so a long run does not leave the phone on "?".
+ */
+function emitContextUsage(): void {
+  let usage: ReturnType<NonNullable<ReturnType<typeof g>["binding"]>["ctx"]["getContextUsage"]>;
+  try { usage = g().binding?.ctx.getContextUsage(); } catch { return; }
+  if (!usage) return;
+  emitSafe({ type: "context_usage", usage });
+}
+
 export function registerEventForwarders(pi: ExtensionAPI): void {
   on(pi, "agent_start", () => { emitSafe({ type: "agent_start" }); refreshStatus(); });
 
@@ -72,8 +83,7 @@ export function registerEventForwarders(pi: ExtensionAPI): void {
     s.inflight = undefined;
     s.runningTools.clear();
     emitSafe({ type: "agent_settled", aborted: !!event.aborted, ...(s.lastText ? { lastText: s.lastText } : {}) });
-    const usage = s.binding?.ctx.getContextUsage();
-    if (usage) emitSafe({ type: "context_usage", usage });
+    emitContextUsage();
     s.lastStatus = undefined;   // force an info frame so lastText reaches the list
     refreshStatus();
     if (s.reloadPending) { s.reloadPending = false; runReloadNow(); }
@@ -133,9 +143,11 @@ export function registerEventForwarders(pi: ExtensionAPI): void {
 
   on(pi, "session_compact", () => {
     emitSafe({ type: "compaction", phase: "end" });
-    const usage = g().binding?.ctx.getContextUsage();
-    if (usage) emitSafe({ type: "context_usage", usage });
+    emitContextUsage();
   });
+
+  // By turn_end the assistant message and its tool results are persisted, so the estimate is current.
+  on(pi, "turn_end", () => emitContextUsage());
 
   on(pi, "session_compact_failed", (event) => {
     emitSafe({ type: "compaction", phase: "failed", ...(event.errorMessage ? { error: String(event.errorMessage) } : event.aborted ? { error: "aborted" } : {}) });

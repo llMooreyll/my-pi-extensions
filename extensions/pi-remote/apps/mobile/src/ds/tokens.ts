@@ -75,3 +75,15 @@ export const STATUS_WORD: Record<Status, string> = { running: "working", waiting
 export function statusColor(p: Palette, s: Status): string {
   return s === "waiting_ui" ? p.pink : s === "running" ? p.blue : p.soft;
 }
+
+/** Thinking levels from none to maximum; each has its own colour so the setting reads at a glance. */
+export const THINK_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const THINK_LIGHT = ["#8A857B", "#2B8FA8", "#178A4C", "#2346F5", "#7B3FE4", "#E5700F"];
+const THINK_DARK = ["#8A857B", "#4CBAD6", "#4CC584", "#7088FF", "#A98BFF", "#FF9A3D"];
+export function thinkIndex(level: string): number {
+  const i = THINK_LEVELS.indexOf(level as (typeof THINK_LEVELS)[number]);
+  return i < 0 ? 0 : i;
+}
+export function thinkColor(p: Palette, level: string): string {
+  return (p.scheme === "light" ? THINK_LIGHT : THINK_DARK)[thinkIndex(level)]!;
+}
