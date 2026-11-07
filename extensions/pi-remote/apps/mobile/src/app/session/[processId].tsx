@@ -31,28 +31,32 @@ function Spec({ label, value, subs, onPress, a11y, color, bar, meter }: {
 }) {
   const p = usePalette();
   useTestAction(a11y, onPress);
+  const tint = p.tint;
+  // Only caption and value take the tap. The detail line is a sibling, so a sideways swipe on it scrolls
+  // instead of being captured as a press by the cell.
   return (
-    <Pressable accessibilityRole={onPress ? "button" : undefined} accessibilityLabel={a11y} onPress={onPress} disabled={!onPress}
-      style={({ pressed }) => ({ flex: 1, paddingTop: 9, paddingBottom: 8, paddingHorizontal: 10, backgroundColor: pressed ? p.tint : "transparent", gap: 2 })}>
-      <Txt v="label" soft>{label}{onPress ? "  ›" : ""}</Txt>
-      <Txt v="bodyBold" color={color ?? p.ink} lines={1} fit={0.75} style={{ fontSize: 14.5, lineHeight: 19 }}>{value}</Txt>
+    <View style={{ flex: 1, paddingBottom: 8 }}>
+      <Pressable accessibilityRole={onPress ? "button" : undefined} accessibilityLabel={a11y} onPress={onPress} disabled={!onPress}
+        style={({ pressed }) => ({ paddingTop: 9, paddingHorizontal: 10, paddingBottom: 2, gap: 2, backgroundColor: pressed ? tint : "transparent" })}>
+        <Txt v="label" soft>{label}{onPress ? "  ›" : ""}</Txt>
+        <Txt v="bodyBold" color={color ?? p.ink} lines={1} fit={0.75} style={{ fontSize: 14.5, lineHeight: 19 }}>{value}</Txt>
+      </Pressable>
       {subs?.length ? (
-        // All the detail on one line the user can swipe sideways; nothing moves by itself.
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginRight: -10 }} contentContainerStyle={{ paddingRight: 10 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled contentContainerStyle={{ paddingHorizontal: 10 }}>
           <Txt v="mono" soft style={{ fontSize: 10.5, lineHeight: 15 }}>{subs.filter(Boolean).join("  ·  ")}</Txt>
         </ScrollView>
       ) : null}
       {bar ? (
-        <View style={{ height: 3, backgroundColor: p.faint, marginTop: 4 }}>
+        <View style={{ height: 3, backgroundColor: p.faint, marginTop: 4, marginHorizontal: 10 }}>
           <View style={{ height: 3, width: `${Math.max(2, Math.min(100, bar.pct))}%`, backgroundColor: bar.color }} />
         </View>
       ) : null}
       {meter ? (
-        <View style={{ flexDirection: "row", gap: 2, marginTop: 4 }}>
+        <View style={{ flexDirection: "row", gap: 2, marginTop: 4, marginHorizontal: 10 }}>
           {Array.from({ length: meter.of }, (_, i) => <View key={i} style={{ flex: 1, height: 3, backgroundColor: i <= meter.level ? meter.color : p.faint }} />)}
         </View>
       ) : null}
-    </Pressable>
+    </View>
   );
 }
 

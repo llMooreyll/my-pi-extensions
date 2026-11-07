@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ProcessInfo, ProjectItem, SessionListItem } from "@pi-remote/protocol";
 import { ConnStatus, ErrorDialog, TrustDialog } from "../ds/common";
@@ -60,11 +60,31 @@ function ProcRows({ node, depth, index }: { node: Node; depth: number; index: st
 }
 
 /** A big number with a mono caption, like a figure in a newspaper. */
+/** A big number with a mono caption. Not scaled by the system font size, so the header row keeps its shape. */
 function Figure({ n, label, color }: { n: number; label: string; color: string }) {
   return (
-    <View>
-      <Txt v="headline" color={color} style={{ fontSize: 30, lineHeight: 32, textAlign: "right" }}>{n}</Txt>
-      <Txt v="label" color={color} style={{ fontSize: 9.5, textAlign: "right" }}>{label}</Txt>
+    <View style={{ alignItems: "flex-end" }}>
+      <Text allowFontScaling={false} style={{ fontFamily: F.serif, color, fontSize: 30, lineHeight: 32 }}>{n}</Text>
+      <Text allowFontScaling={false} style={{ fontFamily: F.mono, color, fontSize: 9.5, lineHeight: 13, letterSpacing: 1.2, textTransform: "uppercase" }}>{label}</Text>
+    </View>
+  );
+}
+
+/**
+ * "pi/remote", sized to the room it has. Three plain Text siblings instead of nested spans (Android does not
+ * shrink nested spans that carry their own size), and immune to the system font scale, which on a phone with
+ * large text pushed "remote" out of the row. The width factor is measured for Instrument Serif with a margin.
+ */
+const TITLE_EM = 3.4;
+function AppTitle({ room }: { room: number }) {
+  const p = usePalette();
+  const size = room > 0 ? Math.max(24, Math.min(46, Math.floor(room / TITLE_EM))) : 38;
+  const t = { fontSize: size, lineHeight: Math.round(size * 1.08) };
+  return (
+    <View accessibilityLabel="home-title" style={{ flexDirection: "row", alignItems: "baseline" }}>
+      <Text allowFontScaling={false} style={[t, { fontFamily: F.serif, color: p.ink, letterSpacing: -0.5 }]}>pi</Text>
+      <Text allowFontScaling={false} style={[t, { fontFamily: F.serif, color: p.faint, marginHorizontal: size * 0.02 }]}>/</Text>
+      <Text allowFontScaling={false} style={[t, { fontFamily: F.serifItalic, color: p.pink }]}>remote</Text>
     </View>
   );
 }
@@ -93,6 +113,7 @@ export default function Home() {
   const [filter, setFilter] = useState<string | undefined>();
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [titleRoom, setTitleRoom] = useState(0);
   const flow = useOpenFlow();
 
   useEffect(() => { if (conn === "no_credentials") router.push("/pair"); }, [conn]);
@@ -133,9 +154,9 @@ export default function Home() {
         <View>
           <Pad style={{ paddingTop: 14, paddingBottom: 16, gap: 12 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }}>
-              <Txt v="display" a11y="home-title" lines={1} fit={0.7} style={{ flexShrink: 1, fontSize: 42, lineHeight: 46, letterSpacing: -0.5 }}>
-                pi<Txt v="display" color={p.faint} style={{ fontSize: 42, lineHeight: 46 }}>/</Txt><Txt v="display" color={p.pink} style={{ fontFamily: F.serifItalic, fontSize: 42, lineHeight: 46 }}>remote</Txt>
-              </Txt>
+              <View style={{ flex: 1, marginRight: 10 }} onLayout={(e) => setTitleRoom(e.nativeEvent.layout.width)}>
+                <AppTitle room={titleRoom} />
+              </View>
               <View style={{ flexDirection: "row", gap: 12, paddingBottom: 4, marginLeft: 10 }}>
                 <Figure n={procs.length} label="live" color={p.ink} />
                 <Figure n={running} label="working" color={running ? p.blue : p.faint} />
