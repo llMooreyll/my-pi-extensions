@@ -1,14 +1,16 @@
 import { Stack } from "expo-router";
+import { useFonts } from "expo-font";
+import { View } from "react-native";
+import { FONT_FILES, usePalette } from "../ds/tokens";
 import { useEffect } from "react";
 import { StatusBar } from "expo-status-bar";
-import notifee from "react-native-notify-kit";
 import { router } from "expo-router";
 import { installNotifications, onProc } from "../bg/notifications";
+import { initialNotificationProcessId } from "../bg/platform";
 import { installTestHooks, setDumpProvider } from "../lib/test-hooks";
 import { connection } from "../net/connection";
 import { installSync } from "../net/sync";
 import { useStore } from "../state/store";
-import { usePalette } from "../ui/theme";
 
 let booted = false;
 function boot(): void {
@@ -43,24 +45,18 @@ function dumpState(): unknown {
 
 export default function RootLayout() {
   const c = usePalette();
+  const [fontsLoaded] = useFonts(FONT_FILES);
   useEffect(() => {
     boot();
-    notifee.getInitialNotification().then((n) => {
-      const pid = n?.notification?.data?.processId;
-      if (typeof pid === "string") router.push({ pathname: "/session/[processId]", params: { processId: pid } });
+    initialNotificationProcessId().then((pid) => {
+      if (pid) router.push({ pathname: "/session/[processId]", params: { processId: pid } });
     }).catch(() => {});
   }, []);
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: c.paper }} />;
   return (
     <>
-      <StatusBar style="auto" />
-      <Stack screenOptions={{ headerStyle: { backgroundColor: c.card }, headerTintColor: c.text, contentStyle: { backgroundColor: c.bg }, headerTitleStyle: { fontSize: 17 } }}>
-        <Stack.Screen name="index" options={{ title: "pi-remote" }} />
-        <Stack.Screen name="pair" options={{ title: "Pair with computer" }} />
-        <Stack.Screen name="new" options={{ title: "New session" }} />
-        <Stack.Screen name="settings" options={{ title: "Settings" }} />
-        <Stack.Screen name="history" options={{ title: "Session (read-only)" }} />
-        <Stack.Screen name="session/[processId]" options={{ title: "" }} />
-      </Stack>
+      <StatusBar style={c.scheme === "light" ? "dark" : "light"} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.paper }, animation: "fade_from_bottom" }} />
     </>
   );
 }

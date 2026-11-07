@@ -42,3 +42,8 @@ export function shortJson(v: unknown, n = 300): string {
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
 export const stripAnsi = (s: string) => s.replace(ANSI, "");
+
+/** One-line preview of a model answer: markdown markers and whitespace collapsed. */
+export function plainPreview(s: string): string {
+  return stripAnsi(s).replace(/```[\s\S]*?```/g, " ").replace(/^[#>*\-\s]+/gm, "").replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
+}

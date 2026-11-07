@@ -1,39 +1,58 @@
-import { Spinner } from "../ui/Spinner";
 import { useEffect, useState } from "react";
-import { ScrollView } from "react-native";
-import type { ProjectItem } from "@pi-remote/protocol";
-import { baseName } from "../lib/format";
-import { useOpenFlow } from "../lib/open";
+import { View } from "react-native";
+import type { ProjectItem, Trust } from "@pi-remote/protocol";
+import { ErrorDialog } from "../ds/common";
+import { Button, Choice, Field, Pad, Screen, SectionHead, Spinner, Toggle, Txt } from "../ds/primitives";
+import { loadTrustMap, rememberTrust } from "../lib/credentials";
+import { baseName, relTime } from "../lib/format";
+import { openProcess } from "../lib/nav";
 import { call, errText } from "../net/connection";
-import { ErrorBox } from "../ui/ErrorBox";
-import { Btn, Card, Field, Section, T } from "../ui/kit";
-import { Option } from "../ui/Sheet";
-import { TrustDialog } from "../ui/TrustDialog";
-import { usePalette } from "../ui/theme";
 
+/** Two decisions, in order, on one page: where pi should run, and whether to trust that folder. */
 export default function NewSession() {
-  const c = usePalette();
   const [projects, setProjects] = useState<ProjectItem[] | undefined>();
   const [cwd, setCwd] = useState("");
+  const [trust, setTrust] = useState<Trust>("deny");
+  const [remember, setRemember] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const flow = useOpenFlow();
   useEffect(() => { call("list_projects", {}).then((r) => setProjects(r.projects), (e) => setError(errText(e))); }, []);
+  useEffect(() => { loadTrustMap().then((m) => { const t = m[cwd.trim()]; if (t) setTrust(t); }); }, [cwd]);
+
+  const start = async () => {
+    const dir = cwd.trim();
+    setBusy(true);
+    try {
+      if (remember) await rememberTrust(dir, trust);
+      const r = await call("new_process", { cwd: dir, trust }, 60_000);
+      openProcess(r.processId);
+    } catch (e) { setError(errText(e)); }
+    finally { setBusy(false); }
+  };
+
+  const valid = cwd.trim().startsWith("/");
   return (
-    <>
-      <ScrollView contentContainerStyle={{ padding: 12, gap: 8 }} keyboardShouldPersistTaps="handled">
-        <Section title="Directory">
-          <Field a11y="new-cwd-input" value={cwd} onChangeText={setCwd} placeholder="/home/you/project" autoCapitalize="none" autoCorrect={false} />
-          <Btn a11y="new-start" kind="primary" label="Start pi here" disabled={!cwd.startsWith("/")} busy={!!flow.busy} onPress={() => void flow.newProcess(cwd.trim())} />
-          {flow.busy ? <Card style={{ flexDirection: "row", gap: 8 }}><Spinner /><T>{flow.busy}</T></Card> : null}
-        </Section>
-        <Section title="Projects">
-          {error ? <T color={c.danger}>{error}</T> : null}
-          {!projects && !error ? <Spinner /> : null}
-          {projects?.map((p, i) => <Option key={p.cwd} a11y={`new-project-${i}`} label={baseName(p.cwd)} sub={p.cwd} selected={cwd === p.cwd} onPress={() => setCwd(p.cwd)} />)}
-        </Section>
-      </ScrollView>
-      <TrustDialog {...flow.trustDialog} />
-      <ErrorBox text={flow.error} onClose={flow.clearError} />
-    </>
+    <Screen back kicker="on the computer" title="New session"
+      footer={<Button kind="solid" a11y="new-start" label={busy ? "Starting pi…" : valid ? `Start pi in ${baseName(cwd.trim())}` : "Choose a folder first"} busy={busy} disabled={!valid} onPress={() => void start()} />}>
+      <SectionHead n="01" title="Where should pi work?" />
+      <Pad indent style={{ paddingTop: 12 }}>
+        <Field a11y="new-cwd-input" label="folder on the computer" value={cwd} onChangeText={setCwd} placeholder="/home/you/project" autoCapitalize="none" autoCorrect={false} mono />
+      </Pad>
+      <Pad indent style={{ paddingTop: 10 }}>
+        <Txt v="label" soft style={{ marginBottom: 2 }}>or a recent project</Txt>
+        {!projects && !error ? <Spinner /> : null}
+        {projects?.slice(0, 20).map((pr, i) => (
+          <Choice key={pr.cwd} a11y={`new-project-${i}`} label={baseName(pr.cwd)} sub={`${pr.cwd} · ${relTime(pr.lastModified)}`} selected={cwd === pr.cwd} onPress={() => setCwd(pr.cwd)} />
+        ))}
+      </Pad>
+      <SectionHead n="02" title="Trust the folder?" />
+      <Pad indent style={{ paddingTop: 6 }}>
+        <Choice a11y="new-trust-deny" label="Safe mode" sub="ignore the folder's own .pi extensions, skills and prompts" selected={trust === "deny"} onPress={() => setTrust("deny")} />
+        <Choice a11y="new-trust-approve" label="Trust it" sub="load the folder's .pi resources (only for code you trust)" selected={trust === "approve"} onPress={() => setTrust("approve")} />
+        <Toggle a11y="new-trust-remember" value={remember} onChange={setRemember} label="Remember this choice" hint="used next time you open a session in this folder" />
+      </Pad>
+      <View style={{ height: 20 }} />
+      <ErrorDialog text={error} onClose={() => setError(undefined)} />
+    </Screen>
   );
 }

@@ -2,7 +2,9 @@ import { useCallback, useState } from "react";
 import { router } from "expo-router";
 import type { Trust } from "@pi-remote/protocol";
 import { call, errText } from "../net/connection";
-import { rememberedTrust } from "../ui/TrustDialog";
+import { loadTrustMap } from "./credentials";
+
+const rememberedTrust = async (cwd: string): Promise<Trust | undefined> => (await loadTrustMap())[cwd];
 
 type Pending = { cwd: string; run: (t: Trust) => Promise<void> };
 
@@ -20,14 +22,14 @@ export function useOpenFlow() {
   const go = (processId: string) => router.push({ pathname: "/session/[processId]", params: { processId } });
 
   const openSession = useCallback((sessionFile: string, cwd: string) => withTrust(cwd, async (trust) => {
-    setBusy("Starting pi… (up to 45 seconds)");
+    setBusy("Starting pi on the computer…");
     try { const r = await call("open_session", { sessionFile, trust }, 60_000); go(r.processId); }
     catch (e) { setError(errText(e)); }
     finally { setBusy(undefined); }
   }), [withTrust]);
 
   const newProcess = useCallback((cwd: string) => withTrust(cwd, async (trust) => {
-    setBusy("Starting pi… (up to 45 seconds)");
+    setBusy("Starting pi on the computer…");
     try { const r = await call("new_process", { cwd, trust }, 60_000); go(r.processId); }
     catch (e) { setError(errText(e)); }
     finally { setBusy(undefined); }

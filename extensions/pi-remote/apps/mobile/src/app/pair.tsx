@@ -2,24 +2,21 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import Constants from "expo-constants";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { View } from "react-native";
 import type { PairQr } from "@pi-remote/protocol";
+import { requestNotificationPermission } from "../bg/notifications";
+import { Button, Dialog, Field, Pad, Screen, SectionHead, Txt } from "../ds/primitives";
+import { MARGIN, usePalette } from "../ds/tokens";
 import { loadHosts, saveHosts } from "../lib/credentials";
 import { connection } from "../net/connection";
 import { fingerprint } from "../net/endpoints";
 import { pairWithQr, parseQr } from "../net/pairing";
-import { requestNotificationPermission } from "../bg/notifications";
 import { useStore } from "../state/store";
-import { Btn, Card, Field, T } from "../ui/kit";
-import { usePalette } from "../ui/theme";
 
-function deviceName(): string {
-  const d = Constants.deviceName;
-  return d ? `Android ${d}` : "Android";
-}
+const deviceName = () => (Constants.deviceName ? `Android ${Constants.deviceName}` : "Android");
 
 export default function PairScreen() {
-  const c = usePalette();
+  const p = usePalette();
   const params = useLocalSearchParams<{ qr?: string }>();
   const [text, setText] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -34,14 +31,11 @@ export default function PairScreen() {
   const accept = (raw: string, fromLink: boolean) => {
     const r = parseQr(raw);
     if (!r.ok) { setError(r.error); return; }
-    if (r.qr.kind === "endpoint") { setError("This is a connection-info code. Scan it in Settings → Connection."); return; }
+    if (r.qr.kind === "endpoint") { setError("That is a connection-info code. Use it in Settings → Connection."); return; }
     setError(undefined);
     if (fromLink) setConfirmQr(r.qr); else void doPair(r.qr);
   };
-
-  useEffect(() => {
-    if (typeof params.qr === "string" && params.qr) accept(params.qr, true);
-  }, [params.qr]);
+  useEffect(() => { if (typeof params.qr === "string" && params.qr) accept(params.qr, true); }, [params.qr]);
 
   const doPair = async (qr: PairQr) => {
     setConfirmQr(undefined);
@@ -53,53 +47,63 @@ export default function PairScreen() {
       await requestNotificationPermission();
       await connection.reconnectNow();
       if (router.canDismiss()) router.dismissAll(); else router.replace("/");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
   };
 
   if (scanning) {
     return (
       <View style={{ flex: 1, backgroundColor: "black" }}>
-        <CameraView
-          style={{ flex: 1 }}
-          barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-          onBarcodeScanned={({ data }) => { setScanning(false); accept(data, false); }}
-        />
-        <Btn a11y="pair-scan-cancel" label="Cancel" onPress={() => setScanning(false)} style={{ margin: 16 }} />
+        <CameraView style={{ flex: 1 }} barcodeScannerSettings={{ barcodeTypes: ["qr"] }} onBarcodeScanned={({ data }) => { setScanning(false); accept(data, false); }} />
+        <Button kind="solid" a11y="pair-scan-cancel" label="Cancel scanning" arrow="✕" onPress={() => setScanning(false)} />
       </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }} keyboardShouldPersistTaps="handled">
-      <T dim>On the computer run <T mono>pi-hostd pair</T>, then scan the QR code it prints.</T>
-      <Btn a11y="pair-scan-button" kind="primary" label="Scan QR code" busy={busy} onPress={async () => {
-        if (!perm?.granted) { const p = await requestPerm(); if (!p.granted) { setError("Camera permission denied"); return; } }
-        setScanning(true);
-      }} />
-      <T dim>Or paste the pairing info printed below the QR code:</T>
-      <Field a11y="pair-text-input" value={text} onChangeText={setText} placeholder='{"v":2,"kind":"pair",...}' multiline style={{ minHeight: 90, textAlignVertical: "top" }} autoCapitalize="none" autoCorrect={false} />
-      <Btn a11y="pair-text-submit" label="Pair" busy={busy} disabled={!text.trim()} onPress={() => accept(text, false)} />
-      {error ? <T a11y="pair-error" color={c.danger}>{error}</T> : null}
-      {confirmQr ? (
-        <Card a11y="pair-confirm-card" style={{ gap: 8 }}>
-          <T bold>Pair with this computer?</T>
-          <T a11y="pair-confirm-host">Computer: {confirmQr.hostName}</T>
-          <T mono size={13}>Key: {fingerprint(confirmQr.hostKey)}</T>
-          <T size={13} dim>Relay: {confirmQr.relays.join(", ") || "(none)"}{confirmQr.direct ? `\nDirect: ${confirmQr.direct}` : ""}</T>
-          {already ? <T color={c.warn} size={13}>This replaces the computer currently paired with this phone.</T> : null}
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <Btn a11y="pair-confirm-button" kind="primary" label="Pair" onPress={() => void doPair(confirmQr)} />
-            <Btn a11y="pair-confirm-cancel" label="Cancel" onPress={() => setConfirmQr(undefined)} />
+    <Screen back={already} kicker="pi remote" title="Pair this phone"
+      footer={busy ? <Txt v="label" color={p.blue} a11y="pair-busy" style={{ padding: MARGIN }}>● pairing…</Txt> : undefined}>
+      <Pad style={{ paddingTop: 18 }}>
+        <Txt v="em">Your phone talks to the computer through an encrypted channel. Pairing happens once.</Txt>
+      </Pad>
+      <SectionHead n="01" title="On the computer" />
+      <Pad indent style={{ paddingTop: 10, gap: 6 }}>
+        <Txt v="body">Open a terminal and run</Txt>
+        <Txt v="mono" selectable style={{ fontSize: 15 }}>pi-hostd pair</Txt>
+        <Txt v="small" soft>It prints a QR code and a one-time code valid for 10 minutes.</Txt>
+      </Pad>
+      <SectionHead n="02" title="Scan it" />
+      <Pad indent style={{ paddingTop: 12 }}>
+        <Button kind="solid" a11y="pair-scan-button" label="Open the camera" busy={busy} onPress={async () => {
+          if (!perm?.granted) { const r = await requestPerm(); if (!r.granted) { setError("Camera permission was denied."); return; } }
+          setScanning(true);
+        }} />
+      </Pad>
+      <SectionHead n="03" title="…or paste it" />
+      <Pad indent style={{ paddingTop: 10, gap: 12 }}>
+        <Field a11y="pair-text-input" label="the JSON printed under the QR code" value={text} onChangeText={setText} placeholder='{"v":2,"kind":"pair",…}' multiline mono autoCapitalize="none" autoCorrect={false} style={{ minHeight: 70 }} />
+        <Button a11y="pair-text-submit" label="pair with this text" busy={busy} disabled={!text.trim()} onPress={() => accept(text, false)} />
+      </Pad>
+      {error ? <Pad indent style={{ paddingTop: 18 }}><Txt v="body" color={p.danger} a11y="pair-error">{error}</Txt></Pad> : null}
+      {already ? <Pad indent style={{ paddingTop: 18 }}><Button a11y="pair-back" label="keep the current computer" onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} /></Pad> : null}
+
+      <Dialog visible={!!confirmQr} title="Pair with this computer?" a11y="pair-confirm-card" onClose={() => setConfirmQr(undefined)}
+        actions={<>
+          <Button kind="solid" a11y="pair-confirm-button" label="Pair" onPress={() => confirmQr && void doPair(confirmQr)} />
+          <Button a11y="pair-confirm-cancel" label="cancel" onPress={() => setConfirmQr(undefined)} />
+        </>}>
+        {confirmQr ? (
+          <View style={{ gap: 8 }}>
+            <Txt v="title" a11y="pair-confirm-host">{confirmQr.hostName}</Txt>
+            <Txt v="label" soft>key fingerprint</Txt>
+            <Txt v="mono" style={{ fontSize: 15 }}>{fingerprint(confirmQr.hostKey)}</Txt>
+            <Txt v="label" soft>reached via</Txt>
+            <Txt v="mono">{[...confirmQr.relays, confirmQr.direct].filter(Boolean).join("\n") || "(no address)"}</Txt>
+            {already ? <Txt v="small" color={p.pink}>This replaces the computer this phone is paired with now.</Txt> : null}
+            <Txt v="small" soft>Only continue if you just ran pi-hostd pair yourself.</Txt>
           </View>
-        </Card>
-      ) : null}
-      {busy ? <T dim a11y="pair-busy">Pairing…</T> : null}
-      {already && !confirmQr ? <Btn a11y="pair-back" label="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} /> : null}
-    </ScrollView>
+        ) : null}
+      </Dialog>
+    </Screen>
   );
 }
-

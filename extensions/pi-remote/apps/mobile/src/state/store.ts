@@ -131,6 +131,12 @@ export const store = {
     if (v) set({ views: { ...get().views, [pid]: { ...v, messages: [...messages, ...v.messages], hasMoreBefore } } });
   },
 
+  /** Local, app-originated notice shown like a pi notification. */
+  toast(pid: string, text: string, level = "info") {
+    const v = get().views[pid];
+    if (v) set({ views: { ...get().views, [pid]: { ...v, toasts: [...v.toasts, { id: `l${Date.now()}`, text, level, at: Date.now() }] } } });
+  },
+
   /** Optimistically hide a dialog card after answering; ui_closed removes it for real. */
   markUiAnswered(pid: string, uiId: string) {
     const v = get().views[pid];
