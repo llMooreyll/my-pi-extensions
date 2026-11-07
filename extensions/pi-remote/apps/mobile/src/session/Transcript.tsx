@@ -10,18 +10,31 @@ import { CustomCard } from "./CustomCard";
 import { Markdown } from "./Markdown";
 import { ToolCard } from "./ToolCard";
 
-type Item =
+type Item = (
   | { key: string; kind: "msg"; m: WireMessage; idx: number }
   | { key: string; kind: "draft"; d: AssistantDraft }
-  | { key: string; kind: "tool"; id: string; name: string; args: unknown; partialText: string };
+  | { key: string; kind: "tool"; id: string; name: string; args: unknown; partialText: string }
+) & { label?: boolean };
+
+/** Who "speaks" an item; the margin label is printed only when the speaker changes. */
+function speaker(i: Item): string {
+  if (i.kind !== "msg") return "pi";
+  switch (i.m.role) {
+    case "user": return "you";
+    case "assistant": case "toolResult": return "pi";
+    case "custom": return "§";
+    case "bashExecution": return "$";
+    default: return "—";
+  }
+}
 
 interface Ctx { results: Map<string, WireMessage>; running: Record<string, { toolName: string; args: unknown; partialText: string }>; hideThinking: boolean }
 
 /** Every entry hangs a small label in the margin column: YOU, PI, §. */
 function Margin({ label, color, children, a11y }: { label: string; color?: string; children: ReactNode; a11y?: string }) {
   return (
-    <View accessibilityLabel={a11y} style={{ flexDirection: "row", paddingVertical: 8 }}>
-      <View style={{ width: GUTTER, paddingTop: 5 }}><Txt v="label" color={color} soft={!color}>{label}</Txt></View>
+    <View accessibilityLabel={a11y} style={{ flexDirection: "row", alignItems: "baseline", paddingVertical: 6 }}>
+      <View style={{ width: GUTTER }}><Txt v="label" color={color} soft={!color}>{label}</Txt></View>
       <View style={{ flex: 1 }}>{children}</View>
     </View>
   );
@@ -77,7 +90,8 @@ function Divider({ label, text, a11y }: { label: string; text: string; a11y: str
 
 const Row = memo(function Row({ item, ctx }: { item: Item; ctx: Ctx }) {
   const p = usePalette();
-  if (item.kind === "draft") return <Margin label="pi" color={p.blue} a11y="msg-inflight"><Blocks blocks={item.d.content} ctx={ctx} prefix="draft" streaming /></Margin>;
+  const lab = (s: string) => (item.label ? s : "");
+  if (item.kind === "draft") return <Margin label={lab("pi")} color={p.blue} a11y="msg-inflight"><Blocks blocks={item.d.content} ctx={ctx} prefix="draft" streaming /></Margin>;
   if (item.kind === "tool") return <Margin label=""><ToolCard id={item.id} name={item.name} args={item.args} running={{ partialText: item.partialText }} /></Margin>;
   const m = item.m as WireMessage & Record<string, any>;
   const a11y = `msg-${item.idx}`;
@@ -100,7 +114,7 @@ const Row = memo(function Row({ item, ctx }: { item: Item; ctx: Ctx }) {
     case "assistant": {
       const blocks = Array.isArray(m.content) ? (m.content as ContentBlock[]) : [{ type: "text", text: String(m.content ?? "") }];
       return (
-        <Margin label="pi" a11y={a11y}>
+        <Margin label={lab("pi")} a11y={a11y}>
           <Blocks blocks={blocks} ctx={ctx} prefix={a11y} />
           {m.stopReason === "error" && m.errorMessage ? <Txt v="mono" color={p.danger} style={{ marginTop: 4 }}>✕ {String(m.errorMessage)}</Txt> : null}
           {m.stopReason === "aborted" ? <Txt v="label" soft>— stopped</Txt> : null}
@@ -110,12 +124,12 @@ const Row = memo(function Row({ item, ctx }: { item: Item; ctx: Ctx }) {
     case "toolResult": return <Margin label=""><ToolCard id={String(m.toolCallId ?? item.key)} name={String(m.toolName ?? "tool")} args={{}} result={m} /></Margin>;
     case "bashExecution":
       return (
-        <Margin label="$" a11y={a11y}>
+        <Margin label={lab("$")} a11y={a11y}>
           <Txt v="mono" style={{ fontFamily: F.monoBold }}>{String(m.command ?? "")}</Txt>
           <Txt v="mono" soft selectable style={{ fontSize: 11 }}>{String(m.output ?? "").split("\n").slice(-200).join("\n")}</Txt>
         </Margin>
       );
-    case "custom": return <Margin label="§"><CustomCard m={m} idx={item.idx} /></Margin>;
+    case "custom": return <Margin label={lab("§")}><CustomCard m={m} idx={item.idx} /></Margin>;
     case "compactionSummary": return <Divider label="context compacted" text={String(m.summary ?? "")} a11y={a11y} />;
     case "branchSummary": return <Divider label="summary of the abandoned branch" text={String(m.summary ?? "")} a11y={a11y} />;
     default: return null;
@@ -147,6 +161,8 @@ export function Transcript(props: {
     });
     if (props.inflight) out.push({ key: "inflight", kind: "draft", d: props.inflight });
     for (const [id, t] of Object.entries(running)) if (!calls.has(id)) out.push({ key: `run-${id}`, kind: "tool", id, name: t.toolName, args: t.args, partialText: t.partialText });
+    let prev = "";
+    for (const it of out) { const sp = speaker(it); it.label = sp !== prev; prev = sp; }
     return { items: out, ctx: { results, running, hideThinking: !!props.hideThinking } as Ctx };
   }, [props.messages, props.inflight, running, props.hideThinking]);
 

@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 apps/mobile/android/
 apps/mobile/ios/
 .expo/

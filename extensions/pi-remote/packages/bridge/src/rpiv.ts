@@ -13,7 +13,6 @@ const ANSWER = "rpiv:ask-user:answer";
 const ANSWER_RESULT = "rpiv:ask-user:answer-result";
 
 const openedAt = new Map<string, number>();
-const covered = new Set<string>();
 const resultWaiters = new Map<string, (v: { ok?: boolean; code?: string; reason?: string }) => void>();
 
 export function registerRpiv(pi: ExtensionAPI): void {
@@ -31,6 +30,7 @@ export function registerRpiv(pi: ExtensionAPI): void {
       g().rpivOpen.set(prompt.toolCallId, prompt);
       openedAt.set(prompt.toolCallId, Date.now());
       emitSafe({ type: "rpiv_prompt", prompt });
+      claimRecentCustom(prompt.toolCallId);
       refreshStatus();
     } catch (e) { logError("rpiv prompt", e); }
   });
@@ -39,7 +39,6 @@ export function registerRpiv(pi: ExtensionAPI): void {
       const p = raw as { active?: boolean; toolCallId?: string };
       if (p?.active === false && typeof p.toolCallId === "string" && g().rpivOpen.delete(p.toolCallId)) {
         openedAt.delete(p.toolCallId);
-        covered.delete(p.toolCallId);
         emitSafe({ type: "rpiv_closed", toolCallId: p.toolCallId });
         refreshStatus();
       }
@@ -51,15 +50,31 @@ export function registerRpiv(pi: ExtensionAPI): void {
   });
 }
 
-/** The questionnaire opened in the last 2s that no custom() dialog has claimed yet. */
+/**
+ * The questionnaire a custom() dialog belongs to: the most recently opened one that is still open.
+ * ask_user_question may mount its custom() more than once per questionnaire (e.g. it re-mounts as a stacked
+ * overlay when the inline slot must yield), possibly long after the prompt event, so no time window applies.
+ */
 export function latestUncoveredRpiv(): string | undefined {
-  const now = Date.now();
   let best: string | undefined;
-  let bestAt = 0;
-  for (const [id, at] of openedAt) if (now - at <= 2000 && !covered.has(id) && at >= bestAt) { best = id; bestAt = at; }
-  if (best) covered.add(best);
+  let bestAt = -1;
+  for (const [id, at] of openedAt) if (g().rpivOpen.has(id) && at > bestAt) { best = id; bestAt = at; }
   return best;
 }
+
+/** Reverse order: a custom() opened just before its prompt event is tagged afterwards and re-announced. */
+function claimRecentCustom(toolCallId: string): void {
+  const now = Date.now();
+  for (const pending of g().pendingUi.values()) {
+    const req = pending.req;
+    if (req.kind !== "custom" || req.coveredBy || now - (customOpenedAt.get(req.uiId) ?? 0) > 3000) continue;
+    req.coveredBy = toolCallId;
+    emitSafe({ type: "ui_request", req });
+  }
+}
+
+/** When each custom() dialog opened; ui-mirror records it. */
+export const customOpenedAt = new Map<string, number>();
 
 export function rpivAnswer(answer: RpivAnswer): Promise<{ ok: boolean; code?: string; reason?: string }> {
   const b = need();

@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ProcessInfo, ProjectItem, SessionListItem } from "@pi-remote/protocol";
 import { ConnLine, ErrorDialog, TrustDialog } from "../ds/common";
 import { Button, Field, Pad, Row, Rule, SectionHead, Spinner, StatusText, Txt } from "../ds/primitives";
-import { F, MARGIN, usePalette } from "../ds/tokens";
+import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { baseName, plainPreview, processTitle, relTime } from "../lib/format";
 import { openProcess } from "../lib/nav";
 import { useOpenFlow } from "../lib/open";
@@ -114,62 +114,72 @@ export default function Home() {
   return (
     <View style={{ flex: 1, backgroundColor: p.paper }}>
       <ScrollView
+        style={{ marginTop: insets.top }}
         contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(true); setRefreshing(false); }} />}
         keyboardShouldPersistTaps="handled"
+        stickyHeaderIndices={[1]}
       >
-        <Pad style={{ paddingTop: insets.top + 18 }}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-            <Txt v="label" soft>{today}</Txt>
-            <Button a11y="home-settings" label="settings" onPress={() => router.push("/settings")} />
-          </View>
-          <Txt v="display" style={{ marginTop: 10 }}>pi <Txt v="display" style={{ fontFamily: F.serifItalic }} color={p.pink}>remote</Txt></Txt>
-          <Txt v="label" soft style={{ marginTop: 6 }}>{procs.length} live · {running} working · {waiting.length} waiting for you</Txt>
-        </Pad>
-        <Rule weight={2} style={{ marginTop: 14 }} />
-        <ConnLine />
-        <Rule />
+        <View>
+          <Pad style={{ paddingTop: 18 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+              <Txt v="label" soft>{today}</Txt>
+              <Button a11y="home-settings" label="settings" onPress={() => router.push("/settings")} />
+            </View>
+            <Txt v="display" style={{ marginTop: 10 }}>pi <Txt v="display" style={{ fontFamily: F.serifItalic }} color={p.pink}>remote</Txt></Txt>
+            <Txt v="label" soft style={{ marginTop: 6 }}>{procs.length} live · {running} working · {waiting.length} waiting for you</Txt>
+          </Pad>
+          <Rule weight={2} style={{ marginTop: 14 }} />
+          <ConnLine />
+          <Rule />
 
-        {flow.busy ? (
-          <Pad style={{ paddingVertical: 14, flexDirection: "row", gap: 10 }}><Spinner color={p.blue} /><Txt v="label" color={p.blue} a11y="home-busy">{flow.busy}</Txt></Pad>
-        ) : null}
+          {flow.busy ? (
+            <Pad style={{ paddingVertical: 14, flexDirection: "row", gap: 10 }}><Spinner color={p.blue} /><Txt v="label" color={p.blue} a11y="home-busy">{flow.busy}</Txt></Pad>
+          ) : null}
 
-        {waiting.length ? (
-          <>
-            <SectionHead n="!" title="Waiting for you" color={p.pink} right={<Txt v="label" color={p.pink}>{waiting.length}</Txt>} />
-            {waiting.map((w) => (
-              <Row key={w.processId} a11y={`needs-${w.processId}`} accent={p.pink} index="→" indexColor={p.pink} onPress={() => openProcess(w.processId)}>
-                <Txt v="lead" lines={1}>{processTitle(w)}</Txt>
-                <Txt v="small" color={p.pink}>{roleLine(w) ?? baseName(w.cwd)} — answer it here</Txt>
-              </Row>
+          {waiting.length ? (
+            <>
+              <SectionHead n="!" title="Waiting for you" color={p.pink} right={<Txt v="label" color={p.pink}>{waiting.length}</Txt>} />
+              {waiting.map((w) => (
+                <Row key={w.processId} a11y={`needs-${w.processId}`} accent={p.pink} index="→" indexColor={p.pink} onPress={() => openProcess(w.processId)}>
+                  <Txt v="lead" lines={1}>{processTitle(w)}</Txt>
+                  <Txt v="small" color={p.pink}>{roleLine(w) ?? baseName(w.cwd)} — answer it here</Txt>
+                </Row>
+              ))}
+            </>
+          ) : null}
+
+          <SectionHead n="01" title="Live on the computer" right={<Txt v="label" soft>{procs.length}</Txt>} />
+          {procs.length === 0 ? (
+            <Pad indent style={{ paddingVertical: 16 }}><Txt v="body" soft a11y="home-no-procs">Nothing is running. Reopen a session below or start a new one.</Txt></Pad>
+          ) : tree.map((n, i) => <ProcRows key={n.info.processId} node={n} depth={0} index={String(i + 1).padStart(2, "0")} />)}
+
+          <SectionHead n="02" title="Recent sessions" right={<Txt v="label" soft>{shown.length}{sessions && shown.length !== sessions.length ? ` of ${sessions.length}` : ""}</Txt>} />
+        </View>
+
+        {/* Sticky: search and folder filters stay on screen while the list scrolls. */}
+        <View style={{ backgroundColor: p.paper, borderBottomWidth: 1, borderBottomColor: p.ink }}>
+          <Pad indent style={{ paddingTop: 8 }}>
+            <Field a11y="home-search" value={query} onChangeText={setQuery} placeholder="search words, names, folders" autoCapitalize="none" autoCorrect={false} />
+          </Pad>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16, paddingVertical: 12, paddingLeft: MARGIN + GUTTER, paddingRight: MARGIN }}>
+            {[undefined, ...projects.slice(0, 14).map((x) => x.cwd)].map((cwd) => (
+              <FilterWord key={cwd ?? "all"} label={cwd ? baseName(cwd) : "all"} active={filter === cwd} onPress={() => setFilter(cwd)} a11y={`filter-${cwd ? baseName(cwd) : "all"}`} />
             ))}
-          </>
-        ) : null}
+          </ScrollView>
+        </View>
 
-        <SectionHead n="01" title="Live on the computer" right={<Txt v="label" soft>{procs.length}</Txt>} />
-        {procs.length === 0 ? (
-          <Pad indent style={{ paddingVertical: 16 }}><Txt v="body" soft a11y="home-no-procs">Nothing is running. Reopen a session below or start a new one.</Txt></Pad>
-        ) : tree.map((n, i) => <ProcRows key={n.info.processId} node={n} depth={0} index={String(i + 1).padStart(2, "0")} />)}
-
-        <SectionHead n="02" title="Recent sessions" right={<Txt v="label" soft>{sessions?.length ?? ""}</Txt>} />
-        <Pad indent style={{ paddingTop: 10 }}>
-          <Field a11y="home-search" value={query} onChangeText={setQuery} placeholder="search by words, name or folder" autoCapitalize="none" autoCorrect={false} />
-        </Pad>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16, paddingVertical: 14, paddingLeft: MARGIN + 34, paddingRight: MARGIN }}>
-          {[undefined, ...projects.slice(0, 14).map((x) => x.cwd)].map((cwd) => (
-            <FilterWord key={cwd ?? "all"} label={cwd ? baseName(cwd) : "all"} active={filter === cwd} onPress={() => setFilter(cwd)} a11y={`filter-${cwd ? baseName(cwd) : "all"}`} />
+        <View>
+          {!sessions && conn === "ready" ? <Pad indent style={{ paddingVertical: 14 }}><Spinner /></Pad> : null}
+          {shown.map((s, i) => (
+            <Row key={s.sessionFile} a11y={`session-item-${i}`} index={relTime(s.modified).replace(" ago", "")} onPress={() => open(s)} dense
+              trailing={s.liveProcessId ? <Txt v="label" color={p.blue}>● live</Txt> : undefined}>
+              <Txt v="body" lines={2}>{s.name || s.firstMessage || "(empty session)"}</Txt>
+              <Txt v="mono" soft lines={1} style={{ fontSize: 11 }}>{baseName(s.cwd)} · {s.messageCount} messages</Txt>
+            </Row>
           ))}
-        </ScrollView>
-        <Rule color={p.faint} />
-        {!sessions && conn === "ready" ? <Pad indent style={{ paddingVertical: 14 }}><Spinner /></Pad> : null}
-        {shown.map((s, i) => (
-          <Row key={s.sessionFile} a11y={`session-item-${i}`} index={relTime(s.modified).replace(" ago", "")} onPress={() => open(s)} dense
-            trailing={s.liveProcessId ? <Txt v="label" color={p.blue}>● live</Txt> : undefined}>
-            <Txt v="body" lines={2}>{s.name || s.firstMessage || "(empty session)"}</Txt>
-            <Txt v="mono" soft lines={1} style={{ fontSize: 11 }}>{baseName(s.cwd)} · {s.messageCount} messages</Txt>
-          </Row>
-        ))}
-        {sessions && !shown.length ? <Pad indent style={{ paddingVertical: 14 }}><Txt v="small" soft>Nothing matches.</Txt></Pad> : null}
+          {sessions && !shown.length ? <Pad indent style={{ paddingVertical: 14 }}><Txt v="small" soft>Nothing matches.</Txt></Pad> : null}
+        </View>
       </ScrollView>
 
       <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, paddingBottom: insets.bottom, backgroundColor: p.ink }}>

@@ -3,7 +3,7 @@ import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { UiRequest, UiResponse } from "../../protocol/src/index.ts";
 import { emitSafe } from "./host-conn.ts";
 import { logError } from "./log.ts";
-import { latestUncoveredRpiv } from "./rpiv.ts";
+import { customOpenedAt, latestUncoveredRpiv } from "./rpiv.ts";
 import { refreshStatus } from "./snapshot.ts";
 import { g, type Placement } from "./state.ts";
 import type { DistributiveOmit } from "./types.ts";
@@ -100,6 +100,7 @@ function mirrorCustom(origCustom: CustomFn, factory: Parameters<CustomFn>[0], op
   const coveredBy = latestUncoveredRpiv();
   const title = options?.blocked?.message;
   const req: UiRequest = { uiId, kind: "custom", ...(title ? { title } : {}), ...(coveredBy ? { coveredBy } : {}) };
+  customOpenedAt.set(uiId, Date.now());
   s.pendingUi.set(uiId, {
     req,
     respond: (r) => {
@@ -113,6 +114,7 @@ function mirrorCustom(origCustom: CustomFn, factory: Parameters<CustomFn>[0], op
   let p: Promise<unknown>;
   try { p = origCustom(wrapped, options) as Promise<unknown>; } catch (e) { p = Promise.reject(e); }
   return p.finally(() => {
+    customOpenedAt.delete(uiId);
     s.pendingUi.delete(uiId);
     emitSafe({ type: "ui_closed", uiId, by: cancelRequested ? "remote" : "local" });
     refreshStatus();

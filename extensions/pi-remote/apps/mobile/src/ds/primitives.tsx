@@ -1,7 +1,7 @@
 import { router } from "expo-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  KeyboardAvoidingView, Modal, Pressable, ScrollView, Text, TextInput, View,
+  Animated, Easing, KeyboardAvoidingView, Modal, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions,
   type StyleProp, type TextInputProps, type TextStyle, type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -58,11 +58,11 @@ export function Row(props: {
   useTestAction(props.a11y, props.onPress, !props.disabled);
   const content = (pressed: boolean) => (
     <View style={[{
-      flexDirection: "row", gap: 0, paddingVertical: props.dense ? 10 : 15, paddingRight: MARGIN,
+      flexDirection: "row", alignItems: "baseline", paddingVertical: props.dense ? 10 : 15, paddingRight: MARGIN,
       borderTopWidth: props.first ? 1 : 0, borderBottomWidth: 1, borderColor: p.faint,
       backgroundColor: pressed ? p.tint : "transparent", opacity: props.disabled ? 0.4 : 1,
     }, props.style]}>
-      <View style={{ width: GUTTER + MARGIN, paddingLeft: MARGIN, paddingTop: 3 }}>
+      <View style={{ width: GUTTER + MARGIN, paddingLeft: MARGIN }}>
         {props.accent ? <View style={{ position: "absolute", left: 0, top: -15, bottom: -15, width: 3, backgroundColor: props.accent }} /> : null}
         {props.index ? <Txt v="label" color={props.indexColor ?? p.soft}>{props.index}</Txt> : null}
       </View>
@@ -190,7 +190,7 @@ export function Choice(props: { label: string; sub?: string; selected?: boolean;
   useTestAction(props.a11y, props.onPress, !props.disabled);
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={props.a11y} disabled={props.disabled} onPress={props.onPress}
-      style={({ pressed }) => ({ flexDirection: "row", paddingVertical: 12, paddingLeft: (props.indent ?? 0) * 14, borderBottomWidth: 1, borderBottomColor: p.faint, backgroundColor: pressed ? p.tint : "transparent", opacity: props.disabled ? 0.4 : 1 })}>
+      style={({ pressed }) => ({ flexDirection: "row", alignItems: "baseline", paddingVertical: 12, paddingLeft: (props.indent ?? 0) * 14, borderBottomWidth: 1, borderBottomColor: p.faint, backgroundColor: pressed ? p.tint : "transparent", opacity: props.disabled ? 0.4 : 1 })}>
       <Txt v="lead" color={props.selected ? p.pink : p.faint} style={{ width: 24 }}>{props.selected ? "→" : "·"}</Txt>
       <View style={{ flex: 1 }}>
         <Txt v={props.selected || props.strong ? "bodyBold" : "body"} lines={3}>{props.label}</Txt>
@@ -259,16 +259,41 @@ export function Pad(props: { children: ReactNode; style?: StyleProp<ViewStyle>; 
   return <View style={[{ paddingHorizontal: MARGIN, paddingLeft: props.indent ? MARGIN + GUTTER : MARGIN }, props.style]}>{props.children}</View>;
 }
 
-/** A page that slides up over the current one. Thick top rule, serif title, close as a word. */
+/**
+ * A page that slides up over the current one. The dimmed backdrop fades in place; only the paper moves.
+ * Thick top rule, serif title, "close" as a word.
+ */
 export function Sheet(props: { visible: boolean; title: string; kicker?: string; onClose: () => void; children: ReactNode; a11y: string; footer?: ReactNode; scroll?: boolean }) {
   const p = usePalette();
   const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
+  const [mounted, setMounted] = useState(props.visible);
+  const fade = useRef(new Animated.Value(0)).current;
+  const slide = useRef(new Animated.Value(height)).current;
   useTestAction(`${props.a11y}-close`, props.visible ? props.onClose : undefined);
+  useEffect(() => {
+    if (props.visible) {
+      setMounted(true);
+      Animated.parallel([
+        Animated.timing(fade, { toValue: 1, duration: 180, useNativeDriver: true }),
+        Animated.timing(slide, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]).start();
+    } else if (mounted) {
+      Animated.parallel([
+        Animated.timing(fade, { toValue: 0, duration: 160, useNativeDriver: true }),
+        Animated.timing(slide, { toValue: height, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      ]).start(() => setMounted(false));
+    }
+  }, [props.visible]);
+  if (!mounted) return null;
   return (
-    <Modal transparent visible={props.visible} animationType="slide" onRequestClose={props.onClose}>
+    <Modal transparent visible animationType="none" onRequestClose={props.onClose} statusBarTranslucent>
       <KeyboardAvoidingView behavior="height" style={{ flex: 1 }}>
-        <Pressable accessibilityLabel={`${props.a11y}-backdrop`} style={{ flex: 1, backgroundColor: p.scheme === "light" ? "#14141355" : "#000000A0" }} onPress={props.onClose} />
-        <View accessibilityLabel={props.a11y} style={{ backgroundColor: p.paper, maxHeight: "90%", paddingBottom: 12 + insets.bottom }}>
+        <Animated.View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, opacity: fade, backgroundColor: p.scheme === "light" ? "#14141355" : "#000000A0" }}>
+          <Pressable accessibilityLabel={`${props.a11y}-backdrop`} style={{ flex: 1 }} onPress={props.onClose} />
+        </Animated.View>
+        <View style={{ flex: 1 }} pointerEvents="box-none" />
+        <Animated.View accessibilityLabel={props.a11y} style={{ backgroundColor: p.paper, maxHeight: "90%", paddingBottom: 12 + insets.bottom, transform: [{ translateY: slide }] }}>
           <Rule weight={4} />
           <View style={{ flexDirection: "row", alignItems: "flex-end", paddingHorizontal: MARGIN, paddingTop: 16, paddingBottom: 12 }}>
             <View style={{ flex: 1 }}>
@@ -282,7 +307,7 @@ export function Sheet(props: { visible: boolean; title: string; kicker?: string;
             <ScrollView contentContainerStyle={{ paddingHorizontal: MARGIN, paddingBottom: 12 }} keyboardShouldPersistTaps="handled">{props.children}</ScrollView>
           )}
           {props.footer ? <View style={{ paddingHorizontal: MARGIN, paddingTop: 12 }}>{props.footer}</View> : null}
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
     </Modal>
   );
