@@ -1,0 +1,24 @@
+{
+  "name": "pi-session-view",
+  "version": "0.1.0",
+  "description": "Session outline sidebar for Pi fullscreen mode and opening turns as Markdown in nvim",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "tui",
+    "sidebar",
+    "nvim"
+  ],
+  "author": "llMooreyll",
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}

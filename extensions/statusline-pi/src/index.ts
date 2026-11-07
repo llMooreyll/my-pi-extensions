@@ -8,6 +8,8 @@ import {
 	formatCostSection,
 	type SessionCostState,
 } from "./cost.js";
+import { StatusBorderEditor, type BorderSegments } from "./editor.js";
+import { ResponseSpeedTracker, type SpeedSnapshot } from "./speed.js";
 import {
 	createCpuSampler,
 	formatSystemSection,
@@ -20,26 +22,6 @@ interface GitInfo {
 	branch?: string;
 	changedFiles: number;
 	prNumber?: number;
-}
-
-interface ResponseSpeedInfo {
-	tokensPerSecond?: number;
-	outputTokens: number;
-	durationMs: number;
-	responseCount: number;
-	inProgress: boolean;
-}
-
-interface ResponseSpeedAggregate {
-	totalOutputTokens: number;
-	totalDurationMs: number;
-	responseCount: number;
-}
-
-interface CurrentResponseSpeed {
-	outputTokens: number;
-	durationMs: number;
-	inProgress: boolean;
 }
 
 const GIT_REFRESH_MS = 5_000;
@@ -85,10 +67,7 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 	let githubRemote = false;
 	let prLookupInFlight = false;
 	let renderRequested: (() => void) | undefined;
-	let responseSpeed: ResponseSpeedInfo | undefined;
-	let completedResponseSpeed = createEmptyResponseSpeedAggregate();
-	let responseStartMs: number | undefined;
-	let liveOutputTokenEstimate = 0;
+	const speed = new ResponseSpeedTracker();
 	let lastSpeedRender = 0;
 	let sessionCost = createEmptySessionCostState();
 	let cpuSampler: CpuSampler = createCpuSampler();
@@ -105,7 +84,8 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		if (refreshTimer) clearInterval(refreshTimer);
 		refreshTimer = undefined;
 		renderRequested = undefined;
-		resetResponseSpeed();
+		speed.reset();
+		lastSpeedRender = 0;
 		sessionCost = createEmptySessionCostState();
 		cpuSampler = createCpuSampler();
 		systemUsage = refreshSystemUsage(cpuSampler);
@@ -113,49 +93,37 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("model_select", async (_event, ctx) => {
-		resetResponseSpeed();
+		// Samples are kept per model, so switching back restores that model's rate.
+		speed.setModel(getModelKey(ctx));
 		sessionCost = aggregateSessionCostFromContext(ctx);
 		notifiedGptContextBreakpoint = false;
 		maybeNotifyGptContextBreakpoint(ctx);
 		requestRender();
 	});
 	pi.on("thinking_level_select", async (_event, _ctx) => {
-		resetResponseSpeed();
 		requestRender();
+	});
+	pi.on("before_provider_request", async () => {
+		speed.markRequest(Date.now());
 	});
 	pi.on("message_start", async (event, ctx) => {
 		if (event.message.role !== "assistant") return;
 
 		maybeNotifyGptContextBreakpoint(ctx);
-		responseStartMs = Date.now();
-		liveOutputTokenEstimate = 0;
-		responseSpeed = getAverageResponseSpeed(completedResponseSpeed, {
-			outputTokens: 0,
-			durationMs: 0,
-			inProgress: true,
-		});
+		speed.setModel(getModelKey(ctx));
+		speed.start(Date.now());
 		requestRender();
 	});
 	pi.on("message_update", async (event, ctx) => {
 		if (event.message.role !== "assistant") return;
 		maybeNotifyGptContextBreakpoint(ctx);
-		if (responseStartMs === undefined) return;
 
 		const streamEvent = event.assistantMessageEvent;
-		if (
-			streamEvent.type === "text_delta" ||
-			streamEvent.type === "thinking_delta" ||
-			streamEvent.type === "toolcall_delta"
-		) {
-			liveOutputTokenEstimate += estimateTokens(streamEvent.delta);
-		}
+		if (streamEvent.type === "text_delta") speed.delta("text", streamEvent.delta, Date.now());
+		else if (streamEvent.type === "thinking_delta") speed.delta("thinking", streamEvent.delta, Date.now());
+		else if (streamEvent.type === "toolcall_delta") speed.delta("toolcall", streamEvent.delta, Date.now());
+		else return;
 
-		const durationMs = Date.now() - responseStartMs;
-		responseSpeed = getAverageResponseSpeed(completedResponseSpeed, {
-			outputTokens: Math.round(liveOutputTokenEstimate),
-			durationMs,
-			inProgress: true,
-		});
 		requestSpeedRender();
 	});
 	pi.on("message_end", async (event, ctx) => {
@@ -165,14 +133,9 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		const durationMs = responseStartMs === undefined ? 0 : Date.now() - responseStartMs;
-		const outputTokens = event.message.usage?.output || estimateAssistantOutputTokens(event.message) || Math.round(liveOutputTokenEstimate);
-		if (responseStartMs !== undefined) {
-			completedResponseSpeed = addCompletedResponseSpeed(completedResponseSpeed, outputTokens, durationMs);
-		}
-		responseSpeed = getAverageResponseSpeed(completedResponseSpeed);
-		responseStartMs = undefined;
-		liveOutputTokenEstimate = 0;
+		const stopReason = event.message.stopReason;
+		if (stopReason === "error" || stopReason === "aborted") speed.cancel();
+		else speed.finish(event.message.usage);
 		sessionCost = addAssistantMessageCost(sessionCost, event.message.usage, ctx.model);
 		requestRender();
 	});
@@ -183,7 +146,7 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("statusline-pi", {
-		description: "Toggle the compact project statusline footer",
+		description: "Toggle the statusline footer and the status border editor",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) return;
 			enabled = !enabled;
@@ -214,6 +177,16 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		cpuSampler = createCpuSampler();
 		systemUsage = refreshSystemUsage(cpuSampler);
 		refreshGit(ctx.cwd, { forceGit: true, forcePr: true });
+		speed.setModel(getModelKey(ctx));
+
+		// Model, context and speed live on the editor border; the footer keeps the rest.
+		const borderSource = {
+			top: (width: number): BorderSegments => formatTopBorder(ctx, pi, width),
+			bottom: (width: number): BorderSegments => formatBottomBorder(ctx, speed.snapshot(), width),
+		};
+		ctx.ui.setEditorComponent(
+			(tui, theme, keybindings) => new StatusBorderEditor(tui, theme, keybindings, borderSource),
+		);
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			const unsubscribeBranch = footerData.onBranchChange(() => {
@@ -231,10 +204,7 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 					tui.requestRender();
 				},
 				render(width: number): string[] {
-					const usage = getUsage(ctx);
-					const zone = getZone(usage.usedRatio, usage.contextWindow);
 					const cost = formatCostSection(theme, sessionCost, ctx);
-					const model = formatModelName(ctx, pi);
 					const dir = ctx.cwd;
 					const branch = gitInfo.branch ?? footerData.getGitBranch?.() ?? "no-git";
 					const changed = gitInfo.changedFiles;
@@ -255,11 +225,11 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 								gitInfo.prNumber,
 								getNarrowBranchWidth(width),
 							),
-							context: formatContextSection(theme, usage, zone),
-							speed: formatSpeedSection(theme, responseSpeed),
+							context: "",
+							speed: "",
 							cost,
 							sys: formatSystemSection(theme, systemUsage),
-							model: theme.fg("mdLink", model),
+							model: "",
 						},
 						separator,
 						width,
@@ -284,6 +254,7 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		renderRequested = undefined;
 		notifiedGptContextBreakpoint = false;
 		ctx.ui.setFooter(undefined);
+		ctx.ui.setEditorComponent(undefined);
 	}
 
 	function maybeNotifyGptContextBreakpoint(ctx: ExtensionContext): void {
@@ -310,14 +281,6 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		if (now - lastSpeedRender < SPEED_RENDER_THROTTLE_MS) return;
 		lastSpeedRender = now;
 		requestRender();
-	}
-
-	function resetResponseSpeed(): void {
-		responseSpeed = undefined;
-		completedResponseSpeed = createEmptyResponseSpeedAggregate();
-		responseStartMs = undefined;
-		liveOutputTokenEstimate = 0;
-		lastSpeedRender = 0;
 	}
 
 	function refreshGit(cwd: string, options: { forceGit?: boolean; forcePr?: boolean } = {}): void {
@@ -410,12 +373,15 @@ function runGit(cwd: string, args: string[]): string {
 function getUsage(ctx: ExtensionContext): {
 	contextWindow: number;
 	usedTokens: number;
+	/** False when Pi has no token count yet (e.g. right after compaction). */
+	known: boolean;
 	usedRatio: number;
 	remainingTokens: number;
 	remainingPercent: number;
 } {
 	const contextWindow = ctx.model?.contextWindow ?? 0;
-	const usedTokens = ctx.getContextUsage?.()?.tokens ?? 0;
+	const reportedTokens = ctx.getContextUsage?.()?.tokens;
+	const usedTokens = reportedTokens ?? 0;
 	const usedRatio = contextWindow > 0 ? Math.min(1, usedTokens / contextWindow) : 0;
 	const remainingTokens = Math.max(0, contextWindow - usedTokens);
 	const remainingPercent = contextWindow > 0 ? (remainingTokens / contextWindow) * 100 : 0;
@@ -423,6 +389,7 @@ function getUsage(ctx: ExtensionContext): {
 	return {
 		contextWindow,
 		usedTokens,
+		known: reportedTokens !== null && reportedTokens !== undefined,
 		usedRatio,
 		remainingTokens,
 		remainingPercent,
@@ -535,22 +502,92 @@ export function formatGitSection(
 	return `${branchText} ${changesText}${prText}`;
 }
 
-function formatContextSection(
-	theme: ExtensionContext["ui"]["theme"],
-	usage: ReturnType<typeof getUsage>,
-	zone: string,
-): string {
-	const color = getZoneColor(zone);
-	const icon = getZoneIcon(zone);
-	return theme.fg(color, `${icon} ${usage.remainingTokens.toLocaleString()} (${usage.remainingPercent.toFixed(1)}%) ${zone}`);
+const CONTEXT_BAR_CELLS = 10;
+const NARROW_CONTEXT_BAR_CELLS = 5;
+const NARROW_BORDER_WIDTH = 72;
+
+function getModelKey(ctx: ExtensionContext): string {
+	return `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`;
 }
 
-function formatSpeedSection(theme: ExtensionContext["ui"]["theme"], speed: ResponseSpeedInfo | undefined): string {
-	if (!speed) return theme.fg("dim", "-- tps");
+function formatTopBorder(ctx: ExtensionContext, pi: ExtensionAPI, width: number): BorderSegments {
+	const theme = ctx.ui.theme;
+	const narrow = width < NARROW_BORDER_WIDTH;
+	// Context sits top-right; the model label gives way first when space runs out.
+	const context = ` ${formatContextBar(theme, getUsage(ctx), narrow)} `;
+	const provider = ctx.model?.provider;
+	const modelId = ctx.model?.id ? ctx.model.id.replace(/^models\//, "") : "no-model";
+	const thinking = pi.getThinkingLevel?.() ?? "off";
+	const thinkingText = thinking === "off" ? (ctx.model?.reasoning ? "think off" : "") : `think ${thinking}`;
+	const thinkingWidth = thinkingText ? visibleWidth(thinkingText) + 3 : 0;
+	const labelWidth = Math.max(8, width - visibleWidth(context) - thinkingWidth - 6);
+	const label = truncateModelLabel(provider ? `${provider}/${modelId}` : modelId, labelWidth);
+	const thinkingPart = thinkingText ? `${theme.fg("dim", " · ")}${theme.fg("muted", thinkingText)}` : "";
+	return {
+		left: ` ${theme.fg("accent", label)}${thinkingPart} `,
+		right: context,
+	};
+}
 
-	const speedText = speed.tokensPerSecond === undefined ? "--" : formatTokensPerSecond(speed.tokensPerSecond);
-	const suffix = speed.inProgress ? "…" : "";
-	return theme.fg(getSpeedColor(speed), `${speedText} tps${suffix}`);
+function formatBottomBorder(ctx: ExtensionContext, speed: SpeedSnapshot, width: number): BorderSegments {
+	const theme = ctx.ui.theme;
+	return {
+		left: "",
+		right: ` ${formatSpeed(theme, speed, width < NARROW_BORDER_WIDTH)} `,
+	};
+}
+
+/** Keeps the model id readable by dropping the provider prefix first. */
+function truncateModelLabel(label: string, maxWidth: number): string {
+	if (visibleWidth(label) <= maxWidth) return label;
+	const slash = label.indexOf("/");
+	const withoutProvider = slash >= 0 ? label.slice(slash + 1) : label;
+	return truncatePlainTextToWidth(withoutProvider, maxWidth);
+}
+
+function formatContextBar(
+	theme: ExtensionContext["ui"]["theme"],
+	usage: ReturnType<typeof getUsage>,
+	narrow = false,
+): string {
+	const cells = narrow ? NARROW_CONTEXT_BAR_CELLS : CONTEXT_BAR_CELLS;
+	if (usage.contextWindow <= 0) return theme.fg("dim", `${"▱".repeat(cells)} ctx ?`);
+	// Right after compaction Pi reports no token count until the next response.
+	if (!usage.known) {
+		return theme.fg("dim", `${"▱".repeat(cells)} ?${narrow ? "" : `/${formatTokenCount(usage.contextWindow)}`}`);
+	}
+
+	const zone = getZone(usage.usedRatio, usage.contextWindow);
+	const color = getZoneColor(zone);
+	const filled = Math.min(cells, Math.round(usage.usedRatio * cells));
+	const bar = theme.fg(color, "▰".repeat(filled)) + theme.fg("dim", "▱".repeat(cells - filled));
+	const percent = theme.fg(color, `${Math.round(usage.usedRatio * 100)}%`);
+	if (narrow) return `${bar} ${percent}`;
+
+	const amounts = theme.fg("muted", `${formatTokenCount(usage.usedTokens)}/${formatTokenCount(usage.contextWindow)}`);
+	return `${bar} ${percent} ${amounts} ${theme.fg(color, `${getZoneIcon(zone)} ${zone}`)}`;
+}
+
+function formatSpeed(theme: ExtensionContext["ui"]["theme"], speed: SpeedSnapshot, narrow = false): string {
+	const rate = speed.tokensPerSecond;
+	const rateText =
+		rate === undefined
+			? theme.fg("dim", "-- tok/s")
+			: theme.fg(getSpeedColor(rate), `${formatTokensPerSecond(rate)}${speed.live ? "~" : ""} tok/s`);
+	if (narrow || speed.ttftMs === undefined) return rateText;
+	return `${rateText} ${theme.fg("muted", `TTFT ${formatDuration(speed.ttftMs)}`)}`;
+}
+
+function formatTokenCount(tokens: number): string {
+	if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens >= 10_000_000 ? 0 : 1)}M`;
+	if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`;
+	return `${tokens}`;
+}
+
+function formatDuration(ms: number): string {
+	if (ms < 1_000) return `${Math.round(ms)}ms`;
+	if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`;
+	return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1_000)}s`;
 }
 
 const ZONE_ICONS = {
@@ -582,9 +619,8 @@ function getZoneColor(zone: string): "success" | "warning" | "error" | "dim" {
 	}
 }
 
-function getSpeedColor(speed: ResponseSpeedInfo): "success" | "warning" | "error" | "dim" {
-	const tokensPerSecond = speed.tokensPerSecond;
-	if (tokensPerSecond === undefined || tokensPerSecond <= 0) return "dim";
+function getSpeedColor(tokensPerSecond: number): "success" | "warning" | "error" | "dim" {
+	if (tokensPerSecond <= 0) return "dim";
 	if (tokensPerSecond >= 20) return "success";
 	if (tokensPerSecond >= 5) return "warning";
 	return "error";
@@ -593,77 +629,4 @@ function getSpeedColor(speed: ResponseSpeedInfo): "success" | "warning" | "error
 function formatTokensPerSecond(tokensPerSecond: number): string {
 	if (tokensPerSecond < 100) return tokensPerSecond.toFixed(1);
 	return Math.round(tokensPerSecond).toString();
-}
-
-function calculateTokensPerSecond(tokens: number, durationMs: number): number | undefined {
-	if (tokens <= 0 || durationMs <= 0) return undefined;
-	return tokens / (durationMs / 1000);
-}
-
-function createEmptyResponseSpeedAggregate(): ResponseSpeedAggregate {
-	return {
-		totalOutputTokens: 0,
-		totalDurationMs: 0,
-		responseCount: 0,
-	};
-}
-
-function addCompletedResponseSpeed(
-	aggregate: ResponseSpeedAggregate,
-	outputTokens: number,
-	durationMs: number,
-): ResponseSpeedAggregate {
-	if (outputTokens <= 0 || durationMs <= 0) return aggregate;
-
-	return {
-		totalOutputTokens: aggregate.totalOutputTokens + outputTokens,
-		totalDurationMs: aggregate.totalDurationMs + durationMs,
-		responseCount: aggregate.responseCount + 1,
-	};
-}
-
-function getAverageResponseSpeed(
-	completed: ResponseSpeedAggregate,
-	current?: CurrentResponseSpeed,
-): ResponseSpeedInfo | undefined {
-	const hasCurrentData = current !== undefined && current.outputTokens > 0 && current.durationMs > 0;
-	const outputTokens = completed.totalOutputTokens + (hasCurrentData ? current.outputTokens : 0);
-	const durationMs = completed.totalDurationMs + (hasCurrentData ? current.durationMs : 0);
-	const responseCount = completed.responseCount + (hasCurrentData ? 1 : 0);
-	const inProgress = current?.inProgress ?? false;
-	const tokensPerSecond = calculateTokensPerSecond(outputTokens, durationMs);
-
-	if (tokensPerSecond === undefined && !inProgress) return undefined;
-
-	return {
-		tokensPerSecond,
-		outputTokens,
-		durationMs,
-		responseCount,
-		inProgress,
-	};
-}
-
-function estimateTokens(text: string): number {
-	return Math.max(1, text.length / 4);
-}
-
-function estimateAssistantOutputTokens(message: { content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown }> }): number {
-	let characters = 0;
-	for (const block of message.content) {
-		if (block.type === "text") characters += block.text?.length ?? 0;
-		else if (block.type === "thinking") characters += block.thinking?.length ?? 0;
-		else if (block.type === "toolCall") characters += JSON.stringify(block.arguments ?? {}).length;
-	}
-	return Math.ceil(characters / 4);
-}
-
-function formatModelName(ctx: ExtensionContext, pi: ExtensionAPI): string {
-	const provider = ctx.model?.provider;
-	const model = ctx.model?.id ? ctx.model.id.replace(/^models\//, "") : "no-model";
-	const supportsReasoning = ctx.model?.reasoning ?? false;
-	const thinking = pi.getThinkingLevel?.() ?? "off";
-	const thinkingDisplay = thinking !== "off" ? thinking : supportsReasoning ? "T" : "–";
-	const modelPart = provider ? `${provider}/${model}` : model;
-	return `${modelPart} [${thinkingDisplay}]`;
 }
