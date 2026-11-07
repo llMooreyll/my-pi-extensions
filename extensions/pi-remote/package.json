@@ -1,0 +1,9 @@
+{
+  "name": "pi-remote",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "typecheck": "tsc -p packages/protocol && tsc -p packages/bridge && tsc -p packages/hostd && tsc -p packages/relay"
+  },
+  "devDependencies": { "typescript": "^5.8", "@types/node": "^24" }
+}

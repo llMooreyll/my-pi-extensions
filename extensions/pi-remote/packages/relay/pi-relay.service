@@ -1,0 +1,18 @@
+# Install: copy packages/relay to /opt/pi-relay and run `npm install --omit=dev` there.
+# Create /etc/pi-relay.env containing RELAY_SECRET=... (mode 600).
+# cp pi-relay.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now pi-relay
+[Unit]
+Description=pi-remote relay
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pi-relay
+EnvironmentFile=/etc/pi-relay.env
+ExecStart=/usr/bin/node src/main.ts
+Restart=always
+RestartSec=3
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

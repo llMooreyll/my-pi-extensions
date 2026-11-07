@@ -1,0 +1,15 @@
+{
+  "name": "pi-hostd",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "pi-hostd": "src/main.ts" },
+  "scripts": { "start": "node src/main.ts serve" },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@getpaseo/relay": "0.15.3",
+    "ws": "^8",
+    "qrcode-terminal": "^0.12"
+  },
+  "devDependencies": { "@types/ws": "^8", "@types/node": "^24", "@types/qrcode-terminal": "^0.12", "typescript": "^5" }
+}
