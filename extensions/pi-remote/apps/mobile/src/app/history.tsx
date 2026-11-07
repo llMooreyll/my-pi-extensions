@@ -1,6 +1,8 @@
+import { Spinner } from "../ui/Spinner";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { WireMessage } from "@pi-remote/protocol";
 import { baseName } from "../lib/format";
 import { openProcess } from "../lib/nav";
@@ -22,6 +24,7 @@ export default function History() {
   const [confirm, setConfirm] = useState(false);
   const live = useStore((s) => Object.values(s.procs).find((p) => p.sessionFile === file));
   const flow = useOpenFlow();
+  const insets = useSafeAreaInsets();
   useEffect(() => { call("read_session", { sessionFile: file }).then(setData, (e) => setError(errText(e))); }, [file]);
   const loadMore = async () => {
     const first = data?.messages.find((m) => m.entryId)?.entryId;
@@ -30,7 +33,7 @@ export default function History() {
     catch (e) { setError(errText(e)); }
   };
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, paddingBottom: insets.bottom }}>
       <Stack.Screen options={{ title: data?.name ?? (data ? baseName(data.cwd) : "Session") }} />
       <View style={{ padding: 10, gap: 6, backgroundColor: c.card, borderBottomWidth: 1, borderBottomColor: c.border }}>
         <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
@@ -40,7 +43,7 @@ export default function History() {
         {live ? <Btn small a11y="history-open-live" kind="primary" label="This session is running → open" onPress={() => openProcess(live.processId)} /> : null}
       </View>
       {error ? <T color={c.danger} style={{ padding: 10 }}>{error}</T> : null}
-      {data ? <Transcript messages={data.messages} hasMoreBefore={data.hasMoreBefore} onLoadMore={loadMore} /> : !error ? <ActivityIndicator style={{ marginTop: 40 }} /> : null}
+      {data ? <Transcript messages={data.messages} hasMoreBefore={data.hasMoreBefore} onLoadMore={loadMore} /> : !error ? <Spinner style={{ marginTop: 40 }} /> : null}
       {!live && data ? (
         confirm ? (
           <Card a11y="history-continue-confirm" style={{ margin: 8, gap: 8 }}>

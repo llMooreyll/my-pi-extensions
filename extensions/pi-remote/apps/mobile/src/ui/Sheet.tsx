@@ -1,16 +1,20 @@
 import { type ReactNode } from "react";
 import { KeyboardAvoidingView, Modal, Pressable, ScrollView, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTestAction } from "../lib/test-hooks";
 import { T } from "./kit";
 import { usePalette } from "./theme";
 
 /** Bottom sheet built on RN's Modal. */
 export function Sheet(props: { visible: boolean; title: string; onClose: () => void; children: ReactNode; a11y: string; scroll?: boolean; footer?: ReactNode }) {
   const c = usePalette();
+  const insets = useSafeAreaInsets();
+  useTestAction(`${props.a11y}-close`, props.visible ? props.onClose : undefined);
   return (
     <Modal transparent visible={props.visible} animationType="slide" onRequestClose={props.onClose}>
       <KeyboardAvoidingView behavior="height" style={{ flex: 1 }}>
         <Pressable accessibilityLabel={`${props.a11y}-backdrop`} style={{ flex: 1, backgroundColor: "#0007" }} onPress={props.onClose} />
-        <View accessibilityLabel={props.a11y} style={{ backgroundColor: c.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: "85%", paddingBottom: 12 }}>
+        <View accessibilityLabel={props.a11y} style={{ backgroundColor: c.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: "85%", paddingBottom: 12 + insets.bottom }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderBottomWidth: 1, borderBottomColor: c.border }}>
             <T bold size={17}>{props.title}</T>
             <Pressable accessibilityRole="button" accessibilityLabel={`${props.a11y}-close`} onPress={props.onClose} hitSlop={12}><T dim size={18}>✕</T></Pressable>
@@ -27,6 +31,7 @@ export function Sheet(props: { visible: boolean; title: string; onClose: () => v
 
 export function Option(props: { label: string; sub?: string; selected?: boolean; onPress: () => void; a11y: string; disabled?: boolean; bold?: boolean; indent?: number }) {
   const c = usePalette();
+  useTestAction(props.a11y, props.onPress, !props.disabled);
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={props.a11y} disabled={props.disabled} onPress={props.onPress}
       style={({ pressed }) => ({ padding: 10, marginLeft: (props.indent ?? 0) * 12, borderRadius: 8, backgroundColor: props.selected ? c.accent + "33" : pressed ? c.cardAlt : "transparent", opacity: props.disabled ? 0.5 : 1, flexDirection: "row", gap: 8 })}>

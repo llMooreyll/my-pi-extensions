@@ -1,7 +1,8 @@
+import { Spinner } from "../ui/Spinner";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Linking, Modal, ScrollView, Switch, View } from "react-native";
+import { Linking, Modal, ScrollView, Switch, View } from "react-native";
 import notifee from "react-native-notify-kit";
 import { REMOTE_SETTINGS, type RemoteSettingDef } from "@pi-remote/protocol";
 import { reloadPrefs } from "../bg/notifications";
@@ -31,7 +32,7 @@ function PiSettings() {
     <Section title="pi settings (global)">
       {conn !== "ready" ? <T dim>Connect to the computer to edit pi settings.</T> : null}
       {error ? <T color={c.danger} a11y="settings-error">{error}</T> : null}
-      {conn === "ready" && !values && !error ? <ActivityIndicator /> : null}
+      {conn === "ready" && !values && !error ? <Spinner /> : null}
       {values ? REMOTE_SETTINGS.map((d) => (
         <Card key={d.key} a11y={`setting-${d.key}`} onPress={d.type === "enum" ? () => setPick(d) : undefined} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <View style={{ flex: 1 }}>
@@ -190,7 +191,7 @@ function AppSettings() {
 
 export default function SettingsScreen() {
   return (
-    <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+    <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 96 }} keyboardShouldPersistTaps="handled">
       <PiSettings />
       <ConnectionSettings />
       <AppSettings />

@@ -1,5 +1,5 @@
+import { Spinner } from "./Spinner";
 import { Fragment, useEffect, useState } from "react";
-import { ActivityIndicator } from "react-native";
 import type { ModelSummary } from "@pi-remote/protocol";
 import { call, errCode, errText } from "../net/connection";
 import { T } from "./kit";
@@ -23,7 +23,7 @@ export function ModelSheet({ processId, onClose }: { processId: string; onClose:
   return (
     <Sheet visible a11y="model-sheet" title="Model" onClose={onClose}>
       {error ? <T color={c.danger} a11y="model-error">{error}</T> : null}
-      {!models && !error ? <ActivityIndicator /> : null}
+      {!models && !error ? <Spinner /> : null}
       {[...groups].map(([prov, ms]) => (
         <Fragment key={prov}>
           <T dim size={12} bold style={{ marginTop: 6 }}>{prov}</T>

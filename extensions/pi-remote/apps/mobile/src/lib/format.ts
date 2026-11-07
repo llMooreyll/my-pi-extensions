@@ -38,3 +38,7 @@ export function shortJson(v: unknown, n = 300): string {
   try { s = JSON.stringify(v); } catch { s = String(v); }
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
+
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
+export const stripAnsi = (s: string) => s.replace(ANSI, "");

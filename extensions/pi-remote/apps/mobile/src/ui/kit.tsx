@@ -1,6 +1,7 @@
+import { Spinner } from "./Spinner";
 import { type ReactNode } from "react";
-import { ActivityIndicator, Pressable, Text, TextInput, View, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from "react-native";
-import { useTestInput } from "../lib/test-hooks";
+import { Pressable, Text, TextInput, View, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from "react-native";
+import { useTestAction, useTestInput } from "../lib/test-hooks";
 import { usePalette } from "./theme";
 
 export function Btn(props: { label: string; onPress: () => void; a11y: string; kind?: "primary" | "plain" | "danger"; disabled?: boolean; busy?: boolean; small?: boolean; style?: StyleProp<ViewStyle> }) {
@@ -8,6 +9,7 @@ export function Btn(props: { label: string; onPress: () => void; a11y: string; k
   const kind = props.kind ?? "plain";
   const bg = kind === "primary" ? c.accent : kind === "danger" ? c.danger : c.cardAlt;
   const fg = kind === "plain" ? c.text : c.accentText;
+  useTestAction(props.a11y, props.onPress, !props.disabled && !props.busy);
   return (
     <Pressable
       accessibilityRole="button"
@@ -20,7 +22,7 @@ export function Btn(props: { label: string; onPress: () => void; a11y: string; k
         flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
       }, props.style]}
     >
-      {props.busy ? <ActivityIndicator size="small" color={fg} /> : null}
+      {props.busy ? <Spinner size="small" color={fg} /> : null}
       <Text style={{ color: fg, fontWeight: "600", fontSize: props.small ? 13 : 15 }}>{props.label}</Text>
     </Pressable>
   );
@@ -42,6 +44,7 @@ export function Field(props: TextInputProps & { a11y: string; value: string; onC
 
 export function Card(props: { children: ReactNode; style?: StyleProp<ViewStyle>; a11y?: string; onPress?: () => void }) {
   const c = usePalette();
+  useTestAction(props.a11y, props.onPress);
   const st = [{ backgroundColor: c.card, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: c.border }, props.style];
   if (props.onPress) {
     return (

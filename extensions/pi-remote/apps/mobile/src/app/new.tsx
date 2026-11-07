@@ -1,5 +1,6 @@
+import { Spinner } from "../ui/Spinner";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, ScrollView } from "react-native";
+import { ScrollView } from "react-native";
 import type { ProjectItem } from "@pi-remote/protocol";
 import { baseName } from "../lib/format";
 import { useOpenFlow } from "../lib/open";
@@ -23,11 +24,11 @@ export default function NewSession() {
         <Section title="Directory">
           <Field a11y="new-cwd-input" value={cwd} onChangeText={setCwd} placeholder="/home/you/project" autoCapitalize="none" autoCorrect={false} />
           <Btn a11y="new-start" kind="primary" label="Start pi here" disabled={!cwd.startsWith("/")} busy={!!flow.busy} onPress={() => void flow.newProcess(cwd.trim())} />
-          {flow.busy ? <Card style={{ flexDirection: "row", gap: 8 }}><ActivityIndicator /><T>{flow.busy}</T></Card> : null}
+          {flow.busy ? <Card style={{ flexDirection: "row", gap: 8 }}><Spinner /><T>{flow.busy}</T></Card> : null}
         </Section>
         <Section title="Projects">
           {error ? <T color={c.danger}>{error}</T> : null}
-          {!projects && !error ? <ActivityIndicator /> : null}
+          {!projects && !error ? <Spinner /> : null}
           {projects?.map((p, i) => <Option key={p.cwd} a11y={`new-project-${i}`} label={baseName(p.cwd)} sub={p.cwd} selected={cwd === p.cwd} onPress={() => setCwd(p.cwd)} />)}
         </Section>
       </ScrollView>

@@ -1,5 +1,5 @@
+import { Spinner } from "./Spinner";
 import { useEffect, useState } from "react";
-import { ActivityIndicator } from "react-native";
 import type { ForkPoint } from "@pi-remote/protocol";
 import { call, errText } from "../net/connection";
 import { T } from "./kit";
@@ -15,9 +15,9 @@ export function ForkSheet({ processId, onClose, onPrefill }: { processId: string
   return (
     <Sheet visible a11y="fork-sheet" title="Fork from message" onClose={onClose}>
       {error ? <T color={c.danger} a11y="fork-error">{error}</T> : null}
-      {!points && !error ? <ActivityIndicator /> : null}
+      {!points && !error ? <Spinner /> : null}
       {points?.length === 0 ? <T dim>No user messages on this branch.</T> : null}
-      {busy ? <ActivityIndicator /> : null}
+      {busy ? <Spinner /> : null}
       {points?.map((p, i) => (
         <Option key={p.entryId} a11y={`fork-point-${i}`} label={p.text.slice(0, 160) || "(empty)"} disabled={busy}
           onPress={async () => {

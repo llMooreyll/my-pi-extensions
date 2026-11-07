@@ -1,9 +1,10 @@
 import * as ImagePicker from "expo-image-picker";
 import { useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { CommandInfo, DeliverAs, ImageInput } from "@pi-remote/protocol";
 import { BUILTIN_COMMANDS } from "../lib/slash";
-import { useTestInput } from "../lib/test-hooks";
+import { testLog, useTestAction, useTestInput } from "../lib/test-hooks";
 import { Btn, T } from "./kit";
 import { usePalette } from "./theme";
 
@@ -26,6 +27,7 @@ export function Composer(p: ComposerProps) {
   const [sending, setSending] = useState(false);
   const [hint, setHint] = useState<string | undefined>();
   useTestInput("composer-input", p.setText);
+  const insets = useSafeAreaInsets();
 
   const slashQuery = p.text.startsWith("/") && !p.text.includes(" ") ? p.text.slice(1).toLowerCase() : undefined;
   const suggestions = useMemo(() => {
@@ -43,6 +45,7 @@ export function Composer(p: ComposerProps) {
   };
 
   const send = async () => {
+    testLog("send", { sending, disabled: p.disabled, len: p.text.length });
     if (sending) return;
     const text = p.text;
     if (!text.trim() && !images.length) return;
@@ -55,16 +58,10 @@ export function Composer(p: ComposerProps) {
   };
 
   return (
-    <View accessibilityLabel="composer" style={{ borderTopWidth: 1, borderTopColor: c.border, backgroundColor: c.card, padding: 8, gap: 6 }}>
+    <View accessibilityLabel="composer" style={{ borderTopWidth: 1, borderTopColor: c.border, backgroundColor: c.card, padding: 8, paddingBottom: 8 + insets.bottom, gap: 6 }}>
       {suggestions.length ? (
         <ScrollView accessibilityLabel="slash-menu" style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
-          {suggestions.map((s) => (
-            <Pressable key={`${s.source}:${s.name}`} accessibilityRole="button" accessibilityLabel={`slash-${s.name}`} onPress={() => p.setText(`/${s.name} `)}
-              style={({ pressed }) => ({ paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, backgroundColor: pressed ? c.cardAlt : "transparent" })}>
-              <T size={14} bold>/{s.name} <T dim size={12}>{s.source === "builtin" ? "" : `[${s.source}]`}</T></T>
-              {s.description ? <T dim size={12} numberOfLines={1}>{s.description}</T> : null}
-            </Pressable>
-          ))}
+          {suggestions.map((s) => <SlashItem key={`${s.source}:${s.name}`} s={s} onPick={() => p.setText(`/${s.name} `)} />)}
         </ScrollView>
       ) : null}
       {images.length ? (
@@ -102,5 +99,17 @@ export function Composer(p: ComposerProps) {
         <Btn small a11y="composer-send" kind="primary" label="Send" busy={sending} disabled={p.disabled || (!p.text.trim() && !images.length)} onPress={() => void send()} />
       </View>
     </View>
+  );
+}
+
+function SlashItem({ s, onPick }: { s: { name: string; description?: string; source: string }; onPick: () => void }) {
+  const c = usePalette();
+  useTestAction(`slash-${s.name}`, onPick);
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={`slash-${s.name}`} onPress={onPick}
+      style={({ pressed }) => ({ paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, backgroundColor: pressed ? c.cardAlt : "transparent" })}>
+      <T size={14} bold>/{s.name} <T dim size={12}>{s.source === "builtin" ? "" : `[${s.source}]`}</T></T>
+      {s.description ? <T dim size={12} numberOfLines={1}>{s.description}</T> : null}
+    </Pressable>
   );
 }

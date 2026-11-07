@@ -1,5 +1,6 @@
+import { Spinner } from "./Spinner";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Switch, View } from "react-native";
+import { Switch, View } from "react-native";
 import type { TreeNodeWire } from "@pi-remote/protocol";
 import { call, errText } from "../net/connection";
 import { Btn, Field, T } from "./kit";
@@ -59,7 +60,7 @@ export function TreeSheet({ processId, running, defaultFilter, onClose }: { proc
       </View>
       {running ? <T color={c.warn} size={13}>The agent is running; switching is disabled.</T> : null}
       {error ? <T color={c.danger} a11y="tree-error">{error}</T> : null}
-      {!nodes && !error ? <ActivityIndicator /> : null}
+      {!nodes && !error ? <Spinner /> : null}
       {target ? (
         <View accessibilityLabel="tree-confirm" style={{ gap: 8, padding: 8, backgroundColor: c.cardAlt, borderRadius: 8 }}>
           <T bold>Jump to this point?</T>

@@ -1,5 +1,5 @@
+import { Spinner } from "./Spinner";
 import { useEffect, useState } from "react";
-import { ActivityIndicator } from "react-native";
 import type { SessionListItem } from "@pi-remote/protocol";
 import { relTime } from "../lib/format";
 import { openProcess } from "../lib/nav";
@@ -32,8 +32,8 @@ export function ResumeSheet({ processId, cwd, currentFile, onClose }: { processI
     <Sheet visible a11y="resume-sheet" title="Resume session" onClose={onClose}>
       <Btn small a11y="resume-scope" label={all ? "Show this project only" : "Show all projects"} onPress={() => setAll(!all)} />
       {error ? <T color={c.danger} a11y="resume-error">{error}</T> : null}
-      {!items && !error ? <ActivityIndicator /> : null}
-      {busy ? <ActivityIndicator /> : null}
+      {!items && !error ? <Spinner /> : null}
+      {busy ? <Spinner /> : null}
       {items?.map((s, i) => (
         <Option key={s.sessionFile} a11y={`resume-item-${i}`} label={s.name || s.firstMessage || "(empty)"} selected={s.sessionFile === currentFile} disabled={busy}
           sub={`${all ? `${s.cwd} · ` : ""}${relTime(s.modified)} · ${s.messageCount} messages${s.liveProcessId ? " · running" : ""}`} onPress={() => void pick(s)} />

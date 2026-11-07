@@ -1,12 +1,14 @@
 import * as Clipboard from "expo-clipboard";
+import { Spinner } from "../../ui/Spinner";
 import { router, Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, View } from "react-native";
+import { KeyboardAvoidingView, Pressable, ScrollView, View } from "react-native";
 import type { DeliverAs, ImageInput, RpivPrompt, UiResponse, CommandInfo, WireMessage } from "@pi-remote/protocol";
 import { processTitle, textOf } from "../../lib/format";
 import { useOpenFlow } from "../../lib/open";
 import { openProcess } from "../../lib/nav";
 import { routeSlash, type SheetName } from "../../lib/slash";
+import { testLog, useTestAction } from "../../lib/test-hooks";
 import { call, errCode, errText } from "../../net/connection";
 import { ensureView } from "../../net/sync";
 import { store, useStore } from "../../state/store";
@@ -31,6 +33,7 @@ type Confirm = { title: string; run: () => Promise<void> };
 
 function Chip({ label, onPress, a11y }: { label: string; onPress?: () => void; a11y: string }) {
   const c = usePalette();
+  useTestAction(a11y, onPress);
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={a11y} onPress={onPress}
       style={{ backgroundColor: c.cardAlt, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: c.border }}>
@@ -94,6 +97,7 @@ export default function SessionScreen() {
   const parent = info?.parentProcessId ? procsMap[info.parentProcessId] : undefined;
   const running = !!info && info.status !== "idle";
   const ready = conn === "ready" && !!procInfo && !!view && !view.gone;
+  useEffect(() => { testLog("session", { pid, ready, conn, hasProc: !!procInfo, hasView: !!view, gone: !!view?.gone }); }, [pid, ready, conn, !!procInfo, !!view]);
 
   const lastAssistantText = () => {
     const ms = view?.messages ?? [];
@@ -151,6 +155,7 @@ export default function SessionScreen() {
   };
 
   const title = info ? processTitle(info) : "Session";
+  useTestAction("session-title", info ? () => setSheet("session") : undefined);
   const usage = info?.contextUsage?.percent;
   const widgetsAbove = Object.entries(view?.extWidgets ?? {}).filter(([, w]) => w.placement !== "belowEditor");
   const widgetsBelow = Object.entries(view?.extWidgets ?? {}).filter(([, w]) => w.placement === "belowEditor");
@@ -206,7 +211,7 @@ export default function SessionScreen() {
       {view ? (
         <Transcript messages={view.messages} inflight={view.inflight} running={view.runningTools} hasMoreBefore={view.hasMoreBefore} onLoadMore={loadMore} hideThinking={hideThinking} />
       ) : (
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>{conn === "ready" && procInfo ? <ActivityIndicator /> : <T dim>{conn === "ready" ? "" : "Not connected"}</T>}</View>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>{conn === "ready" && procInfo ? <Spinner /> : <T dim>{conn === "ready" ? "" : "Not connected"}</T>}</View>
       )}
 
       {view?.toasts.length ? (

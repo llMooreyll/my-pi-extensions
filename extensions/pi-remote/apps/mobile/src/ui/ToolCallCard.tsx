@@ -1,8 +1,10 @@
+import { Spinner } from "./Spinner";
 import { memo, useState } from "react";
-import { ActivityIndicator, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import type { WireMessage } from "@pi-remote/protocol";
 import { textOf } from "../lib/format";
 import { openSessionFile } from "../lib/nav";
+import { useTestAction } from "../lib/test-hooks";
 import { Btn, T } from "./kit";
 import { PatchView } from "./PatchView";
 import { usePalette } from "./theme";
@@ -23,10 +25,11 @@ function ToolCallCardInner(props: { id: string; name: string; args: unknown; res
   const childFile = (props.name === "subagent" || props.name === "subagent_resume")
     ? ((r?.details?.sessionFile ?? r?.details?.sessionPath) as string | undefined) : undefined;
   const summary = toolSummary(props.name, props.args);
+  useTestAction(`tool-toggle-${props.id}`, () => setOpen((o) => !o));
   return (
     <View accessibilityLabel={`tool-${props.id}`} style={{ borderWidth: 1, borderColor: isError ? c.danger : c.border, borderRadius: 8, backgroundColor: c.cardAlt, marginVertical: 3 }}>
       <Pressable accessibilityRole="button" accessibilityLabel={`tool-toggle-${props.id}`} onPress={() => setOpen(!open)} style={{ padding: 8, flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
-        {props.running || props.pendingArgs ? <ActivityIndicator size="small" /> : <T dim size={12}>{open ? "▾" : "▸"}</T>}
+        {props.running || props.pendingArgs ? <Spinner size="small" /> : <T dim size={12}>{open ? "▾" : "▸"}</T>}
         <T mono size={12} style={{ flex: 1 }} numberOfLines={open ? undefined : 3}>{summary}</T>
         {isError ? <T size={12} color={c.danger}>error</T> : null}
       </Pressable>

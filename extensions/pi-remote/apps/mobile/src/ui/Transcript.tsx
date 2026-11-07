@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { WireMessage } from "@pi-remote/protocol";
-import { textOf } from "../lib/format";
+import { stripAnsi, textOf } from "../lib/format";
 import type { AssistantDraft, Block } from "../state/types";
 import { CustomMessageCard } from "./CustomMessageCard";
 import { Btn, T } from "./kit";
@@ -32,8 +32,8 @@ function Blocks({ blocks, ctx, prefix, streaming }: { blocks: Block[]; ctx: Ctx;
     <>
       {blocks.map((b, i) => {
         const key = `${prefix}-${i}`;
-        if (b.type === "text") return (b as { text: string }).text ? <Markdown key={key} text={(b as { text: string }).text} /> : null;
-        if (b.type === "thinking") return <Thinking key={key} a11y={`thinking-${key}`} text={String((b as { thinking: string }).thinking ?? "")} hidden={ctx.hideThinking} />;
+        if (b.type === "text") return (b as { text: string }).text ? <Markdown key={key} text={stripAnsi((b as { text: string }).text)} /> : null;
+        if (b.type === "thinking") return <Thinking key={key} a11y={`thinking-${key}`} text={stripAnsi(String((b as { thinking: string }).thinking ?? ""))} hidden={ctx.hideThinking} />;
         if (b.type === "toolCall") {
           const tc = b as { id: string; name: string; arguments: Record<string, unknown>; argsText?: string };
           const result = ctx.results.get(tc.id);
@@ -111,7 +111,6 @@ export function Transcript(props: {
 }) {
   const c = usePalette();
   const listRef = useRef<FlatList<Item>>(null);
-  const atBottom = useRef(true);
   const [showJump, setShowJump] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const running = props.running ?? {};
@@ -134,41 +133,41 @@ export function Transcript(props: {
     return { items: out, ctx: { results, running, hideThinking: !!props.hideThinking } as Ctx };
   }, [props.messages, props.inflight, running, props.hideThinking]);
 
+  // Inverted list: offset 0 is the newest message, so new output stays in view without manual scrolling.
+  const data = useMemo(() => [...items].reverse(), [items]);
+
   const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-    const dist = contentSize.height - contentOffset.y - layoutMeasurement.height;
-    atBottom.current = dist < 80;
-    setShowJump(dist > 400);
+    setShowJump(e.nativeEvent.contentOffset.y > 400);
   }, []);
 
   return (
     <View style={{ flex: 1 }}>
       <FlatList
         ref={listRef}
+        inverted
         accessibilityLabel="transcript"
-        data={items}
+        data={data}
         keyExtractor={(i) => i.key}
         renderItem={({ item }) => <MsgRow item={item} ctx={ctx} />}
-        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 12 }}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8 }}
         onScroll={onScroll}
         scrollEventThrottle={100}
-        onContentSizeChange={() => { if (atBottom.current) listRef.current?.scrollToEnd({ animated: false }); }}
-        ListHeaderComponent={
+        maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 120 }}
+        ListFooterComponent={
           <View>
             {props.header}
             {props.hasMoreBefore && props.onLoadMore ? (
               <Btn small a11y="transcript-load-more" label={loadingMore ? "Loading…" : "Load earlier messages"} disabled={loadingMore}
-                onPress={async () => { setLoadingMore(true); atBottom.current = false; try { await props.onLoadMore?.(); } finally { setLoadingMore(false); } }}
+                onPress={async () => { setLoadingMore(true); try { await props.onLoadMore?.(); } finally { setLoadingMore(false); } }}
                 style={{ alignSelf: "center", marginVertical: 8 }} />
             ) : null}
           </View>
         }
-        initialNumToRender={20}
+        initialNumToRender={15}
         windowSize={11}
-        removeClippedSubviews
       />
       {showJump ? (
-        <Pressable accessibilityRole="button" accessibilityLabel="transcript-jump-latest" onPress={() => { listRef.current?.scrollToEnd({ animated: true }); atBottom.current = true; setShowJump(false); }}
+        <Pressable accessibilityRole="button" accessibilityLabel="transcript-jump-latest" onPress={() => { listRef.current?.scrollToOffset({ offset: 0, animated: true }); setShowJump(false); }}
           style={{ position: "absolute", right: 14, bottom: 14, backgroundColor: c.accent, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 6 }}>
           <T color={c.accentText} size={13} bold>↓ Latest</T>
         </Pressable>

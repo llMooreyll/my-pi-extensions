@@ -1,6 +1,7 @@
+import { Spinner } from "../ui/Spinner";
 import { router, Stack } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, RefreshControl, ScrollView, View } from "react-native";
+import { RefreshControl, ScrollView, View } from "react-native";
 import type { ProcessInfo, ProjectItem, SessionListItem } from "@pi-remote/protocol";
 import { baseName, processTitle, relTime, roleBadge, statusLabel } from "../lib/format";
 import { useOpenFlow } from "../lib/open";
@@ -88,7 +89,7 @@ function ProjectRow({ p, onOpen, onNew }: { p: ProjectItem; onOpen: (s: SessionL
         <View style={{ gap: 6 }}>
           <Btn small a11y={`project-new-${baseName(p.cwd)}`} label="New session here" onPress={() => onNew(p.cwd)} />
           {err ? <T color={c.danger} size={13}>{err}</T> : null}
-          {!sessions && !err ? <ActivityIndicator /> : null}
+          {!sessions && !err ? <Spinner /> : null}
           {sessions?.slice(0, 30).map((s, i) => (
             <Card key={s.sessionFile} a11y={`session-item-${i}`} onPress={() => onOpen(s)} style={{ backgroundColor: c.cardAlt, padding: 10, gap: 2 }}>
               <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
@@ -140,17 +141,17 @@ export default function Home() {
         ),
       }} />
       <ScrollView
-        contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
+        contentContainerStyle={{ padding: 12, paddingBottom: 96 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await loadProjects(true); setRefreshing(false); }} />}
       >
         <ConnBar />
-        {flow.busy ? <Card a11y="home-busy" style={{ marginTop: 12, flexDirection: "row", gap: 8, alignItems: "center" }}><ActivityIndicator /><T>{flow.busy}</T></Card> : null}
+        {flow.busy ? <Card a11y="home-busy" style={{ marginTop: 12, flexDirection: "row", gap: 8, alignItems: "center" }}><Spinner /><T>{flow.busy}</T></Card> : null}
         <Section title={`Running (${procs.length})`}>
           {procs.length === 0 ? <T dim a11y="home-no-procs">No pi process is running on the computer.</T> : null}
           {tree.map((n) => <ProcRow key={n.info.processId} node={n} depth={0} />)}
         </Section>
         <Section title="Projects">
-          {!projects && conn === "ready" ? <ActivityIndicator /> : null}
+          {!projects && conn === "ready" ? <Spinner /> : null}
           {projects?.map((p) => <ProjectRow key={p.cwd} p={p} onOpen={openItem} onNew={(cwd) => void flow.newProcess(cwd)} />)}
         </Section>
       </ScrollView>
