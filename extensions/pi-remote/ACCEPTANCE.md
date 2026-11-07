@@ -126,21 +126,30 @@ pkill -f '^node packages/hostd/scripts/dev-client.ts'   # 结束；只能用这�
 
 需要看画面时：`adb -s 192.168.240.112:5555 exec-out screencap -p > /tmp/pr/acc/xx.png`，再按用户全局 AGENTS.md 的"读图"规则处理。尽量少用。
 
-**常用标签**（完整列表在实际界面上用 `$W labels` 查看）：
+**常用标签**（UI 重做后的版本；完整列表在实际界面上用 `$W labels` 查看。开关类控件也已注册为可"按下"的测试动作）：
 
 | 页面 | 标签 |
 |---|---|
-| 首页 | `conn-bar` `conn-state` `conn-via` `conn-error` `home-new` `home-settings` `home-no-procs` `home-busy` `proc-<processId>` `proc-status-<processId>` `project-<目录名>` `project-new-<目录名>` `session-item-<序号>` |
-| 配对 | `pair-scan-button` `pair-text-input` `pair-text-submit` `pair-error` `pair-confirm-card` `pair-confirm-host` `pair-confirm-button` `pair-confirm-cancel` `pair-busy` `pair-back` |
-| 信任对话框 | `trust-dialog` `trust-approve` `trust-deny` `trust-remember`（开关，测试钩子按不到，需要用 `$W tap`） `trust-cancel` |
-| 会话页 | `session-title` `chip-model` `chip-thinking` `chip-parent` `session-role` `session-ext-status` `child-strip` `child-<processId>` `session-gone` `session-reopen` `transcript` `transcript-load-more` `transcript-jump-latest` `msg-<序号>` `msg-inflight` `tool-toggle-<toolCallId>` `tool-showall-<id>` `tool-open-child-<id>` `patch-view` `thinking-*` `toast` `widget-<key>` `session-confirm` `session-confirm-yes` `session-confirm-no` |
-| 输入栏 | `composer-input` `composer-send` `composer-image` `composer-mode-steer` `composer-mode-followup` `composer-stop` `composer-hint` `slash-menu` `slash-<命令名>` `composer-image-<序号>` |
-| 对话框卡片 | `ui-card` `ui-title` `ui-option-<序号>` `ui-input` `ui-submit` `ui-confirm` `ui-cancel` `ui-custom-cancel` `ui-submitted` |
-| 问卷 | `rpiv-card-<toolCallId>` `rpiv-sheet` `rpiv-option-<序号>` `rpiv-text` `rpiv-next` `rpiv-prev` `rpiv-submit` `rpiv-decline` `rpiv-error` |
-| 弹层（Sheet） | `<sheet>-close`；`model-sheet` `model-<provider>/<id>` `model-error`；`thinking-sheet` `thinking-<级别>`；`tree-sheet` `tree-filter-<f>` `tree-node-<entryId>` `tree-confirm` `tree-summarize` `tree-instructions` `tree-go` `tree-cancel`；`fork-sheet` `fork-point-<序号>`；`resume-sheet` `resume-scope` `resume-item-<序号>`；`compact-sheet` `compact-input` `compact-run` `compact-error`；`session-sheet` `session-rename` `session-name-input` `session-name-save` `session-shutdown` `session-shutdown-confirm` |
-| 设置页 | `setting-<key>` `setting-switch-<key>` `setting-value-<key>` `setting-option-<值>` `settings-relay-input` `settings-direct-input` `settings-save-conn` `settings-test-conn` `settings-test-<序号>` `settings-conn-msg` `settings-scan-endpoint` `settings-endpoint-input` `settings-endpoint-apply` `settings-unpair` `settings-unpair-yes` `settings-keepalive` `settings-notify-child` `settings-battery` `settings-clear-trust` |
-| 只读历史页 | `history-readonly` `history-open-live` `history-continue` `history-continue-yes` `history-continue-no` |
-| 通用 | `error-dialog` `error-text` `error-close` |
+| 通用 | `nav-back`（返回）、`error-dialog` `error-text` `error-close`、`session-confirm` `session-confirm-yes` `session-confirm-no`、`toast` |
+| 首页 | `conn-bar` `conn-state` `conn-via` `conn-error` `home-settings` `home-new` `home-busy` `home-no-procs` `needs-<processId>`（"等你处理"区）`proc-<processId>` `proc-status-<processId>` `home-search` `filter-all` `filter-<目录名>` `session-item-<序号>`（最近会话，跨项目按时间排序） |
+| 配对 | `pair-scan-button` `pair-text-input` `pair-text-submit` `pair-error` `pair-busy` `pair-back`；深链接确认对话框 `pair-confirm-card` `pair-confirm-host` `pair-confirm-button` `pair-confirm-cancel` |
+| 信任对话框 | `trust-dialog` `trust-approve` `trust-deny` `trust-remember` `trust-cancel` |
+| 新会话页 | `new-cwd-input` `new-project-<序号>` `new-trust-deny` `new-trust-approve` `new-trust-remember` `new-start` |
+| 会话页顶部 | `session-title`（打开会话信息）`session-status` `session-commands`（打开命令页）`chip-model` `chip-thinking` `chip-context` `chip-parent` `session-role` `child-strip` `child-<processId>` `session-ext-status` `panels-toggle` `widget-<key>` `session-gone` `session-reopen` |
+| 消息区 | `transcript` `transcript-load-more` `transcript-jump-latest` `msg-<序号>` `msg-inflight` `tool-toggle-<toolCallId>` `tool-showall-<id>` `tool-open-child-<id>` `patch-view` `thinking-*` `custom-<customType>-<序号>` `custom-open-child-<序号>` |
+| 输入栏 | `composer-input` `composer-send` `composer-commands`（"/" 按钮）`composer-image`（"+" 按钮）`composer-mode-steer`（"send now"）`composer-mode-followup`（"send after"）`composer-stop` `composer-hint` `slash-menu` `slash-<命令名>` `composer-image-<序号>` |
+| 等待区（输入栏上方的粉色区域） | `attention-dock` `ui-card` `ui-title` `ui-option-<序号>` `ui-input` `ui-submit` `ui-confirm`（Yes）`ui-cancel` `ui-custom-cancel` `ui-submitted` `rpiv-card-<toolCallId>`（打开问卷）`rpiv-card-open-<toolCallId>` |
+| 问卷 | `rpiv-sheet` `rpiv-question` `rpiv-option-<序号>` `rpiv-text` `rpiv-next`（最后一题时为 Review）`rpiv-prev` `rpiv-submit` `rpiv-decline` `rpiv-error` |
+| 命令页 | `deck` `deck-close` `deck-model` `deck-thinking` `deck-tree` `deck-fork` `deck-clone` `deck-compact` `deck-new` `deck-resume` `deck-rename` `deck-copy` `deck-reload` `deck-info` `deck-settings` `deck-ext-<命令名>`（把命令填进输入框，不直接发送） |
+| 弹层 | `<弹层>-close`；`model-sheet` `model-<provider>/<id>` `model-error`；`thinking-sheet` `thinking-<级别>`；`tree-sheet` `tree-filter-<default\|no-tools\|user-only\|labeled-only\|all>` `tree-node-<entryId>` `tree-confirm` `tree-summarize` `tree-instructions` `tree-go` `tree-cancel`；`fork-sheet` `fork-point-<序号>`；`resume-sheet` `resume-scope-project` `resume-scope` `resume-item-<序号>`；`compact-sheet` `compact-input` `compact-run` `compact-error`；`session-sheet` `session-rename` `session-name-input` `session-name-save` `session-shutdown` `session-shutdown-confirm` `session-shutdown-cancel` |
+| 设置页 | `settings-hostname` `settings-fingerprint` `settings-relay-input` `settings-direct-input` `settings-save-conn` `settings-test-conn` `settings-test-<序号>` `settings-conn-msg` `settings-scan-endpoint` `settings-endpoint-input` `settings-endpoint-apply` `settings-unpair` `settings-unpair-yes` `settings-unpair-no` `setting-<key>`（枚举项）`setting-switch-<key>`（布尔项）`setting-option-<值>` `settings-keepalive` `settings-notify-child` `settings-battery` `settings-clear-trust` |
+| 只读历史页 | `history-readonly` `history-open-live` `history-continue` `history-continue-confirm` `history-continue-yes` `history-continue-no` |
+
+UI 重做带来的流程变化（验收时按新流程操作）：
+- 首页不再有"项目"折叠列表，改为"Recent sessions"：跨项目按时间排序，可以搜索，也可以按目录筛选（`filter-*`）。"打开旧会话"直接按 `session-item-N`。
+- 斜杠命令仍然可用。另外所有会话命令都列在命令页（`session-commands` 或 `composer-commands` → `deck-*`），不需要记命令名。
+- `/new`、`/reload`、`/clone` 的确认使用 `session-confirm-yes`。
+- 运行中的输入栏只在 pi 状态为 working 时出现 send now / send after / stop。等待对话框（needs you）时，消息会自动按 send after 排队。
 
 ### 1.3 App 的构建与安装
 

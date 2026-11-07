@@ -46,3 +46,14 @@
 25. 测试钩子额外加了 `piremote://test/press?label=`、`piremote://test/labels`：run-timer 每秒刷新状态行，界面一直不空闲，uiautomator dump 会一直等待；测试构建里转圈动画换成静态的"…"。这些只在 `EXPO_PUBLIC_TEST_HOOKS=1` 时生效。
 26. Waydroid 上已通过的验收：e2ee 握手与深链接配对、直连与中继切换、hostd 停止/恢复与中继重启后自动重连、首页打开旧会话（信任对话框）、手机发消息与电脑同步、流式输出、插话/排队/停止、edit diff 着色、hostd 停 30 秒后消息不丢不重（快照对比 seq 与条数一致）、select/input 对话框双向、ask_user_question 问卷。
 27. 未在 Waydroid 上验收（功能已实现）：M7e 第 7 条 custom 取消、M7f 原生命令与设置页、M7g 图片、M7h 通知与前台服务、M7i 子 agent/team 界面、M7j 连接设置与迁移；M8 的 README 未写。
+
+## UI 重做（分支 `pi-remote-ui-redesign`，worktree `~/.cache/pi-remote-dev/ui`）
+
+28. 视觉："Folio" 编辑排版风格：衬线大标题（Instrument Serif，含斜体）、Space Grotesk 正文、JetBrains Mono 元信息。不用卡片、阴影和圆角，层级只靠字号、发丝线和左侧页边栏（编号、`you` / `pi` / `§` 标签都挂在页边栏）。只有两种强调色：粉色表示"等你处理"，蓝色表示"正在工作"。字体文件在 `apps/mobile/assets/fonts/`（均为 OFL 授权），用 `expo-font` 的 `useFonts` 运行时加载。
+29. 交互逻辑重排：
+    - 首页依次为"等你处理"、"电脑上正在运行的"（带父子缩进）、"最近会话"（跨项目、可搜索、按目录筛选）；底部固定"Start a new session"。
+    - 新会话页把"在哪个目录"和"是否信任"两步放在同一页，不再弹信任框。
+    - 会话页把模型、思考级别、上下文放成可点击的文字行；所有命令集中在"Commands"页，按用途分组（"How pi thinks"、"Move through the conversation"、"Sessions"、"Utilities"），另附扩展命令；"/" 斜杠命令仍然可用。
+    - 对话框和问卷固定显示在输入栏上方的粉色区域，不会被忽略。
+    - 运行中改为"send now / send after / stop"，取代原来的"steer / queue"。
+30. 新增 Web 构建，用于设计预览和浏览器直接使用：`*.web.ts` 替换了安全存储（改用 localStorage）、前台服务和通知。启动方式：`EXPO_PUBLIC_TEST_HOOKS=1 npx expo start --web --port 8090`。为此新配对了一台 Web 设备，`devices.json` 中会多出一项。

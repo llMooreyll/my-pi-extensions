@@ -22,7 +22,8 @@ export default function History() {
   const [confirm, setConfirm] = useState(false);
   const live = useStore((s) => Object.values(s.procs).find((x) => x.sessionFile === file));
   const flow = useOpenFlow();
-  useEffect(() => { call("read_session", { sessionFile: file }).then(setData, (e) => setError(errText(e))); }, [file]);
+  const conn = useStore((s) => s.conn);
+  useEffect(() => { if (conn === "ready" && !data) call("read_session", { sessionFile: file }).then(setData, (e) => setError(errText(e))); }, [file, conn]);
   const loadMore = async () => {
     const first = data?.messages.find((m) => m.entryId)?.entryId;
     if (!first || !data) return;

@@ -7,6 +7,7 @@ import { loadTrustMap, rememberTrust } from "../lib/credentials";
 import { baseName, relTime } from "../lib/format";
 import { openProcess } from "../lib/nav";
 import { call, errText } from "../net/connection";
+import { useStore } from "../state/store";
 
 /** Two decisions, in order, on one page: where pi should run, and whether to trust that folder. */
 export default function NewSession() {
@@ -16,7 +17,8 @@ export default function NewSession() {
   const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  useEffect(() => { call("list_projects", {}).then((r) => setProjects(r.projects), (e) => setError(errText(e))); }, []);
+  const conn = useStore((s) => s.conn);
+  useEffect(() => { if (conn === "ready") call("list_projects", {}).then((r) => setProjects(r.projects), (e) => setError(errText(e))); }, [conn]);
   useEffect(() => { loadTrustMap().then((m) => { const t = m[cwd.trim()]; if (t) setTrust(t); }); }, [cwd]);
 
   const start = async () => {
