@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
-import { FlatList, Pressable, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { FlatList, Platform, Pressable, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { WireMessage } from "@pi-remote/protocol";
 import { Button, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
@@ -7,6 +7,7 @@ import { stripAnsi, textOf } from "../lib/format";
 import { useTestAction } from "../lib/test-hooks";
 import type { AssistantDraft, Block as ContentBlock, Queued } from "../state/types";
 import { CustomCard } from "./CustomCard";
+import { AnchorContext, type Anchor, FoldBar, useAnchor } from "./anchor";
 import { Markdown } from "./Markdown";
 import { ToolCard } from "./ToolCard";
 
@@ -45,7 +46,8 @@ function Margin({ label, color, children, a11y }: { label: string; color?: strin
 function Thinking({ text, hidden, a11y }: { text: string; hidden: boolean; a11y: string }) {
   const p = usePalette();
   const [open, setOpen] = useState(false);
-  const toggle = () => setOpen((o) => !o);
+  const anchor = useAnchor();
+  const toggle = () => { anchor("top"); setOpen((o) => !o); };
   useTestAction(a11y, hidden ? undefined : toggle);
   if (hidden) return <Txt v="label" faint style={{ marginVertical: 4 }}>thinking hidden</Txt>;
   return (
@@ -53,6 +55,7 @@ function Thinking({ text, hidden, a11y }: { text: string; hidden: boolean; a11y:
       <Txt v="small" soft lines={open ? undefined : 2} style={{ fontFamily: F.serifItalic, fontSize: 16, lineHeight: 21, color: p.soft }} cjk={{ fontFamily: F.cjkSerif, fontSize: 14, lineHeight: 24 }}>
         {open ? "" : "thinking — "}{text.trim()}
       </Txt>
+      {open ? <FoldBar a11y={`${a11y}-fold`} onFold={() => setOpen(false)} label="fold thinking" /> : null}
     </Pressable>
   );
 }
@@ -79,13 +82,16 @@ function Blocks({ blocks, ctx, prefix, streaming }: { blocks: ContentBlock[]; ct
 function Divider({ label, text, a11y }: { label: string; text: string; a11y: string }) {
   const p = usePalette();
   const [open, setOpen] = useState(false);
-  useTestAction(a11y, () => setOpen((o) => !o));
+  const anchor = useAnchor();
+  const toggle = () => { anchor("top"); setOpen((o) => !o); };
+  useTestAction(a11y, toggle);
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={a11y} onPress={() => setOpen(!open)} style={{ marginVertical: 16, gap: 8 }}>
+    <Pressable accessibilityRole="button" accessibilityLabel={a11y} onPress={toggle} style={{ marginVertical: 16, gap: 8 }}>
       <View style={{ height: 1, backgroundColor: p.ink }} />
       <Txt v="label" center>{label} {open ? "−" : "+"}</Txt>
       <View style={{ height: 1, backgroundColor: p.ink }} />
       {open ? <Markdown text={text} /> : null}
+      {open ? <FoldBar a11y={`${a11y}-fold`} onFold={() => setOpen(false)} /> : null}
     </Pressable>
   );
 }
@@ -156,6 +162,35 @@ const Row = memo(function Row({ item, ctx }: { item: Item; ctx: Ctx }) {
   }
 });
 
+/**
+ * Wraps a row: remembers its height and, when a fold inside it asked for the top edge to stay put,
+ * scrolls by exactly the change in height. In the inverted list a larger offset shows older content,
+ * so growing by d and scrolling by +d keeps the row's top fixed and lets it open downward.
+ */
+function Anchored({ children, offset, scrollTo, mvcpKeepsTop }: { children: ReactNode; offset: { current: number }; scrollTo: (y: number) => void; mvcpKeepsTop: boolean }) {
+  const height = useRef<number | undefined>(undefined);
+  const pending = useRef<Anchor | undefined>(undefined);
+  const request = useCallback((a: Anchor) => { pending.current = a; }, []);
+  const onLayout = (e: LayoutChangeEvent) => {
+    const h = e.nativeEvent.layout.height;
+    const prev = height.current;
+    height.current = h;
+    const a = pending.current;
+    if (prev === undefined || a === undefined || h === prev) return;
+    pending.current = undefined;
+    // For live rows on Android, maintainVisibleContentPosition already holds the older row above still,
+    // which keeps this row's top in place; scrolling again would move it twice.
+    if (a === "top" && !mvcpKeepsTop) {
+      const y = Math.max(0, offset.current + (h - prev));
+      offset.current = y;
+      scrollTo(y);
+    }
+  };
+  return <AnchorContext.Provider value={request}><View onLayout={onLayout}>{children}</View></AnchorContext.Provider>;
+}
+
+const NATIVE = Platform.OS !== "web";
+
 export function Transcript(props: {
   messages: WireMessage[]; inflight?: AssistantDraft; queued?: Queued[]; running?: Record<string, { toolName: string; args: unknown; partialText: string }>;
   hasMoreBefore: boolean; onLoadMore?: () => Promise<void>; hideThinking?: boolean; header?: ReactElement | null;
@@ -166,7 +201,7 @@ export function Transcript(props: {
   const [loadingMore, setLoadingMore] = useState(false);
   const running = props.running ?? {};
 
-  const { items, ctx } = useMemo(() => {
+  const { items, live, ctx } = useMemo(() => {
     const results = new Map<string, WireMessage>();
     const calls = new Set<string>();
     for (const m of props.messages) {
@@ -185,12 +220,19 @@ export function Transcript(props: {
     for (const q of props.queued ?? []) out.push({ key: q.id, kind: "queued", q });
     let prev = "";
     for (const it of out) { const sp = speaker(it); it.label = sp !== prev; prev = sp; }
-    return { items: out, ctx: { results, running, hideThinking: !!props.hideThinking } as Ctx };
+    // Rows that still grow (the answer being written, running tools, queued messages) sit at the end.
+    const live = (props.inflight ? 1 : 0) + Object.keys(running).filter((id) => !calls.has(id)).length + (props.queued?.length ?? 0);
+    return { items: out, live, ctx: { results, running, hideThinking: !!props.hideThinking } as Ctx };
   }, [props.messages, props.inflight, props.queued, running, props.hideThinking]);
 
   // Inverted list: offset 0 is the newest entry, so new output stays in view.
   const data = useMemo(() => [...items].reverse(), [items]);
-  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => setShowJump(e.nativeEvent.contentOffset.y > 400), []);
+  const offset = useRef(0);
+  const scrollTo = useCallback((y: number) => listRef.current?.scrollToOffset({ offset: y, animated: false }), []);
+  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    offset.current = e.nativeEvent.contentOffset.y;
+    setShowJump(offset.current > 400);
+  }, []);
   const jump = () => { listRef.current?.scrollToOffset({ offset: 0, animated: true }); setShowJump(false); };
 
   return (
@@ -201,11 +243,14 @@ export function Transcript(props: {
         accessibilityLabel="transcript"
         data={data}
         keyExtractor={(i) => i.key}
-        renderItem={({ item }) => <Row item={item} ctx={ctx} />}
+        renderItem={({ item, index }) => <Anchored offset={offset} scrollTo={scrollTo} mvcpKeepsTop={NATIVE && index < live}><Row item={item} ctx={ctx} /></Anchored>}
         contentContainerStyle={{ paddingHorizontal: MARGIN, paddingVertical: 10 }}
         onScroll={onScroll}
-        scrollEventThrottle={100}
-        maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 120 }}
+        scrollEventThrottle={16}
+        // Anchor on the newest row that no longer grows. When the reader has scrolled up, that row stays
+        // still while the answer streams in below it, so the text being read does not drift. At the bottom,
+        // autoscroll keeps following the answer.
+        maintainVisibleContentPosition={{ minIndexForVisible: live, autoscrollToTopThreshold: 40 }}
         ListFooterComponent={
           <View style={{ paddingTop: 10, alignItems: "center", gap: 10 }}>
             {props.header}

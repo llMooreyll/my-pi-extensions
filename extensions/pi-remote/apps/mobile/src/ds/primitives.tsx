@@ -231,18 +231,27 @@ export function Choice(props: { label: string; sub?: string; selected?: boolean;
 
 /* ───────────────────────────── feedback ───────────────────────────── */
 
-const FRAMES = ["·  ", "·· ", "···", " ··", "  ·", "   "];
-
-/** Typographic ellipsis. Test builds render it static: uiautomator cannot dump a window that animates forever. */
+/**
+ * Three dots that light in turn, drawn as fixed-size views. A text spinner changed width from frame to frame,
+ * wrapped in narrow columns and made whole lists jump; this one never changes its box.
+ * Test builds keep it still: uiautomator cannot dump a window that animates forever.
+ */
 export function Spinner(props: { color?: string }) {
   const p = usePalette();
   const [i, setI] = useState(0);
   useEffect(() => {
     if (TEST_HOOKS) return;
-    const t = setInterval(() => setI((x) => (x + 1) % FRAMES.length), 160);
+    const t = setInterval(() => setI((x) => (x + 1) % 4), 220);
     return () => clearInterval(t);
   }, []);
-  return <Txt v="mono" color={props.color ?? p.ink} a11y="spinner">{TEST_HOOKS ? "…" : FRAMES[i]}</Txt>;
+  const color = props.color ?? p.ink;
+  return (
+    <View accessibilityLabel="spinner" style={{ width: 16, height: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+      {[0, 1, 2].map((k) => (
+        <View key={k} style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: color, opacity: TEST_HOOKS || i === k ? 1 : 0.25 }} />
+      ))}
+    </View>
+  );
 }
 
 /* ───────────────────────────── pages ───────────────────────────── */

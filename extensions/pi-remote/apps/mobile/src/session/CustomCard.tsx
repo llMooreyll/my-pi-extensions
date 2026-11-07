@@ -5,16 +5,19 @@ import { Button, Txt } from "../ds/primitives";
 import { usePalette } from "../ds/tokens";
 import { textOf } from "../lib/format";
 import { openSessionFile } from "../lib/nav";
+import { FoldBar, useAnchor } from "./anchor";
 import { Markdown } from "./Markdown";
 
 function Folded({ text, lines, a11y }: { text: string; lines: number; a11y: string }) {
   const [open, setOpen] = useState(false);
+  const anchor = useAnchor();
   const all = text.split("\n");
   const long = all.length > lines;
   return (
     <View>
       <Markdown text={open || !long ? text : all.slice(0, lines).join("\n")} />
-      {long ? <Button a11y={a11y} label={open ? "fold" : `read all ${all.length} lines`} onPress={() => setOpen(!open)} /> : null}
+      {long && !open ? <Button a11y={a11y} label={`read all ${all.length} lines`} onPress={() => { anchor("top"); setOpen(true); }} /> : null}
+      {long && open ? <FoldBar a11y={a11y} onFold={() => setOpen(false)} /> : null}
     </View>
   );
 }
