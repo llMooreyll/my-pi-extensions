@@ -27,7 +27,7 @@ function Member({ c, below }: { c: ProcessInfo; below: number }) {
       </Txt>
       <Txt v="bodyBold" lines={1} style={{ fontSize: 15, lineHeight: 20 }}>{name}</Txt>
       <Txt v="mono" soft lines={1} style={{ fontSize: 10.5, lineHeight: 14 }}>
-        {[role.kind !== "main" ? role.agent : undefined, tag, below ? `+${below} below` : undefined].filter(Boolean).join(" · ") || shortModel(c.model)}
+        {[role.kind !== "main" ? role.agent : undefined, tag, below ? `+${below} below` : undefined].filter(Boolean).join(" · ") || "main session"}
       </Txt>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         <Txt v="mono" faint lines={1} style={{ fontSize: 10, flexShrink: 1 }}>{shortModel(c.model)}</Txt>

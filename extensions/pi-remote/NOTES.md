@@ -73,3 +73,16 @@
     - 开关改成 on/off 两格；设置里未设置的布尔项显示 "default"，不再显示成 off，因为 pi 各项默认值不同，例如自动压缩默认是开启的。
     - 筛选项改为可填充的标签。
     - 扩展面板默认折叠，只有子 agent 或 team 面板默认展开。
+36. **团队/子代理层级丢失两处原因**：
+    - 手机端：打开子会话时，`subscribe` 返回的快照信息（bridge 生成，没有 `parentProcessId`，该字段由 hostd 推导）会整体覆盖进程列表里的条目，子代理就脱离了树；之后发一条消息，hostd 重新广播才恢复。现在 hostd 在快照里补上父进程，手机端合并时也保留已有的父链接，会话页的"started by"取自进程列表。
+    - 单次子代理：父链接靠父进程记住 `subagent` 工具结果里的 `sessionFile`。模型经 `codemode` 调用 `subagent` 时，工具结果只有 `calls` 摘要，没有 sessionFile，父子无法关联（实测复现）。现在 bridge 从 `PI_SUBAGENT_ACTIVITY_FILE`（路径含 `artifacts/<父会话 id>/`）解析 `role.parentSessionId`，hostd 在原有规则找不到时按父会话 id 匹配。
+    - `links.ts` 的 realpath 缓存不再缓存失败结果（子会话文件刚启动时尚不存在）。
+37. **上下文用量**：以前只在 `agent_settled` 和压缩后发送 `context_usage`，长时间运行期间手机上一直显示压缩后的 "?"，而 TUI 页脚每次重绘都重新读取。现在在每个 `turn_end`（助手消息和工具结果都已写入会话后）也发送。数值未知时显示 "?"，并注明"known after the next reply"。
+38. **排队中的消息**：运行中发送（steer / follow-up）的消息，pi 在取走之前不会发任何事件，手机上看不到。现在发送时先显示为"queued"项（附发送方式和说明），pi 报告同文本的 user 消息后移除；run 结束（`agent_settled`）、会话切换或发送失败时清除。
+39. **草稿**：未发送的文字按会话 id 保存（内存立即恢复，写入 key store 防抖落盘），离开页面或关闭 App 后回来可继续编辑；发送后清空。
+40. **会话页**：
+    - 顶部三栏的副信息改为轮播（每 3.2 秒滑动一行，测试构建不轮播）：模型（服务商、完整 id、图像支持、推理模型、窗口大小）、思考（等级）、上下文（已用/剩余）。
+    - 思考档位 off / minimal / low / medium / high / xhigh 各有颜色，并有 6 格档位条。
+    - 子代理 / team 面板改为输入框上方的 `CrewTray`（每人一张卡：状态、名字、agent、worktree/read-only、模型、上下文条，点击进入），数据来自进程列表，team 和单次子代理通用；扩展输出的方框字符横幅（`subagent-status`、`team-status`、`team-member`）不再显示。
+    - 运行中的输入栏改为一条描边条：左侧红色 STOP，中间 working，右侧 send now / send after；输入框左侧的 "/" 与 "+" 垂直居中。
+41. **首页**：顶部两行（左标题、右三个数字；下一行连接状态和 settings）。"Live on the computer" 用蓝色，"Recent sessions" 用灰色。
