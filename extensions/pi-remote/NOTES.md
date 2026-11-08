@@ -120,3 +120,10 @@
 58. **会话页顶部三栏**：整个格子都可以点；第二行只显示一条完整信息：模型的服务商、`level x of 5`、`xxk used of xxM`。
 59. **首页**：去掉整宽色块和顶部粗线。分栏标题改为方形色标、28px 衬线标题、右侧计数，下方一条 2px 同色线。Waiting 为粉色，Live 为蓝色，Recent 为墨色。
 60. **路径补全**：列出全部匹配的子目录，不再截断。
+61. **跨段复制**：Android 的文字选择只能在同一个 Text 内进行，而渲染后的一条消息由很多个 Text 组成（段落、列表项、代码、表格），所以选择无法跨段。现在点消息左侧页边栏（标签下方有 ¶ 标记）会打开 "Select text" 面板，把整条消息放进同一个可选 Text 中，可以任意选择，也可以 Copy all；有 plain text 和 markdown 两种视图。正文内原有的长按选择保留。
+62. **首页分栏标题**：Waiting、Live、Recent 三个标题都是 ScrollView 的直接子元素，滑动时依次吸顶（`stickyHeaderIndices` 为 [1, 3, 5]，没有 waiting 时用空 View 占位）；字体改回 Instrument Serif 斜体。
+63. **APK 体积 131MB → 30MB**：
+    - 原来包含 4 个 ABI，且 .so 未压缩存放（`useLegacyPackaging=false`），仅原生库就占约 109MB。现在正式版只打 arm64-v8a（真机都是 64 位 ARM），并压缩 .so（`useLegacyPackaging=true`，安装时解压）；同时开启资源收缩，关闭 expo-camera 自带的 ML Kit 文档扫描器（本 App 只扫二维码）。
+    - 前三项写在 `app.json` 的 expo-build-properties 中；文档扫描器开关和 ABI 直接写在 `android/gradle.properties`（android 目录由 prebuild 生成，不入库，prebuild 时需要重新加上 `expo.camera.document-scanner-enabled=false`）。
+    - Waydroid（x86_64）测试构建需改用 `-PreactNativeArchitectures=x86_64`。
+    - 剩余的大头：中文字体约 9MB，dex 约 6MB。
