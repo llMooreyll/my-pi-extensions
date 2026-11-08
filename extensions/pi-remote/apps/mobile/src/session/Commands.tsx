@@ -5,7 +5,7 @@ import { Sheet, Txt } from "../ds/primitives";
 import { F, GUTTER, usePalette } from "../ds/tokens";
 import { useTestAction } from "../lib/test-hooks";
 
-export type DeckAction = "model" | "thinking" | "tree" | "fork" | "clone" | "new" | "resume" | "compact" | "rename" | "reload" | "copy" | "info" | "settings";
+export type DeckAction = "model" | "thinking" | "outline" | "tree" | "fork" | "clone" | "new" | "resume" | "compact" | "rename" | "reload" | "copy" | "info" | "settings";
 
 interface Entry { action: DeckAction; title: string; note: string; needsIdle?: boolean }
 
@@ -15,7 +15,8 @@ const GROUPS: { title: string; entries: Entry[] }[] = [
     { action: "thinking", title: "Thinking", note: "how long it may reason" },
   ] },
   { title: "Move through the conversation", entries: [
-    { action: "tree", title: "Go back to a point", note: "jump anywhere in the session tree", needsIdle: true },
+    { action: "outline", title: "Outline", note: "every turn at a glance; show, copy, redo or fork from one" },
+    { action: "tree", title: "Session tree", note: "all branches; go back to any point" },
     { action: "fork", title: "Fork from a message", note: "new session before one of your messages", needsIdle: true },
     { action: "clone", title: "Clone this session", note: "new session with everything so far", needsIdle: true },
     { action: "compact", title: "Compact the context", note: "summarise older messages", needsIdle: true },

@@ -32,6 +32,7 @@ export interface BridgeGlobal {
   extStatus: Map<string, string>;
   extWidgets: Map<string, { lines: string[]; placement: Placement }>;
   lastText?: string;
+  lastActiveAt?: number;
   lastStatus?: string;
   reloadPending: boolean;
   childSessionFiles: string[];

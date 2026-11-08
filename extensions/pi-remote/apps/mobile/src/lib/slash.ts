@@ -1,4 +1,4 @@
-export type SheetName = "model" | "thinking" | "tree" | "fork" | "resume" | "compact" | "session";
+export type SheetName = "model" | "thinking" | "outline" | "tree" | "fork" | "resume" | "compact" | "session";
 
 export type SlashAction =
   | { kind: "sheet"; sheet: SheetName }

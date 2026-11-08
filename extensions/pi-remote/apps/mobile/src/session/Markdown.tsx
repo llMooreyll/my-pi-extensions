@@ -1,9 +1,23 @@
 import MarkdownIt from "markdown-it";
-import { memo, useMemo, type ReactNode } from "react";
-import { Linking, ScrollView, Text, View, type TextStyle } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Linking, Pressable, ScrollView, Text, View, type TextStyle } from "react-native";
 import { hasCJK } from "../ds/cjk";
 import { F, usePalette, type Palette } from "../ds/tokens";
 import { latexToUnicode } from "../lib/latex";
+
+/** Copies a block's whole source; says "copied" for a moment. */
+function CopyButton({ text, label = "copy" }: { text: string; label?: string }) {
+  const p = usePalette();
+  const [done, setDone] = useState(false);
+  useEffect(() => { if (!done) return; const t = setTimeout(() => setDone(false), 1500); return () => clearTimeout(t); }, [done]);
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel="md-copy" hitSlop={8} onPress={() => { void Clipboard.setStringAsync(text); setDone(true); }}
+      style={({ pressed }) => ({ paddingHorizontal: 10, paddingVertical: 5, opacity: pressed ? 0.5 : 1 })}>
+      <Text style={{ fontFamily: F.monoBold, fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", color: done ? p.ok : p.ink }}>{done ? "✓ copied" : label}</Text>
+    </Pressable>
+  );
+}
 
 /* ───────────── parser: CommonMark + tables + strikethrough + $math$ ───────────── */
 
@@ -162,14 +176,14 @@ function blocks(nodes: Node[], c: Ctx, depth = 0, tight = false): ReactNode[] {
     switch (n.type) {
       case "paragraph": {
         const inl = n.children[0]?.inline;
-        return <Text key={k(c)} style={[paraStyle(c, inl), { marginBottom: gap }]}>{inline(inl, c)}</Text>;
+        return <Text selectable key={k(c)} style={[paraStyle(c, inl), { marginBottom: gap }]}>{inline(inl, c)}</Text>;
       }
-      case "inline": return <Text key={k(c)} style={paraStyle(c, n.inline)}>{inline(n.inline, c)}</Text>;
+      case "inline": return <Text selectable key={k(c)} style={paraStyle(c, n.inline)}>{inline(n.inline, c)}</Text>;
       case "heading": {
         const inl = n.children[0]?.inline;
         const table = hasCJK(inlineText(inl)) ? CJK_HEADINGS : HEADINGS;
         const hs = table[n.tag] ?? table.h3;
-        return <Text key={k(c)} style={[c.base, hs, n.tag >= "h4" ? { color: c.p.soft } : null, { marginTop: i === 0 ? 0 : 14, marginBottom: last ? 0 : 6 }]}>{inline(inl, c)}</Text>;
+        return <Text selectable key={k(c)} style={[c.base, hs, n.tag >= "h4" ? { color: c.p.soft } : null, { marginTop: i === 0 ? 0 : 14, marginBottom: last ? 0 : 6 }]}>{inline(inl, c)}</Text>;
       }
       case "bullet_list":
       case "ordered_list": {
@@ -197,22 +211,28 @@ function blocks(nodes: Node[], c: Ctx, depth = 0, tight = false): ReactNode[] {
         const code = n.content.replace(/\n$/, "");
         return (
           <View key={k(c)} style={{ marginBottom: gap, backgroundColor: c.p.tint }}>
-            {n.info ? <Text style={{ fontFamily: F.mono, fontSize: 10, letterSpacing: 1.2, color: c.p.soft, paddingHorizontal: 10, paddingTop: 7, textTransform: "uppercase" }}>{n.info.split(/\s/)[0]}</Text> : null}
+            <View style={{ flexDirection: "row", alignItems: "center", paddingLeft: 10, paddingTop: 4 }}>
+              <Text style={{ flex: 1, fontFamily: F.mono, fontSize: 10, letterSpacing: 1.2, color: c.p.soft, textTransform: "uppercase" }}>{n.info ? n.info.split(/\s/)[0] : "code"}</Text>
+              <CopyButton text={code} />
+            </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <Text selectable style={{ fontFamily: F.mono, fontSize: 12, lineHeight: 18, color: c.p.ink, padding: 10, paddingTop: n.info ? 4 : 10 }}>{code}</Text>
+              <Text selectable style={{ fontFamily: F.mono, fontSize: 12, lineHeight: 18, color: c.p.ink, padding: 10, paddingTop: 2 }}>{code}</Text>
             </ScrollView>
           </View>
         );
       }
       case "math_block":
         return (
-          <ScrollView key={k(c)} horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: gap }} contentContainerStyle={{ flexGrow: 1, justifyContent: "center", paddingVertical: 6 }}>
+          <View key={k(c)} style={{ marginBottom: gap }}>
+          <View style={{ alignItems: "flex-end" }}><CopyButton text={n.content.trim()} label="copy tex" /></View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1, justifyContent: "center", paddingVertical: 6 }}>
             <Text selectable style={{ fontFamily: F.serifItalic, fontSize: 21, lineHeight: 28, color: c.p.ink, textAlign: "center" }}>{latexToUnicode(n.content)}</Text>
           </ScrollView>
+          </View>
         );
       case "hr": return <View key={k(c)} style={{ height: 1, backgroundColor: c.p.faint, marginVertical: 12 }} />;
       case "table": return <Table key={k(c)} node={n} c={c} gap={gap} />;
-      case "html_block": return <Text key={k(c)} style={[c.base, { fontFamily: F.mono, fontSize: 12, marginBottom: gap }]}>{n.content}</Text>;
+      case "html_block": return <Text selectable key={k(c)} style={[c.base, { fontFamily: F.mono, fontSize: 12, marginBottom: gap }]}>{n.content}</Text>;
       default: return n.children.length ? <View key={k(c)}>{blocks(n.children, c, depth, tight)}</View> : null;
     }
   });
@@ -221,13 +241,17 @@ function blocks(nodes: Node[], c: Ctx, depth = 0, tight = false): ReactNode[] {
 function Table({ node, c, gap }: { node: Node; c: Ctx; gap: number }) {
   const rows: { head: boolean; cells: Node[] }[] = [];
   for (const section of node.children) for (const tr of section.children) rows.push({ head: section.type === "thead", cells: tr.children });
+  // Tab-separated, so it pastes into a spreadsheet as cells.
+  const tsv = rows.map((r) => r.cells.map((cell) => inlineText(cell.children[0]?.inline).replace(/\s+/g, " ")).join("\t")).join("\n");
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: gap }}>
+    <View style={{ marginBottom: gap }}>
+    <View style={{ alignItems: "flex-end" }}><CopyButton text={tsv} label="copy table" /></View>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
       <View style={{ borderTopWidth: 1, borderTopColor: c.p.ink }}>
         {rows.map((r, i) => (
           <View key={i} style={{ flexDirection: "row", borderBottomWidth: 1, borderBottomColor: r.head ? c.p.ink : c.p.faint }}>
             {r.cells.map((cell, j) => (
-              <Text key={j} style={[paraStyle(c, cell.children[0]?.inline), { width: 150, paddingVertical: 7, paddingRight: 12 }, r.head ? { fontFamily: hasCJK(inlineText(cell.children[0]?.inline)) ? F.cjkSansMed : F.mono, fontSize: 11, letterSpacing: 0.8, color: c.p.soft } : { fontSize: 14, lineHeight: 21 }]}>
+              <Text selectable key={j} style={[paraStyle(c, cell.children[0]?.inline), { width: 150, paddingVertical: 7, paddingRight: 12 }, r.head ? { fontFamily: hasCJK(inlineText(cell.children[0]?.inline)) ? F.cjkSansMed : F.mono, fontSize: 11, letterSpacing: 0.8, color: c.p.soft } : { fontSize: 14, lineHeight: 21 }]}>
                 {inline(cell.children[0]?.inline, c)}
               </Text>
             ))}
@@ -235,6 +259,7 @@ function Table({ node, c, gap }: { node: Node; c: Ctx; gap: number }) {
         ))}
       </View>
     </ScrollView>
+    </View>
   );
 }
 

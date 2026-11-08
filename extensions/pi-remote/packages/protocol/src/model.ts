@@ -42,6 +42,8 @@ export interface ProcessInfo {
   thinkingLevel: string;
   status: ProcessStatus;
   pendingUiCount: number;   // 未关闭的对话框 + 问卷数
+  /** 最近一次活动（运行开始/结束、新消息）的时间，毫秒；用于按活动排序 */
+  lastActiveAt?: number;
   lastText?: string;        // 最近一次 agent_settled 时最后一条 assistant 文本的前 120 字符
   contextUsage?: ContextUsageWire;
   lastSeq: number;

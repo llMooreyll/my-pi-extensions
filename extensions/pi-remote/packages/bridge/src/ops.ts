@@ -39,6 +39,12 @@ async function opPrompt(a: Args): Promise<{ accepted: true }> {
   return { accepted: true };
 }
 
+function textOfContent(c: unknown): string {
+  if (typeof c === "string") return c;
+  if (!Array.isArray(c)) return "";
+  return c.filter((b) => b?.type === "text").map((b) => String(b.text ?? "")).join("");
+}
+
 const HANDLERS: Record<string, (a: Args) => unknown | Promise<unknown>> = {
   get_snapshot: (a) => getSnapshot(Number(a.maxMessages ?? 200)),
   get_history: (a) => getHistory(String(a.beforeEntryId), a.limit ?? 100),
@@ -89,8 +95,13 @@ const HANDLERS: Record<string, (a: Args) => unknown | Promise<unknown>> = {
   get_tree: () => getTree(),
   navigate_tree: async (a) => {
     needIdle();
+    // pi puts the text of a chosen user message back in the editor (interactive-mode navigateTree);
+    // the command context does not return it, so read it here and hand it to the phone's composer too.
+    const target = need().ctx.sessionManager.getEntry(String(a.entryId)) as { type?: string; message?: { role?: string; content?: unknown }; content?: unknown } | undefined;
+    const editorText = target?.type === "message" && target.message?.role === "user" ? textOfContent(target.message.content)
+      : target?.type === "custom_message" ? textOfContent(target.content) : undefined;
     const r = await runWithCommandCtx((c) => c.navigateTree(String(a.entryId), { summarize: !!a.summarize, ...(a.customInstructions ? { customInstructions: String(a.customInstructions) } : {}) }));
-    return { cancelled: r.cancelled };
+    return { cancelled: r.cancelled, ...(!r.cancelled && editorText ? { editorText } : {}) };
   },
   get_fork_points: () => ({ points: getForkPoints() }),
   fork: async (a) => {

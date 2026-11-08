@@ -17,6 +17,7 @@ export const VALIDATORS: Record<OpName, (a: Args) => void> = {
   unsubscribe: pid,
   get_settings: () => {},
   set_setting: (a) => { str(a, "key"); if (!("value" in a)) throw err("bad_request", "value is required"); },
+  list_dirs: (a) => { anyStr(a, "path"); },
   read_session: (a) => { str(a, "sessionFile"); optStr(a, "beforeEntryId"); optInt(a, "limit", 1, 1000); },
   prompt: (a) => {
     pid(a); anyStr(a, "text"); optOneOf(a, "deliverAs", ["steer", "followUp"]);

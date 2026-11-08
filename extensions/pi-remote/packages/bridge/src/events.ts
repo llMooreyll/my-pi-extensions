@@ -75,10 +75,11 @@ function emitContextUsage(): void {
 }
 
 export function registerEventForwarders(pi: ExtensionAPI): void {
-  on(pi, "agent_start", () => { emitSafe({ type: "agent_start" }); refreshStatus(); });
+  on(pi, "agent_start", () => { g().lastActiveAt = Date.now(); emitSafe({ type: "agent_start" }); refreshStatus(); });
 
   on(pi, "agent_settled", (event) => {
     const s = g();
+    s.lastActiveAt = Date.now();
     s.lastText = lastAssistantText();
     s.inflight = undefined;
     s.runningTools.clear();

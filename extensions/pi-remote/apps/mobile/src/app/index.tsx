@@ -4,7 +4,7 @@ import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ProcessInfo, ProjectItem, SessionListItem } from "@pi-remote/protocol";
 import { ConnStatus, ErrorDialog, TrustDialog } from "../ds/common";
-import { Button, Field, Pad, Row, Rule, SectionHead, Spinner, StatusText, Txt } from "../ds/primitives";
+import { Button, Field, Pad, Row, Rule, Spinner, StatusText, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { baseName, plainPreview, processTitle, relTime } from "../lib/format";
 import { openProcess } from "../lib/nav";
@@ -22,8 +22,8 @@ export function buildTree(procs: ProcessInfo[]): Node[] {
     const parent = n.info.parentProcessId ? byId.get(n.info.parentProcessId) : undefined;
     if (parent && parent !== n) parent.children.push(n); else roots.push(n);
   }
-  const rank = (p: ProcessInfo) => (p.status === "waiting_ui" ? 0 : p.status === "running" ? 1 : 2);
-  const sort = (ns: Node[]) => { ns.sort((a, b) => rank(a.info) - rank(b.info)); for (const n of ns) sort(n.children); };
+  // Most recently active first (dialogs waiting on you are listed separately above).
+  const sort = (ns: Node[]) => { ns.sort((a, b) => (b.info.lastActiveAt ?? 0) - (a.info.lastActiveAt ?? 0)); for (const n of ns) sort(n.children); };
   sort(roots);
   return roots;
 }
@@ -85,6 +85,17 @@ function AppTitle({ room }: { room: number }) {
       <Text allowFontScaling={false} style={[t, { fontFamily: F.serif, color: p.ink, letterSpacing: -0.5 }]}>pi</Text>
       <Text allowFontScaling={false} style={[t, { fontFamily: F.serif, color: p.faint, marginHorizontal: size * 0.02 }]}>/</Text>
       <Text allowFontScaling={false} style={[t, { fontFamily: F.serifItalic, color: p.pink }]}>remote</Text>
+    </View>
+  );
+}
+
+/** A section heading set as a full-width coloured band: the strongest landmark on the page. */
+function Band({ title, count, total, bg, fg, dot, a11y, flush }: { title: string; count: number; total?: number; bg: string; fg: string; dot?: boolean; a11y: string; flush?: boolean }) {
+  return (
+    <View accessibilityLabel={a11y} style={{ marginTop: flush ? 0 : 26, backgroundColor: bg, paddingHorizontal: MARGIN, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 10 }}>
+      {dot ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: fg }} /> : null}
+      <Txt v="em" color={fg} style={{ flex: 1, fontSize: 22, lineHeight: 26 }}>{title}</Txt>
+      <Txt v="label" color={fg} style={{ fontFamily: F.monoBold, fontSize: 12 }}>{count}{total !== undefined ? ` of ${total}` : ""}</Txt>
     </View>
   );
 }
@@ -176,7 +187,7 @@ export default function Home() {
 
           {waiting.length ? (
             <>
-              <SectionHead n="!" title="Waiting for you" color={p.pink} right={<Txt v="label" color={p.pink}>{waiting.length}</Txt>} />
+              <Band title="Waiting for you" count={waiting.length} bg={p.pink} fg="#FFFFFF" a11y="band-waiting" />
               {waiting.map((w) => (
                 <Row key={w.processId} a11y={`needs-${w.processId}`} accent={p.pink} index="→" indexColor={p.pink} onPress={() => openProcess(w.processId)}>
                   <Txt v="lead" lines={1}>{processTitle(w)}</Txt>
@@ -186,16 +197,17 @@ export default function Home() {
             </>
           ) : null}
 
-          <SectionHead n="01" title="Live on the computer" color={p.blue} right={<Txt v="label" color={p.blue} style={{ fontFamily: F.monoBold }}>● {procs.length}</Txt>} />
+          <Band title="Live on the computer" count={procs.length} bg={p.blue} fg="#FFFFFF" dot a11y="band-live" />
           {procs.length === 0 ? (
             <Pad indent style={{ paddingVertical: 16 }}><Txt v="body" soft a11y="home-no-procs">Nothing is running. Reopen a session below or start a new one.</Txt></Pad>
           ) : tree.map((n, i) => <ProcRows key={n.info.processId} node={n} depth={0} index={String(i + 1).padStart(2, "0")} />)}
 
-          <SectionHead n="02" title="Recent sessions" color={p.soft} right={<Txt v="label" soft>{shown.length}{sessions && shown.length !== sessions.length ? ` of ${sessions.length}` : ""}</Txt>} />
+          <View style={{ height: 26 }} />
         </View>
 
-        {/* Sticky: search and folder filters stay on screen while the list scrolls. */}
+        {/* Sticky: the Recent heading, search and folder filters stay on screen while the list scrolls. */}
         <View style={{ backgroundColor: p.paper, borderBottomWidth: 1, borderBottomColor: p.ink }}>
+          <Band title="Recent sessions" count={shown.length} total={sessions && shown.length !== sessions.length ? sessions.length : undefined} bg={p.tint} fg={p.ink} a11y="band-recent" flush />
           <Pad indent style={{ paddingTop: 8 }}>
             <Field a11y="home-search" value={query} onChangeText={setQuery} placeholder="search words, names, folders" autoCapitalize="none" autoCorrect={false} />
           </Pad>

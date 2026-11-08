@@ -32,6 +32,8 @@ export interface OpMap {
   get_settings: [{}, { values: Record<string, unknown> }];
   set_setting: [{ key: string; value: unknown }, { values: Record<string, unknown> }];
   /** 只读查看任意会话文件（例如已结束的子 agent），不启动 pi；7.2.16 */
+  /** 列出电脑上某个目录下的子目录，供新建会话时补全路径；path 可用 ~ */
+  list_dirs: [{ path: string }, { path: string; home: string; dirs: string[] }];
   read_session: [{ sessionFile: string; beforeEntryId?: string; limit?: number }, { cwd: string; name?: string; messages: WireMessage[]; hasMoreBefore: boolean }];
   // ---- 转发给 bridge ----
   prompt: [{ processId: string; text: string; images?: ImageInput[]; deliverAs?: DeliverAs }, { accepted: true }];
@@ -46,7 +48,7 @@ export interface OpMap {
   set_thinking: [{ processId: string; level: string }, {}];
   compact: [{ processId: string; customInstructions?: string }, {}];
   get_tree: [{ processId: string }, { nodes: TreeNodeWire[]; leafId: string | null }];
-  navigate_tree: [{ processId: string; entryId: string; summarize: boolean; customInstructions?: string }, { cancelled: boolean }];
+  navigate_tree: [{ processId: string; entryId: string; summarize: boolean; customInstructions?: string }, { cancelled: boolean; editorText?: string }];
   get_fork_points: [{ processId: string }, { points: ForkPoint[] }];
   fork: [{ processId: string; entryId: string; position: "before" | "at" }, { cancelled: boolean; prefillText?: string }];
   new_session: [{ processId: string }, { cancelled: boolean }];
@@ -62,7 +64,7 @@ export type OpResult<K extends OpName> = OpMap[K][1];
 
 export const HOSTD_LOCAL_OPS: readonly OpName[] = [
   "list_processes", "list_sessions", "list_projects", "open_session", "new_process",
-  "subscribe", "unsubscribe", "get_settings", "set_setting", "read_session",
+  "subscribe", "unsubscribe", "get_settings", "set_setting", "read_session", "list_dirs",
 ];
 
 /** hostd → bridge 请求超时（毫秒）。未列出的用 DEFAULT */

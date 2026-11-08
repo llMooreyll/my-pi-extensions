@@ -19,8 +19,9 @@ import { AttentionDock, RpivSheet } from "../../session/Attention";
 import { CommandsSheet, type DeckAction } from "../../session/Commands";
 import { CrewTray } from "../../session/CrewTray";
 import { Composer } from "../../session/Composer";
-import { CompactSheet, ForkSheet, InfoSheet, ModelSheet, ResumeSheet, ThinkingSheet, TreeSheet } from "../../session/Sheets";
-import { Transcript } from "../../session/Transcript";
+import { OutlineSheet } from "../../session/Outline";
+import { CompactSheet, ForkSheet, InfoSheet, ModelSheet, ResumeSheet, ThinkingSheet } from "../../session/Sheets";
+import { Transcript, type TranscriptHandle } from "../../session/Transcript";
 
 type Confirm = { title: string; body?: string; label?: string; run: () => Promise<void> };
 
@@ -93,6 +94,7 @@ export default function SessionScreen() {
   const [treeFilter, setTreeFilter] = useState<string | undefined>();
   const [panelsOpen, setPanelsOpen] = useState<boolean | undefined>(undefined);
   const flow = useOpenFlow();
+  const transcript = useRef<TranscriptHandle>(null);
   const info = view?.info ?? procInfo;
   // An unsent message belongs to the conversation, not to the screen: restore it when coming back.
   const draftKey = info?.sessionId || undefined;
@@ -161,7 +163,7 @@ export default function SessionScreen() {
   const runAction = async (a: DeckAction | SheetName) => {
     setSheet(undefined);
     switch (a) {
-      case "model": case "thinking": case "tree": case "fork": case "resume": case "compact": setSheet(a); return;
+      case "model": case "thinking": case "outline": case "tree": case "fork": case "resume": case "compact": setSheet(a); return;
       case "session": case "info": setSheet("session"); return;
       case "rename": setSheet("rename"); return;
       case "settings": router.push("/settings"); return;
@@ -242,7 +244,12 @@ export default function SessionScreen() {
             <Txt v="title" lines={2}>{info ? processTitle(info) : "Session"}</Txt>
           </>
         }
-        right={<Button kind="outline" compact a11y="session-commands" label="≡ commands" onPress={() => setSheet("deck")} disabled={!ready} />}>
+        right={
+          <View style={{ gap: 6, alignItems: "stretch" }}>
+            <Button kind="outline" compact a11y="session-outline" label="§ outline" onPress={() => setSheet("outline")} disabled={!view} />
+            <Button kind="outline" compact a11y="session-commands" label="≡ commands" onPress={() => setSheet("deck")} disabled={!ready} />
+          </View>
+        }>
         {info ? (
           <View style={{ flexDirection: "row", borderBottomWidth: 1, borderBottomColor: p.ink }}>
             <Spec a11y="chip-model" label="model" value={info.model ? (info.model.name || info.model.id) : "none"}
@@ -295,7 +302,7 @@ export default function SessionScreen() {
         {loadError ? <Txt v="small" color={p.danger} style={{ padding: MARGIN }}>{loadError}</Txt> : null}
 
         {view ? (
-          <Transcript messages={view.messages} inflight={view.inflight} running={view.runningTools} queued={view.queued} hasMoreBefore={view.hasMoreBefore} onLoadMore={loadMore} hideThinking={hideThinking} />
+          <Transcript ref={transcript} messages={view.messages} inflight={view.inflight} running={view.runningTools} queued={view.queued} hasMoreBefore={view.hasMoreBefore} onLoadMore={loadMore} hideThinking={hideThinking} />
         ) : (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
             {conn === "ready" && procInfo ? <Spinner /> : <Txt v="em" soft>{conn === "ready" ? "" : "Not connected."}</Txt>}
@@ -348,7 +355,11 @@ export default function SessionScreen() {
       <CommandsSheet visible={sheet === "deck"} running={running || waiting} commands={commands} onAction={(a) => void runAction(a)} onInsert={(t) => { setSheet(undefined); setText(t); }} onClose={() => setSheet(undefined)} />
       {sheet === "model" ? <ModelSheet processId={pid} onClose={() => setSheet(undefined)} /> : null}
       {sheet === "thinking" ? <ThinkingSheet processId={pid} onClose={() => setSheet(undefined)} /> : null}
-      {sheet === "tree" ? <TreeSheet processId={pid} running={running || waiting} defaultFilter={treeFilter} onClose={() => setSheet(undefined)} /> : null}
+      {(sheet === "tree" || sheet === "outline") && view ? (
+        <OutlineSheet processId={pid} messages={view.messages} hasMoreBefore={view.hasMoreBefore} running={running || waiting}
+          initialTab={sheet === "tree" ? "tree" : "turns"} treeFilter={treeFilter} onLoadMore={loadMore}
+          onJump={(id) => setTimeout(() => transcript.current?.jumpTo(id), 280)} onPrefill={setText} onClose={() => setSheet(undefined)} />
+      ) : null}
       {sheet === "fork" ? <ForkSheet processId={pid} onClose={() => setSheet(undefined)} onPrefill={setText} /> : null}
       {sheet === "resume" && info ? <ResumeSheet processId={pid} cwd={info.cwd} currentFile={info.sessionFile} onClose={() => setSheet(undefined)} /> : null}
       {sheet === "compact" ? <CompactSheet processId={pid} onClose={() => setSheet(undefined)} /> : null}

@@ -26,6 +26,19 @@ export function currentStatus(): ProcessStatus {
   try { return b.ctx.isIdle() ? "idle" : "running"; } catch { return "idle"; }
 }
 
+/** Last activity: set by run and message events; before any, the time of the last entry in the session. */
+function lastActiveAt(): number | undefined {
+  const s = g();
+  if (s.lastActiveAt === undefined && s.binding) {
+    try {
+      const last = s.binding.ctx.sessionManager.getBranch().at(-1) as { timestamp?: string } | undefined;
+      const t = last?.timestamp ? Date.parse(last.timestamp) : NaN;
+      if (!Number.isNaN(t)) s.lastActiveAt = t;
+    } catch { /* unknown until the next event */ }
+  }
+  return s.lastActiveAt;
+}
+
 export function buildInfo(): ProcessInfo {
   const s = g();
   const b = s.binding;
@@ -35,6 +48,7 @@ export function buildInfo(): ProcessInfo {
     spawnedByHostd: !!process.env.PI_REMOTE_SPAWN_TOKEN, piVersion: VERSION, compat: s.compat,
     status: currentStatus(), pendingUiCount: s.pendingUi.size + s.rpivOpen.size,
     ...(s.lastText ? { lastText: s.lastText } : {}), lastSeq: s.seq,
+    ...(lastActiveAt() ? { lastActiveAt: lastActiveAt() } : {}),
   };
   if (!b) return { ...base, cwd: process.cwd(), sessionId: "", thinkingLevel: "off" };
   const ctx = b.ctx;

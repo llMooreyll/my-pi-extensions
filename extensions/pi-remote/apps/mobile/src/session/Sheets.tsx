@@ -168,7 +168,8 @@ function visible(n: TreeNodeWire, f: TreeFilter): boolean {
   }
 }
 
-export function TreeSheet({ processId, running, defaultFilter, onClose }: { processId: string; running: boolean; defaultFilter?: string; onClose: () => void }) {
+/** The whole session tree: every branch, filterable; picking a point jumps there. Body and footer for a sheet. */
+export function useTreePanel({ processId, running, defaultFilter, onDone, onPrefill }: { processId: string; running: boolean; defaultFilter?: string; onDone: () => void; onPrefill: (t: string) => void }) {
   const p = usePalette();
   const [nodes, setNodes] = useState<TreeNodeWire[] | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -191,23 +192,29 @@ export function TreeSheet({ processId, running, defaultFilter, onClose }: { proc
   const go = async () => {
     if (!target) return;
     setBusy(true);
-    try { await call("navigate_tree", { processId, entryId: target.id, summarize, ...(summarize && instr.trim() ? { customInstructions: instr.trim() } : {}) }, 310_000); onClose(); }
+    try {
+      const r = await call("navigate_tree", { processId, entryId: target.id, summarize, ...(summarize && instr.trim() ? { customInstructions: instr.trim() } : {}) }, 310_000);
+      // Going back to one of your messages puts that message back in the composer, as on the computer.
+      if (!r.cancelled && r.editorText) onPrefill(r.editorText);
+      onDone();
+    }
     catch (e) { setError(errText(e)); setTarget(undefined); }
     finally { setBusy(false); }
   };
-  return (
-    <Sheet visible a11y="tree-sheet" kicker="go back to any point" title="Session tree" onClose={onClose}
-      footer={target ? (
-        <View accessibilityLabel="tree-confirm" style={{ gap: 4 }}>
-          <Txt v="label" soft>continue from</Txt>
-          <Txt v="body" lines={2}>{target.preview || target.kind}</Txt>
-          <Toggle a11y="tree-summarize" value={summarize} onChange={setSummarize} label="Summarise the branch you leave" hint="Costs a model call; keeps a note of what was tried." />
-          {summarize ? <Field a11y="tree-instructions" value={instr} onChangeText={setInstr} placeholder="what the summary should focus on (optional)" /> : null}
-          <Button kind="solid" a11y="tree-go" label="Jump here" busy={busy} onPress={() => void go()} />
-          <Button kind="outline" a11y="tree-cancel" label="cancel" onPress={() => setTarget(undefined)} style={{ marginTop: 8 }} />
-        </View>
-      ) : undefined}>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14, marginTop: 12 }}>
+  const footer = target ? (
+    <View accessibilityLabel="tree-confirm" style={{ gap: 4 }}>
+      <Txt v="label" soft>continue from</Txt>
+      <Txt v="body" lines={2}>{target.preview || target.kind}</Txt>
+      {target.kind === "user" ? <Txt v="small" soft>pi goes back to just before this message and puts it in your composer to edit and resend.</Txt> : null}
+      <Toggle a11y="tree-summarize" value={summarize} onChange={setSummarize} label="Summarise the branch you leave" hint="Costs a model call; keeps a note of what was tried." />
+      {summarize ? <Field a11y="tree-instructions" value={instr} onChangeText={setInstr} placeholder="what the summary should focus on (optional)" /> : null}
+      <Button kind="solid" a11y="tree-go" label="Jump here" busy={busy} onPress={() => void go()} />
+      <Button kind="outline" a11y="tree-cancel" label="cancel" onPress={() => setTarget(undefined)} style={{ marginTop: 8 }} />
+    </View>
+  ) : undefined;
+  const body = (
+    <>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
         {FILTERS.map((x) => <Seg key={x.f} a11y={`tree-filter-${x.f}`} label={x.label} on={x.f === filter} onPress={() => setFilter(x.f)} />)}
       </View>
       {running ? <Txt v="small" color={p.blue} style={{ marginTop: 10 }}>pi is working. Wait until it is idle to jump.</Txt> : null}
@@ -219,9 +226,12 @@ export function TreeSheet({ processId, running, defaultFilter, onClose }: { proc
           sub={[n.onActivePath ? "on this branch" : "other branch", n.label ? `#${n.label}` : "", n.isLeaf ? "you are here" : ""].filter(Boolean).join(" · ")}
           selected={n.isLeaf} onPress={() => setTarget(n)} />
       ))}
-    </Sheet>
+    </>
   );
+  return { body, footer };
 }
+
+export { Seg };
 
 export function InfoSheet({ info, onClose, renameFirst }: { info: ProcessInfo; onClose: () => void; renameFirst?: boolean }) {
   const p = usePalette();

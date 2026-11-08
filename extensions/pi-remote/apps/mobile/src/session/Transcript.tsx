@@ -1,5 +1,5 @@
-import { memo, useCallback, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
-import { FlatList, Platform, Pressable, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { FlatList, Pressable, View, type ListViewToken, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { WireMessage } from "@pi-remote/protocol";
 import { Button, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
@@ -163,45 +163,63 @@ const Row = memo(function Row({ item, ctx }: { item: Item; ctx: Ctx }) {
 });
 
 /**
- * Wraps a row: remembers its height and, when a fold inside it asked for the top edge to stay put,
- * scrolls by exactly the change in height. In the inverted list a larger offset shows older content,
- * so growing by d and scrolling by +d keeps the row's top fixed and lets it open downward.
+ * Keeps the view still while rows change size. The list is inverted: offset 0 is the bottom (newest),
+ * a larger offset shows older content, and a row that changes size moves every older row (higher index).
+ * So whenever a row grows by d and the reader should not move, the list scrolls by +d.
+ *
+ * - A fold inside a row asked for its top edge to stay ("top"): always compensate, so it opens downward.
+ * - A fold asked for its bottom edge ("bottom"): leave it, the list does that by itself.
+ * - Anything else (the answer streaming in, a tool's live output, a new row arriving) while the reader
+ *   is not at the bottom and the row lies at or below what is on screen: compensate, so what they are
+ *   reading stays put and the new output extends below, out of view. At the bottom, the list follows.
+ *
+ * Heights live in the list (keyed by row), not in the row component, so a row that virtualisation
+ * unmounted and mounted again is not mistaken for new content.
  */
-function Anchored({ children, offset, scrollTo, mvcpKeepsTop }: { children: ReactNode; offset: { current: number }; scrollTo: (y: number) => void; mvcpKeepsTop: boolean }) {
-  const height = useRef<number | undefined>(undefined);
-  const pending = useRef<Anchor | undefined>(undefined);
-  const request = useCallback((a: Anchor) => { pending.current = a; }, []);
+interface Keeper {
+  heights: Map<string, number>;
+  pending: Map<string, Anchor>;
+  offset: { current: number };
+  maxVisible: { current: number };
+  atBottom: () => boolean;
+  shift: (d: number, fresh?: boolean) => void;
+}
+
+function Anchored({ id, index, keeper, children }: { id: string; index: number; keeper: Keeper; children: ReactNode }) {
+  const request = useCallback((a: Anchor) => { keeper.pending.set(id, a); }, [id, keeper]);
   const onLayout = (e: LayoutChangeEvent) => {
     const h = e.nativeEvent.layout.height;
-    const prev = height.current;
-    height.current = h;
-    const a = pending.current;
-    if (prev === undefined || a === undefined || h === prev) return;
-    pending.current = undefined;
-    // For live rows on Android, maintainVisibleContentPosition already holds the older row above still,
-    // which keeps this row's top in place; scrolling again would move it twice.
-    if (a === "top" && !mvcpKeepsTop) {
-      const y = Math.max(0, offset.current + (h - prev));
-      offset.current = y;
-      scrollTo(y);
+    const prev = keeper.heights.get(id);
+    keeper.heights.set(id, h);
+    const d = h - (prev ?? 0);
+    if (d === 0) return;
+    const asked = keeper.pending.get(id);
+    if (asked !== undefined && prev !== undefined) {
+      keeper.pending.delete(id);
+      if (asked === "top") keeper.shift(d);
+      return;
     }
+    if (!keeper.atBottom() && index <= keeper.maxVisible.current) keeper.shift(d, true);
   };
   return <AnchorContext.Provider value={request}><View onLayout={onLayout}>{children}</View></AnchorContext.Provider>;
 }
 
-const NATIVE = Platform.OS !== "web";
+/** Imperative handle: scroll to a message by entry id (used by the outline). */
+export interface TranscriptHandle { jumpTo: (entryId: string) => boolean }
 
-export function Transcript(props: {
+const AT_BOTTOM = 16;
+
+export const Transcript = forwardRef<TranscriptHandle, {
   messages: WireMessage[]; inflight?: AssistantDraft; queued?: Queued[]; running?: Record<string, { toolName: string; args: unknown; partialText: string }>;
   hasMoreBefore: boolean; onLoadMore?: () => Promise<void>; hideThinking?: boolean; header?: ReactElement | null;
-}) {
+}>(function Transcript(props, ref) {
   const p = usePalette();
   const listRef = useRef<FlatList<Item>>(null);
   const [showJump, setShowJump] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const running = props.running ?? {};
 
-  const { items, live, ctx } = useMemo(() => {
+  const { items, ctx } = useMemo(() => {
     const results = new Map<string, WireMessage>();
     const calls = new Set<string>();
     for (const m of props.messages) {
@@ -220,20 +238,61 @@ export function Transcript(props: {
     for (const q of props.queued ?? []) out.push({ key: q.id, kind: "queued", q });
     let prev = "";
     for (const it of out) { const sp = speaker(it); it.label = sp !== prev; prev = sp; }
-    // Rows that still grow (the answer being written, running tools, queued messages) sit at the end.
-    const live = (props.inflight ? 1 : 0) + Object.keys(running).filter((id) => !calls.has(id)).length + (props.queued?.length ?? 0);
-    return { items: out, live, ctx: { results, running, hideThinking: !!props.hideThinking } as Ctx };
+    return { items: out, ctx: { results, running, hideThinking: !!props.hideThinking } as Ctx };
   }, [props.messages, props.inflight, props.queued, running, props.hideThinking]);
 
   // Inverted list: offset 0 is the newest entry, so new output stays in view.
   const data = useMemo(() => [...items].reverse(), [items]);
   const offset = useRef(0);
-  const scrollTo = useCallback((y: number) => listRef.current?.scrollToOffset({ offset: y, animated: false }), []);
+  const maxVisible = useRef(0);
+  const [newBelow, setNewBelow] = useState(false);
+  const keeper = useMemo<Keeper>(() => ({
+    heights: new Map(), pending: new Map(), offset, maxVisible,
+    atBottom: () => offset.current <= AT_BOTTOM,
+    shift: (d, fresh) => {
+      const y = Math.max(0, offset.current + d);
+      offset.current = y;
+      listRef.current?.scrollToOffset({ offset: y, animated: false });
+      if (fresh && d > 0) setNewBelow(true);
+    },
+  }), []);
+
+  // Rows that left the data (the streamed draft replaced by the saved message, a queued message delivered)
+  // take their height with them; below the reader that would pull the view, so give it back.
+  const lastIndex = useRef(new Map<string, number>());
+  useEffect(() => {
+    const now = new Map(data.map((it, i) => [it.key, i]));
+    if (!keeper.atBottom()) {
+      let gone = 0;
+      for (const [key, i] of lastIndex.current) if (!now.has(key) && i <= maxVisible.current) gone += keeper.heights.get(key) ?? 0;
+      if (gone) keeper.shift(-gone);
+    }
+    for (const key of keeper.heights.keys()) if (!now.has(key)) keeper.heights.delete(key);
+    lastIndex.current = now;
+  }, [data]);
+
   const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     offset.current = e.nativeEvent.contentOffset.y;
-    setShowJump(offset.current > 400);
+    const away = offset.current > AT_BOTTOM;
+    setShowJump(away);
+    if (!away) setNewBelow(false);
   }, []);
-  const jump = () => { listRef.current?.scrollToOffset({ offset: 0, animated: true }); setShowJump(false); };
+  const onViewable = useRef(({ viewableItems }: { viewableItems: ListViewToken[] }) => {
+    let m = 0;
+    for (const v of viewableItems) if (v.index != null && v.index > m) m = v.index;
+    maxVisible.current = m;
+  }).current;
+  const jump = () => { listRef.current?.scrollToOffset({ offset: 0, animated: true }); setShowJump(false); setNewBelow(false); };
+
+  useImperativeHandle(ref, () => ({
+    jumpTo: (entryId: string) => {
+      const index = data.findIndex((it) => it.kind === "msg" && it.m.entryId === entryId);
+      if (index < 0) return false;
+      // viewPosition 1 puts the row at the visual top of the inverted list.
+      listRef.current?.scrollToIndex({ index, viewPosition: 1, animated: true });
+      return true;
+    },
+  }), [data]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -243,14 +302,17 @@ export function Transcript(props: {
         accessibilityLabel="transcript"
         data={data}
         keyExtractor={(i) => i.key}
-        renderItem={({ item, index }) => <Anchored offset={offset} scrollTo={scrollTo} mvcpKeepsTop={NATIVE && index < live}><Row item={item} ctx={ctx} /></Anchored>}
+        renderItem={({ item, index }) => <Anchored id={item.key} index={index} keeper={keeper}><Row item={item} ctx={ctx} /></Anchored>}
         contentContainerStyle={{ paddingHorizontal: MARGIN, paddingVertical: 10 }}
         onScroll={onScroll}
         scrollEventThrottle={16}
-        // Anchor on the newest row that no longer grows. When the reader has scrolled up, that row stays
-        // still while the answer streams in below it, so the text being read does not drift. At the bottom,
-        // autoscroll keeps following the answer.
-        maintainVisibleContentPosition={{ minIndexForVisible: live, autoscrollToTopThreshold: 40 }}
+        onViewableItemsChanged={onViewable}
+        viewabilityConfig={{ itemVisiblePercentThreshold: 1 }}
+        onScrollToIndexFailed={(info) => {
+          // The row is not measured yet: get close first, then aim again.
+          listRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
+          setTimeout(() => listRef.current?.scrollToIndex({ index: info.index, viewPosition: 1, animated: true }), 120);
+        }}
         ListFooterComponent={
           <View style={{ paddingTop: 10, alignItems: "center", gap: 10 }}>
             {props.header}
@@ -265,10 +327,14 @@ export function Transcript(props: {
         windowSize={11}
       />
       {showJump ? (
-        <View style={{ position: "absolute", right: MARGIN, bottom: 10, backgroundColor: p.paper, paddingHorizontal: 6 }}>
-          <Button a11y="transcript-jump-latest" label="↓ latest" onPress={jump} />
+        // Centred, clear of the stop control at the right of the run bar below.
+        <View pointerEvents="box-none" style={{ position: "absolute", left: 0, right: 0, bottom: 12, alignItems: "center" }}>
+          <Pressable accessibilityRole="button" accessibilityLabel="transcript-jump-latest" onPress={jump}
+            style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 9, backgroundColor: newBelow ? p.blue : p.ink, opacity: pressed ? 0.85 : 1 })}>
+            <Txt v="label" color={p.invert} style={{ fontFamily: F.monoBold, fontSize: 12 }}>↓  {newBelow ? "new output" : "latest"}</Txt>
+          </Pressable>
         </View>
       ) : null}
     </View>
   );
-}
+});
