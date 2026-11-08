@@ -63,6 +63,7 @@
   - VPS 上运行一个中继服务 `pi-relay`，电脑上运行 `pi-hostd`，手机 App 在设置里填写中继地址。
   - 手机与电脑之间端到端加密，中继只转发密文；身份靠配对时交换的密钥，不绑定任何 IP 或域名。
   - 换 VPS：新 VPS 部署中继，电脑和手机各改一个地址，不需重新配对。换电脑：导出/导入身份文件。换手机：重新扫码配对。
+- 双向文件传输（7.7，M9）：在 App 里让 pi 用工具 `send_to_phone` 把电脑上的文件或目录发到手机；手机上的文件可以传到电脑，既可作为附件随消息发给 pi，也可以只存到电脑。文件经现有加密通道传输，中继只转发、不存储。
 
 ### 1.2 明确不做的
 
@@ -98,6 +99,11 @@
 | D16 | 对守护进程启动的 pi，一律显式传 `--approve` 或 `--no-approve` | 否则 pi 可能在无人看的 TUI 里弹出项目信任提示而卡住（`docs/security.md` "How Pi chooses a trust decision"） |
 | D17 | 子 agent 与 team 成员：不修改 `pi-interactive-subagents` 扩展。bridge 从环境变量识别进程角色，hostd 推导父子关系；扩展用组件函数绘制的 widget 由 bridge 在 60 列宽度下渲染成纯文本转发 | 该扩展的子进程本身就是 TUI 模式的 pi，会加载 bridge；所需信息都已在环境变量、工具结果 `details` 和自定义消息 `details` 中（附录 A-20～A-23） |
 | D18 | 迁移：电脑身份（hostId + 密钥对 + 已配对设备）保存在一个目录中，可导出/导入；手机保存"电脑列表"，每台电脑的中继地址、直连地址可在设置里修改 | 满足"换 VPS / 换电脑 / 换手机都能迁移" |
+| D19 | 文件传输只走现有的加密通道（D5）和中继（D4），中继不存储文件，也不解析内容。文件在电脑上登记：发往手机的文件留在原处，目录打包到 outbox；来自手机的文件写进收件目录。传输时两端需同时在线，中断后可续传 | 满足"VPS 只转发、不存数据"；手机离线时文件在用户自己的电脑上等待 |
+| D20 | 每个文件单独开一条连接（文件通道，`auth.purpose = "lane"`），不占用会话的主连接。数据用二进制帧，接收方按字节回确认，在途数据不超过 2 MiB | 大文件不阻塞会话操作；中继内存不随文件大小增长；断点即接收方已确认的字节数 |
+| D21 | 电脑 → 手机由 bridge 注册的 AI 工具 `send_to_phone` 发起。工具只登记，不等待下载完成；手机默认手动下载 | 手机可能很久以后才上线，AI 的这一轮不能卡住；手动下载可以避免被诱导发送的大文件消耗流量 |
+| D22 | 手机 → 电脑由用户在 App 中发起，文件存入 `files.inboxDir`（默认 `~/Downloads/pi-remote`），不写进项目目录。作为附件时，在消息末尾附上电脑上的绝对路径，模型用自己的工具读取；给模型看的图片仍走原有的图片输入 | 不污染项目目录和 git；不需要 pi 支持新的消息类型 |
+| D23 | 手机上收到的文件放在 App 私有目录，通过系统"打开方式"和"分享"交给其他应用；"存到下载"是附加操作 | 私有目录可以流式写入和续传；写入 SAF 目录的能力有限制（附录 A-27） |
 
 ---
 
@@ -163,6 +169,7 @@ pi-remote/
 │  │     ├─ frames.ts          线上帧格式（bridge↔hostd、app↔hostd）
 │  │     ├─ relay.ts           中继路径、控制帧、关闭码（hostd 与 relay 共用）
 │  │     ├─ settings.ts        远程可改设置白名单
+│  │     ├─ files.ts           文件传输类型与常量（7.7）
 │  │     └─ errors.ts          错误码
 │  ├─ relay/                   VPS 中继服务（7.4）
 │  │  ├─ package.json
@@ -187,6 +194,7 @@ pi-remote/
 │  │     ├─ remote-op-cmd.ts   隐藏命令，用于拿 ExtensionCommandContext
 │  │     ├─ snapshot.ts        快照、历史分页、会话树
 │  │     ├─ sanitize.ts        消息裁剪（图片、长文本）
+│  │     ├─ send-tool.ts       AI 工具 send_to_phone（7.7.3）
 │  │     └─ log.ts             文件日志
 │  └─ hostd/                   守护进程
 │     ├─ package.json
@@ -214,6 +222,9 @@ pi-remote/
 │        ├─ identity.ts        hostId 与长期密钥对
 │        ├─ links.ts           推导子 agent / team 成员的父进程
 │        ├─ session-reader.ts  只读解析会话 JSONL（read_session）
+│        ├─ transfers.ts       文件传输登记、持久化、过期清理（7.7.4）
+│        ├─ zip-store.ts       目录打包为不压缩的 zip（7.7.4）
+│        ├─ file-lane.ts       文件通道的收发与流量控制（7.7.4）
 │        ├─ secure-socket.ts   把一条 WebSocket 包装成加密通道（服务端）
 │        ├─ relay-client.ts    到中继的控制连接与数据连接
 │        └─ direct-server.ts   可选的直连监听
@@ -2556,6 +2567,307 @@ ToolCallCard 摘要规则（参数字段以实际 args 为准，缺失字段省�
 - 组件 widget 转文本依赖组件不需要真实 TUI 实例；渲染失败的 widget 不会出现在 App 上（bridge 日志会记录）。
 - 子 agent 的 `Ctrl+J` 等快捷键只在电脑上可用。
 
+### 7.7 双向文件传输（D19～D23）
+
+目标：
+- **电脑 → 手机**：用户在 App 里对 pi 说"把某个文件发给我"，AI 调用 bridge 注册的工具 `send_to_phone`，手机上出现文件卡片，点一下下载。
+- **手机 → 电脑**：用户在 App 里选择手机上的文件，传到电脑的收件目录，可以作为附件随消息发给 pi，也可以只存到电脑。
+
+两个方向共用一套"登记 + 文件通道"机制。VPS 中继不需要改功能，也不存储任何文件。
+
+#### 7.7.1 总体与数据流
+
+```
+电脑 → 手机
+  App 发消息 ──▶ pi 调用 send_to_phone ──call offer_files──▶ hostd 登记（transfers.json；目录先打成 zip 放进 outbox/）
+  hostd ──{t:"transfer"} 推送──▶ App：对话里的工具卡片和"文件"页出现这条记录
+  App 另开一条连接（文件通道），auth(purpose:"lane") → {t:"lane",kind:"get",id,offset}
+  hostd 从 offset 起读取文件，按 256 KiB 二进制帧发送 ◀──▶ App 写入后回 {t:"ack",bytes}
+  App 收齐后改名为正式文件 → 打开 / 分享 / 存到"下载"
+
+手机 → 电脑
+  App 在主连接上调用 upload_begin{name,size,mime} ──▶ hostd 检查大小和磁盘空间，登记，并在收件目录建 .part 文件
+  App 另开文件通道 {t:"lane",kind:"put",id} ──▶ hostd 回 lane_ok{offset=.part 当前大小}
+  App 从 offset 起发二进制帧 ◀──▶ hostd 写入后回 ack
+  收齐后 hostd fsync 并改名为正式文件 → put_done{info}，同时推送 {t:"transfer"}
+  作为附件时：App 发消息时在正文末尾附上电脑上的绝对路径（7.7.5），模型用自己的工具读取
+```
+
+- 文件通道和普通连接一样，按当前连接方式走（局域网直连或经中继），外层是 WebSocket，内层是 D5 加密通道。
+- 中继只看到密文帧和流量大小。
+- 两端必须同时在线：手机离线时文件留在电脑上，手机上线后再取；上传中断后从断点续传。
+
+#### 7.7.2 协议（新增 `packages/protocol/src/files.ts`，修改 `frames.ts`、`ops.ts`、`errors.ts`、`index.ts`）
+
+```ts
+// files.ts
+export type TransferDir = "to_phone" | "to_computer";
+export type TransferState = "waiting" | "active" | "done" | "failed" | "cancelled" | "expired";
+// waiting：已登记、尚未开始，或中断后可续传；active：有文件通道正在传
+
+export interface TransferInfo {
+  id: string;                  // 22 字符 base64url（16 字节随机）
+  dir: TransferDir;
+  name: string;                // 显示用文件名；目录为 "<目录名>.zip"
+  size: number;                // 字节数
+  mime?: string;
+  state: TransferState;
+  bytesDone: number;           // to_phone：最近一次通道确认的字节数；to_computer：电脑上 .part 的大小
+  computerPath?: string;       // to_phone：源文件或 zip 对应的原路径（只用于显示）；to_computer：完成后的绝对路径
+  note?: string;               // send_to_phone 的 note
+  processId?: string;
+  sessionId?: string;
+  createdAt: number;
+  updatedAt: number;
+  expiresAt?: number;          // to_phone 的提供期限；to_computer 未完成的 .part 的清理期限
+  error?: { code: TransferErrorCode; message: string };
+}
+
+export type TransferErrorCode =
+  | "changed"       // 源文件在登记后被修改（大小或 mtime 不同）
+  | "missing"       // 源文件或 .part 已不存在
+  | "too_large"
+  | "no_space"
+  | "denied"        // 路径在禁止列表中，或不是普通文件/目录
+  | "expired"
+  | "busy"          // 该设备同时打开的文件通道已达上限
+  | "cancelled"
+  | "io";
+
+export const FILE_CHUNK_BYTES = 256 * 1024;      // 每个二进制帧的数据量
+export const FILE_WINDOW_BYTES = 2 * 1024 * 1024; // 已发送但未确认的数据上限
+export const MAX_LANES_PER_DEVICE = 2;
+export const ATTACH_HEADER = "[Files from the phone, saved on the computer]";
+
+// 文件通道上的 JSON 文本帧；数据本身用二进制帧，不带头部，顺序由加密通道保证
+export type LaneOpen =
+  | { t: "lane"; kind: "get"; id: string; offset: number }
+  | { t: "lane"; kind: "put"; id: string };
+export type LaneFromClient = LaneOpen | { t: "ack"; bytes: number } | { t: "cancel" };
+export type LaneFromHost =
+  | { t: "lane_ok"; offset: number; size: number }
+  | { t: "lane_err"; code: TransferErrorCode; message: string }
+  | { t: "ack"; bytes: number }
+  | { t: "put_done"; info: TransferInfo };
+```
+
+`frames.ts` 的改动：
+- `ClientToHost` 的 `auth` 帧增加可选字段 `purpose?: "main" | "lane"`，缺省为 `"main"`。
+- `HostToClient` 的 `auth_ok` 帧增加 `features?: string[]`，本期值为 `["files"]`。App 没收到 `"files"` 时隐藏全部文件相关界面，旧 hostd 因此仍能使用，`PROTOCOL_VERSION` 不变。
+- `HostToClient` 增加 `{ t: "transfer"; info: TransferInfo }`。只发给 `purpose:"main"` 的已鉴权连接，在记录新建或状态变化时发送；`bytesDone` 的进度更新每条记录最多每秒发一次。
+- `BridgeToHost` 增加 `{ t: "call"; id: string; op: "offer_files"; args: { processId: string; sessionId?: string; cwd: string; paths: string[]; note?: string } }`。
+- `HostToBridge` 增加 `{ t: "ret"; id: string; ok: true; data: { transfers: TransferInfo[] } } | { t: "ret"; id: string; ok: false; error: RemoteError }`。
+
+这是 bridge 第一次主动向 hostd 发请求。`host-conn.ts` 需要增加按 id 等待回复的逻辑。
+
+`ops.ts` 新增四个 hostd 本地 op，并加入 `HOSTD_LOCAL_OPS`：
+
+```ts
+list_transfers: [{}, { transfers: TransferInfo[] }];
+upload_begin: [{ name: string; size: number; mime?: string; processId?: string }, { transfer: TransferInfo }];
+transfer_cancel: [{ id: string }, {}];   // to_phone：标记 cancelled，并删除 outbox 中的 zip；to_computer：删除 .part
+transfer_forget: [{ id: string }, {}];   // 只从列表中移除；不删除已经收进收件目录的文件
+```
+
+`errors.ts` 新增：`no_device`（电脑上没有已配对的手机）、`file_denied`、`file_too_large`、`no_space`。
+
+#### 7.7.3 bridge：`send_to_phone`（新增 `src/send-tool.ts`，在 `index.ts` 加载时注册）
+
+```ts
+pi.registerTool({
+  name: "send_to_phone",
+  label: "Send to phone",
+  description: "Offer files or folders on this computer to the user's phone (pi-remote app). Folders are sent as a .zip. Returns at once; the user downloads in the app.",
+  promptSnippet: "Send files or folders from this computer to the user's phone",
+  promptGuidelines: ["Use send_to_phone only when the user asks to receive files on their phone; send_to_phone does not wait for the download to finish."],
+  parameters: Type.Object({
+    paths: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }),
+    note: Type.Optional(Type.String({ maxLength: 500 })),
+  }),
+  async execute(toolCallId, params, signal, onUpdate, ctx) { /* 见下 */ },
+});
+```
+
+`execute` 的流程：
+1. 读取 bridge 当前的 `processId`、`sessionId` 和 `ctx.cwd`，向 hostd 发 `call offer_files`。路径解析交给 hostd 统一处理。
+2. 等待回复，超时 120 秒（打包目录需要时间）。`signal` 中止时放弃等待，hostd 会照常完成或回滚登记。
+3. 结果的 `content` 每个文件写一行 `name (size)`，最后加一句 `The user can download them in the pi-remote app.`，`details` 为 `{ transfers: TransferInfo[] }`。
+4. 以下情况抛出错误，让模型看到失败原因：hostd 未连接（`pi-remote is not running on this computer`）、`no_device`、`file_denied`、`file_too_large`、`missing`。
+
+第 0 章第 3 条"处理函数立刻返回"约束的是 `pi.on` 事件处理函数，不适用于工具的 `execute`。工具本来就可以等待。
+
+#### 7.7.4 hostd
+
+**配置**：`config.json` 新增以下字段，缺失时用默认值：
+
+```json
+"files": { "inboxDir": "~/Downloads/pi-remote", "maxFileBytes": 2147483648, "offerTtlHours": 168, "denyPaths": [] }
+```
+
+- 路径中的 `~` 展开为 home 目录。
+- `maxFileBytes` 同时限制两个方向，且必须小于 4 GiB（下文 `zip-store.ts` 不使用 zip64）。
+
+**`src/transfers.ts`：登记与状态**
+- 记录保存在 `~/.local/state/pi-remote/transfers.json`，按第 0 章第 5 条的方式写入。
+- 启动时把 `active` 改为 `waiting`。
+- 每小时清理一次：
+  - 过期的 to_phone 记录标为 `expired`，并删除对应的 zip。
+  - 过期的 to_computer `.part` 删除，记录标为 `expired`。
+  - 已结束超过 30 天的记录直接删除。
+- `offer_files` 的处理：
+  1. **有无设备**：没有已配对设备时报 `no_device`。
+  2. **路径解析**：相对路径按 `cwd` 解析，展开 `~`，再 `realpath`。
+  3. **禁止列表**：结果落在以下路径之下时报 `file_denied`。内置部分总是生效：`CONFIG_DIR`、`STATE_DIR`、`~/.ssh`、`~/.gnupg`、`~/.pi/agent/auth.json`；`files.denyPaths` 只能在此基础上追加。
+  4. **普通文件**：记录 `size` 和 `mtimeMs`，不复制文件。
+  5. **目录**：用 `zip-store.ts` 打包到 `STATE_DIR/outbox/<id>.zip`。
+  6. **其他类型**：报 `file_denied`。
+  7. **大小**：超过 `maxFileBytes` 报 `file_too_large`。
+  8. **原子性**：多个路径中任何一个失败，整次 offer 失败，已生成的 zip 全部删除。
+  9. **过期时间**：`expiresAt = now + offerTtlHours`。
+- `upload_begin` 的处理：
+  1. **大小**：检查 `size ≤ maxFileBytes`。
+  2. **磁盘空间**：`fs.statfsSync(inboxDir)` 的可用空间至少要有 `size + 512 MiB`，否则报 `no_space`。
+  3. **文件名**：清理 `name`。去掉 `/`、`\` 和控制字符；开头的 `.` 改为 `_`；UTF-8 长度截到 180 字节以内；结果为空时用 `file`。
+  4. **建文件**：在 `inboxDir/.partial/<id>.part` 建空文件，`expiresAt = now + offerTtlHours`。
+- **最终文件名**：完成时在 `inboxDir` 下取不冲突的名字，例如 `name.ext`、`name (2).ext`，用 `renameSync` 移入。
+
+**`src/zip-store.ts`：最小 zip 写入器**
+- 存储模式，不压缩。用 `zlib.crc32` 先读一遍算出 CRC，再写本地文件头和数据，最后写中央目录。
+- 文件名用 UTF-8（通用标志第 11 位），时间为 DOS 时间。
+- 跳过符号链接、socket 和设备文件；保留空目录；条目数不超过 10000。
+- 总大小超过 `maxFileBytes` 时停止并报 `file_too_large`。
+- 不新增依赖。
+
+**`src/file-lane.ts` 与 `client-hub.ts`：文件通道**
+- **鉴权与限制**
+  - `auth` 成功且 `purpose:"lane"` 的连接是文件通道。它不接收 `proc`、`evt`、`transfer` 推送，也不处理 `req`。
+  - 鉴权后 10 秒内必须收到 `LaneOpen`，否则关闭。
+  - 同一设备同时打开的通道超过 `MAX_LANES_PER_DEVICE` 时，回 `lane_err busy` 并关闭。
+  - 文件通道上的数据帧和 `ack` 都算活动，不要求发 ping。
+- **get（发往手机）**
+  1. 检查记录：必须是 to_phone，未过期，未取消。
+  2. 检查文件：普通文件重新 `stat`，大小或 `mtimeMs` 不同时回 `lane_err changed`，并把记录标为 `failed`。
+  3. 回 `lane_ok { offset, size }`，从 `offset` 开始用 `FileHandle.read` 读取 `FILE_CHUNK_BYTES` 并发送二进制帧。
+  4. 已发送减去已确认的字节达到 `FILE_WINDOW_BYTES` 时，暂停读取，等下一个 `ack`。
+  5. 收到 `ack.bytes === size` 后，记录标为 `done`，用关闭码 1000 关闭通道。
+  6. `done` 之后，在过期前仍允许再次下载。
+- **put（来自手机）**
+  1. 检查记录：必须是 to_computer，`.part` 文件存在。
+  2. 回 `lane_ok { offset: .part 大小, size }`。
+  3. 每收到一个二进制帧就追加写入，写完回 `ack { bytes: 当前大小 }`。
+  4. 写入后的大小超过 `size` 时，回 `lane_err io`，并删除 `.part`。
+  5. 写满 `size` 后 `fsync`，改名到 `inboxDir`，记录标为 `done` 并写入 `computerPath`，回 `put_done`。
+- **cancel 与断开**：收到 `cancel` 或通道断开时，记录回到 `waiting`，主动取消的标为 `cancelled`。
+- **审计**：以下事件写 `audit.jsonl`：`offer_files`（processId、文件名、总字节数）、`upload_begin`、下载完成、上传完成（含最终路径）、`transfer_cancel`。
+
+**加密通道包装**：`secure-socket.ts` 的 `ClientSocket` 增加 `sendBinary(data: Uint8Array)` 和 `onBinary`。现在第 53 行会把二进制帧当文本解码，需要改为按帧类型分发。普通连接收到二进制帧时用 `bad_request` 关闭。
+
+**dev-client**：增加三个命令，用于无 App 时的验收：
+- `transfers`：列出全部记录。
+- `get <id> <outFile> [--offset N]`。
+- `put <file>`：先 `upload_begin`，再打开文件通道。可用 `--stop-after <bytes>` 模拟中断。
+
+#### 7.7.5 App
+
+**依赖**：用 `npx expo install` 安装以下三个包，并在 NOTES.md 说明原因（第 0 章第 6 条）：
+- `expo-file-system`：用 `File`、`Directory`、`FileHandle` 分块读写，用 `File.pickFileAsync` 选择文件，用 `Directory.pickDirectoryAsync` 选择保存目录。
+- `expo-sharing`：调用系统分享。
+- `expo-intent-launcher`：用"打开方式"调起其他应用。
+
+**`net/secure-ws.ts`**：`SecureConn` 增加 `sendBinary`、`onBinary`。第 51 行同样需要改为按帧类型分发。
+
+**`net/lane.ts`：文件通道客户端**
+- 连接地址与主连接当前使用的地址相同（`connection.ts` 已选好直连或中继）。
+- 打开后先发 `auth`（`purpose:"lane"`），再发 `LaneOpen`。
+- **下载**
+  - 写入 `Paths.document/received/<id>/<name>.part`。用 `FileMode.Append` 打开；`offset` 取 `.part` 当前大小。
+  - 每写完一帧回一次 `ack`。
+  - 收齐后改名为 `<name>`。
+- **上传**
+  - 用 `File` 和 `FileMode.ReadOnly` 打开所选文件。SAF 的 `content://` 可以只读打开，见附录 A-27。
+  - 在 `lane_ok.offset` 处设置 `handle.offset`，按窗口发送，等待 `ack`。
+- **中断与重试**：断开时自动重试 3 次，间隔 2、5、15 秒，每次都从断点继续。之后保持 `waiting`，由用户点击重试。
+- **数量限制**：同时最多运行 `MAX_LANES_PER_DEVICE` 条通道，其余排队。
+
+**`state/transfers.ts`**
+- 保存 `TransferInfo` 列表。来源是 `list_transfers`（连接成功后拉取一次）和 `{t:"transfer"}` 推送。
+- 在 kv 中保存每条记录在手机上的本地状态：`{ id → { uri, bytes } }`。
+- 手机上删除本地文件不影响电脑上的记录。
+
+**对话中的文件卡片**
+- `ToolCard` 对 `send_to_phone` 单独渲染，做法与 edit 的 `PatchView`、subagent 的跳转链接相同。
+- 卡片按 `details.transfers` 每个文件一行：文件名、大小、状态。
+- 每行的状态从 `state/transfers.ts` 按 id 取，可能显示为：`Download`、进度条和百分比、`Open`/`Share`、`Expired`、`Changed on the computer — ask pi to send it again`。
+- 找不到该 id 时显示 `No longer available`。
+
+**文件页 `app/files.tsx`**
+- **入口**：首页标题栏增加 `Files`，有待下载文件时显示粉色数字；文件卡片也可以跳到这里。
+- **分区**：
+  - `Waiting for you`：to_phone 中状态为 `waiting`、且手机上没有本地文件的。
+  - `In progress`：两个方向正在传输的。
+  - `Done`：已完成的，最近 30 天。
+- **每行内容**：方向标记（`→ phone` 或 `→ computer`）、文件名、大小、来源会话名、时间。
+- **每行操作**：`Download`、`Open`、`Share`、`Save to Downloads`、`Retry`、`Cancel`、`Remove`。
+- **页底按钮**：`Send a file to the computer`。只上传到电脑的收件目录，不关联会话。
+
+**Composer 附件**
+- 现有的 `+` 改为打开一个小弹层，有两项：
+  - `Image for the model`：原有图片输入。当前模型不支持图片时置灰。
+  - `File to the computer`：用 `File.pickFileAsync({ multipleFiles: true })` 选文件，每条消息最多 10 个。
+- **上传过程**
+  - 选择后立即 `upload_begin` 并开始上传。
+  - 输入框上方显示附件条：文件名、大小、进度；点 `✕` 调用 `transfer_cancel`。
+  - 附件全部完成前，发送按钮不可用，提示 `Uploading… 42%`。
+- **发送时**：在正文末尾追加以下内容，用户的原文不变：
+
+  ```
+  [Files from the phone, saved on the computer]
+  /home/moorey/Downloads/pi-remote/report.pdf (2.3 MB, application/pdf)
+  ```
+
+  `Transcript` 渲染用户消息时，识别以 `ATTACH_HEADER` 开头的结尾段，显示为文件行，不显示原文。
+- **草稿**：已上传完成的附件（id 和路径）随草稿一起保存（`lib/drafts.ts`），因为文件已经在电脑上了。
+
+**存储与打开**
+- 收到的文件只放在 App 私有目录。
+- `Open`：`IntentLauncher.startActivityAsync("android.intent.action.VIEW", { data: file.contentUri, flags: 1, type: mime })`，其中 `flags: 1` 即 `FLAG_GRANT_READ_URI_PERMISSION`。
+- `Share`：`Sharing.shareAsync(file.uri)`。
+- `Save to Downloads`
+  - 第一次使用时调用 `Directory.pickDirectoryAsync()` 让用户选一个目录，把 URI 存进 kv。
+  - 之后用 `dir.createFile(name, mime)` 创建文件，分块写入。
+  - 如果 SDK 58 仍不能对 SAF 文件流式写入（附录 A-27），超过 50 MB 的文件隐藏这个按钮，改为引导用户用 `Share` 保存。实际表现记入 NOTES.md。
+
+**后台与通知**
+- 前台服务的常驻通知在传输时显示 `Receiving report.pdf · 42%` 或 `Sending …`。
+- App 在后台时：
+  - 有新的 to_phone 记录，发通知 `pi sent you a file`。
+  - 传输完成，发通知 `File received: <name>` 或 `File saved on the computer: <name>`。
+  - 点击通知打开文件页。
+
+**设置**：`Settings → Files` 增加两项：
+- `Download automatically`：可选 off、≤ 20 MB、≤ 200 MB，默认 off。
+- 显示电脑上的收件目录（`inboxDir`），只读。
+
+#### 7.7.6 中继（可选）
+
+文件通道已经用 `FILE_WINDOW_BYTES` 控制流量，每条通道在中继上积压的数据不超过约 2 MiB，所以中继功能上不用改。
+
+可选的保护措施：在 `onHostData` 的双向转发中，对端 `bufferedAmount` 超过 8 MiB 时暂停读取本端底层 socket，每 50 ms 检查一次，降到阈值以下再恢复。这样即使有异常客户端，中继内存也有上限。做了这项需要按 5.2 重新部署中继。
+
+#### 7.7.7 边界
+
+- **传给谁**：文件只会传给本机已配对的设备。来自网页等内容的提示注入最多能让 AI 把文件发到用户自己的手机，而且默认要用户手动点下载。禁止列表保护 pi-remote 和 pi 自己的凭据。
+- **速度**
+  - 加密和解密在手机的 JS 线程上用纯 JS 完成（D5）。局域网下的速度上限由这一步决定，M9 验收时实测并记入 NOTES.md。
+  - 经中继时，速度取决于 VPS 带宽，并消耗 VPS 的出站流量额度。
+- **磁盘占用**
+  - 目录打包会在电脑上额外占用与目录大小相当的空间，过期后删除。
+  - 手机上收到的文件由用户在文件页删除。
+- **不做**
+  - 手机与电脑直接打洞互连（P2P）。
+  - 在中继上暂存文件。
+  - 不经过 AI、直接从对话里的文件路径发送到手机。以后可以作为 App 发起的 `offer_files` 加上，走同一个发件箱。
+
 ---
 
 ## 8. 本机运行方式汇总
@@ -2746,6 +3058,30 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 - 在**项目根目录**（`extensions/pi-remote/`）的 `README.md` 写安装与运维步骤（第 8 章与 7.5 的内容 + 故障排查：`relay show` 各状态的含义、握手失败、spawn_timeout 的查看方法、吊销设备）。不要改动仓库根目录的 README.md。
 - 全量跑第 10 章端到端清单。
 
+### M9 双向文件传输（7.7）
+
+前提：M0～M8 已完成。按顺序做。
+
+- **M9a 协议与 hostd**：7.7.2 全部；7.7.4 的 `transfers.ts`、`zip-store.ts`、`file-lane.ts`、`client-hub.ts` 与 `secure-socket.ts` 的改动、配置项、审计、dev-client 的三个命令。
+- **M9b bridge**：7.7.3 的 `send_to_phone`，`host-conn.ts` 支持 `call`/`ret`。
+- **M9c App**：7.7.5 全部。
+- **M9d（可选）中继背压**：7.7.6。
+
+验收（1～9 用 dev-client 无人值守完成；被测模型用便宜模型，思考设为 off）：
+1. 在 tmux 中的 pi 里说"把 <某文本文件> 发到我手机"：工具结果列出该文件；`dev-client transfers` 显示 `waiting`；`dev-client get <id> /tmp/x` 得到的文件与原文件 `cmp` 一致；记录变为 `done`，且可以再次下载。
+2. 发送一个含子目录、空目录、中文文件名的目录：得到 `.zip`，`unzip -t` 通过，解压后与原目录 `diff -r` 一致；符号链接没有被打包。
+3. 请求发送 `~/.ssh` 下的文件、`~/.config/pi-remote/` 下的文件，以及大于 `maxFileBytes` 的文件（测试时把配置临时调小）：工具返回错误，模型看到原因，`transfers.json` 没有残留记录，`outbox/` 没有残留 zip。
+4. `dev-client get` 下载到一半时结束进程，再用 `--offset <已写入字节>` 继续：结果 `cmp` 一致。
+5. 登记后修改源文件，再下载：收到 `lane_err changed`，记录为 `failed`。
+6. `dev-client put` 一个 100 MB 的文件：收件目录中出现同名文件，`cmp` 一致；再传一次同名文件，得到 `name (2).ext`；用 `--stop-after` 中断后重传，从断点继续，结果一致；`.partial/` 中没有残留。
+7. 经中继传 200 MB 文件期间：`ssh TencentVPS 'docker stats --no-stream pi-relay'` 的内存比传输前增加不超过 50 MB；中继日志只有连接事件。同时在另一个 dev-client 上 `prompt` 和 `abort`，响应延迟与不传文件时相当。
+8. 同一设备同时打开 3 条文件通道：第 3 条收到 `lane_err busy`。
+9. 把一条记录的 `expiresAt` 改成过去的时间，然后重启 hostd：一小时内的清理（可在测试中直接调用清理函数）把它标为 `expired`，并删除对应的 zip 或 `.part`；`audit.jsonl` 中有 offer、上传和下载的记录。
+10. （Waydroid）对话里的 `send_to_phone` 卡片可以下载并显示进度，`Open` 能调起系统应用打开 txt 或 pdf，`Share` 能弹出系统分享；文件页的三个分区和各个操作正常；连接一个没有 `files` 功能的旧 hostd 时，文件相关界面全部隐藏。
+11. （Waydroid）在 Composer 中附加一个文本文件并发送：上传完成前发送按钮不可用；发出的消息显示为文件行；模型读取到该文件，回答中引用了文件内容。
+12. （Waydroid）局域网直连时测量 100 MB 下载与上传的速度，并检查传输期间滚动对话是否流畅，结果记入 NOTES.md。
+13. 真机项：锁屏状态下 200 MB 下载持续进行，前台通知显示进度，完成后有通知；传输中切换 Wi-Fi 和移动数据，自动续传且结果正确；`Save to Downloads` 可用，大文件的限制按 7.7.5 处理；`Download automatically` 生效。
+
 ---
 
 ## 10. 端到端验收清单（M8 必须全部通过）
@@ -2778,6 +3114,11 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 | 24 | 换 VPS | 电脑 `relay set` + 手机改地址后恢复，无需重新配对 |
 | 25 | 换电脑（export/import） | 手机无需操作即可连接 |
 | 26 | 同一局域网 | 走直连；离开局域网自动走中继 |
+| 27 | 在手机上让 pi 把文件或目录发到手机（M9） | 出现文件卡片，下载后内容一致；目录为 zip |
+| 28 | 手机附加文件发给 pi（M9） | 文件出现在电脑的收件目录，模型能读到内容 |
+| 29 | 传输中断网或切换网络（M9） | 恢复后从断点继续，文件完整 |
+| 30 | 传文件时 VPS 抓包和查看日志（M9） | 无明文；中继没有写盘；内存不随文件大小增长 |
+| 31 | 传文件期间操作会话（M9） | 发消息、停止的响应不受影响 |
 
 ---
 
@@ -2799,6 +3140,9 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 | 同一身份两台 hostd | 换电脑后旧电脑的 hostd 仍运行时，两者在中继上互相顶替 | 7.5 要求停掉旧 hostd；`relay show` 频繁出现重连时检查这一点 |
 | 子 agent 父子关系推导 | 依赖 pi-interactive-subagents 的环境变量和工具结果字段（附录 A-20～A-23）；该扩展改动后可能失效 | 失效时子进程仍显示，只是作为顶层并带角色徽标；M5b 验收覆盖 |
 | 组件 widget 转文本 | 依赖组件只用 `theme` 而不依赖真实 TUI | 渲染失败的 widget 不显示，不影响其他功能 |
+| 文件传输速度（M9） | 手机端在 JS 线程上用纯 JS 加解密；经中继时还受 VPS 带宽和流量额度限制 | M9 验收第 12 条实测；局域网下优先走直连；只有确实太慢时，才考虑换原生加密实现（改动限于 `secure-ws.ts`） |
+| 写入 SAF 目录的限制（M9） | SDK 54 起 `FileHandle` 和流式写入不能用于用户所选目录（附录 A-27），可能仍未修复 | 文件先存在 App 私有目录；"存到下载"只对小文件提供，大文件改用系统分享 |
+| AI 误发文件（M9） | 提示注入可能让 AI 调用 `send_to_phone` | 文件只会到达已配对设备；默认手动下载；禁止列表保护凭据目录；全部写入审计日志 |
 
 ---
 
@@ -2833,3 +3177,8 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 | A-23 | 状态面板用组件工厂调用 `setWidget`：`subagent-status`、`team-status`、`team-member`、`subagent-tools`，工厂忽略 `tui` 参数，只用 `theme` | `subagents/index.ts` 610～637 行；`team/lead.ts` 240～256 行；`team/member.ts` 100～118 行；`subagents/subagent-done.ts` 103 行起 |
 | A-24 | `SessionManager.open` 加载旧版本文件时会迁移并重写文件；加载后叶子为文件中最后一个条目 | `P/dist/core/session-manager.js` 718～742 行 |
 | A-25 | `@getpaseo/relay@0.15.3` 的 `e2ee` 子路径导出 `openClientSecureChannel`、`openDaemonSecureChannel`、密钥生成与序列化函数；依赖 tweetnacl、@noble/*、base64-js，需要 `crypto.getRandomValues` 与 `TextEncoder`/`TextDecoder` | 本机 `npm pack` 后检查 `dist/e2ee.d.ts`、`dist/secure-channel.d.ts`、`dist/crypto.js` |
+| A-26 | `pi.registerTool` 支持 `promptSnippet`、`promptGuidelines`；`execute(toolCallId, params, signal, onUpdate, ctx)` 可以 await；参数用 `typebox` 的 `Type` | `P/docs/extensions.md` 1580～1620 行 |
+| A-27 | expo-file-system（SDK 54 起的新 API）：`File.open(mode)` 返回 `FileHandle`，支持 `readBytes`、`writeBytes` 和可设置的 `offset`；SAF `content://` 文件默认只读，不支持 `ReadWrite`；提供 `File.pickFileAsync`、`Directory.pickDirectoryAsync`、`file.contentUri`。对用户所选目录中的文件，不能用 `FileHandle` 或流式写入（expo/expo issue #42273，2026-01） | docs.expo.dev/versions/latest/sdk/filesystem；github.com/expo/expo/issues/42273 |
+| A-28 | 加密通道支持二进制密文帧（`binaryCiphertext`，`dist/secure-channel.js` 478～497 行），但 hostd `secure-socket.ts:53` 与 App `secure-ws.ts:51` 现在会把二进制帧当文本解码 | 本项目源码 |
+| A-29 | 中继拼接后原样双向转发，不检查对端的 `bufferedAmount`；单帧上限 16 MiB；拼接前最多缓存 1 MiB | `packages/relay/src/main.ts` 46、87、106～107 行 |
+| A-30 | 本机 Node v26.13.0 提供 `zlib.crc32` 与 `fs.statfsSync` | 实测 `node -e` |

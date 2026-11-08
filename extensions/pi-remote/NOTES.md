@@ -127,3 +127,8 @@
     - 前三项写在 `app.json` 的 expo-build-properties 中；文档扫描器开关和 ABI 直接写在 `android/gradle.properties`（android 目录由 prebuild 生成，不入库，prebuild 时需要重新加上 `expo.camera.document-scanner-enabled=false`）。
     - Waydroid（x86_64）测试构建需改用 `-PreactNativeArchitectures=x86_64`。
     - 剩余的大头：中文字体约 9MB，dex 约 6MB。
+49. **计划新增 M9：双向文件传输**（`plan.md` 7.7、D19～D23、M9、第 10 章 27～31、附录 A-26～A-30），尚未实现。要点：
+    - VPS 中继只转发密文，不存文件。文件在电脑上登记：发往手机的留在原处，目录打包到 outbox；来自手机的写进 `~/Downloads/pi-remote`。
+    - 每个文件单独开一条加密连接传输，按确认控制流量，可续传。
+    - 电脑 → 手机：由 AI 工具 `send_to_phone` 发起。
+    - 手机 → 电脑：由 App 的"附件"或"文件"页发起；作为附件时，在消息末尾附上电脑上的路径。
