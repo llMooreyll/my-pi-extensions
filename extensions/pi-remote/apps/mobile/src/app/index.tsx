@@ -93,11 +93,12 @@ function AppTitle({ room }: { room: number }) {
  * right, and a heavy rule in the same colour. Typography and colour carry the weight; no filled band.
  */
 function Heading({ title, count, total, color, rule, a11y, top = 30 }: { title: string; count: number; total?: number; color: string; rule: string; a11y: string; top?: number }) {
+  const p = usePalette();
   return (
-    <View accessibilityLabel={a11y} style={{ marginTop: top, paddingHorizontal: MARGIN }}>
+    <View accessibilityLabel={a11y} style={{ paddingTop: top, paddingHorizontal: MARGIN, backgroundColor: p.paper }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
         <View style={{ width: 10, height: 10, backgroundColor: color }} />
-        <Txt v="headline" color={color} style={{ flex: 1, fontSize: 28, lineHeight: 32 }}>{title}</Txt>
+        <Txt v="headline" color={color} style={{ flex: 1, fontFamily: F.serifItalic, fontSize: 29, lineHeight: 34 }}>{title}</Txt>
         <Txt v="label" color={color} style={{ fontFamily: F.monoBold, fontSize: 12 }}>{count}{total !== undefined ? ` / ${total}` : ""}</Txt>
       </View>
       <View style={{ height: 2, backgroundColor: rule, marginTop: 8 }} />
@@ -167,7 +168,8 @@ export default function Home() {
         contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(true); setRefreshing(false); }} />}
         keyboardShouldPersistTaps="handled"
-        stickyHeaderIndices={[1]}
+        // 1 waiting heading, 3 live heading, 5 recent heading with search and filters.
+        stickyHeaderIndices={[1, 3, 5]}
       >
         <View>
           <Pad style={{ paddingTop: 14, paddingBottom: 4, gap: 12 }}>
@@ -191,23 +193,24 @@ export default function Home() {
             <Pad style={{ paddingVertical: 14, flexDirection: "row", gap: 10 }}><Spinner color={p.blue} /><Txt v="label" color={p.blue} a11y="home-busy">{flow.busy}</Txt></Pad>
           ) : null}
 
-          {waiting.length ? (
-            <>
-              <Heading title="Waiting for you" count={waiting.length} color={p.pink} rule={p.pink} a11y="band-waiting" />
-              {waiting.map((w) => (
-                <Row key={w.processId} a11y={`needs-${w.processId}`} accent={p.pink} index="→" indexColor={p.pink} onPress={() => openProcess(w.processId)}>
-                  <Txt v="lead" lines={1}>{processTitle(w)}</Txt>
-                  <Txt v="small" color={p.pink}>{roleLine(w) ?? baseName(w.cwd)} — answer it here</Txt>
-                </Row>
-              ))}
-            </>
-          ) : null}
+        </View>
 
-          <Heading title="Live on the computer" count={procs.length} color={p.blue} rule={p.blue} a11y="band-live" />
+        {/* Section headings are direct children of the scroll view so they can pin to the top (indices below). */}
+        {waiting.length ? <Heading title="Waiting for you" count={waiting.length} color={p.pink} rule={p.pink} a11y="band-waiting" top={18} /> : <View />}
+        <View>
+          {waiting.map((w) => (
+            <Row key={w.processId} a11y={`needs-${w.processId}`} accent={p.pink} index="→" indexColor={p.pink} onPress={() => openProcess(w.processId)}>
+              <Txt v="lead" lines={1}>{processTitle(w)}</Txt>
+              <Txt v="small" color={p.pink}>{roleLine(w) ?? baseName(w.cwd)} — answer it here</Txt>
+            </Row>
+          ))}
+        </View>
+
+        <Heading title="Live on the computer" count={procs.length} color={p.blue} rule={p.blue} a11y="band-live" top={waiting.length ? 30 : 18} />
+        <View>
           {procs.length === 0 ? (
             <Pad indent style={{ paddingVertical: 16 }}><Txt v="body" soft a11y="home-no-procs">Nothing is running. Reopen a session below or start a new one.</Txt></Pad>
           ) : tree.map((n, i) => <ProcRows key={n.info.processId} node={n} depth={0} index={String(i + 1).padStart(2, "0")} />)}
-
           <View style={{ height: 8 }} />
         </View>
 

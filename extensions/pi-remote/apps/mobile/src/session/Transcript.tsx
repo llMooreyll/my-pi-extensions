@@ -9,6 +9,7 @@ import type { AssistantDraft, Block as ContentBlock, Queued } from "../state/typ
 import { CustomCard } from "./CustomCard";
 import { AnchorContext, type Anchor, FoldBar, useAnchor } from "./anchor";
 import { Markdown } from "./Markdown";
+import { SelectContext, SelectSheet, useSelectText } from "./SelectSheet";
 import { ToolCard } from "./ToolCard";
 
 type Item = (
@@ -35,14 +36,38 @@ interface Ctx { results: Map<string, WireMessage>; running: Record<string, { too
 const NO_CTX: Ctx = { results: new Map(), running: {}, hideThinking: false };
 const EMPTY_RUNS: Record<string, { toolName: string; args: unknown; partialText: string }> = {};
 
-/** Every entry hangs a small label in the margin column: YOU, PI, §. */
-function Margin({ label, color, children, a11y }: { label: string; color?: string; children: ReactNode; a11y?: string }) {
+/**
+ * Every entry hangs a small label in the margin column: YOU, PI, §. With `select`, the whole margin column is
+ * a button that opens the message as one selectable text (see SelectSheet); a pilcrow marks it.
+ */
+function Margin({ label, color, children, a11y, select }: { label: string; color?: string; children: ReactNode; a11y?: string; select?: string }) {
+  const p = usePalette();
+  const open = useSelectText();
+  const onSelect = select ? () => open(select) : undefined;
+  useTestAction(a11y ? `${a11y}-select` : undefined, onSelect);
   return (
-    <View accessibilityLabel={a11y} style={{ flexDirection: "row", alignItems: "baseline", paddingVertical: 6 }}>
-      <View style={{ width: GUTTER }}><Txt v="label" color={color} soft={!color}>{label}</Txt></View>
+    <View accessibilityLabel={a11y} style={{ flexDirection: "row", alignItems: "stretch", paddingVertical: 6 }}>
+      <Pressable accessibilityRole={select ? "button" : undefined} accessibilityLabel={a11y ? `${a11y}-select` : undefined} disabled={!select} onPress={onSelect}
+        style={({ pressed }) => ({ width: GUTTER, backgroundColor: pressed ? p.tint : "transparent" })}>
+        <Txt v="label" color={color} soft={!color} style={{ paddingTop: 5 }}>{label}</Txt>
+        {select ? <Txt v="mono" faint style={{ fontSize: 12, marginTop: label ? 2 : 4 }}>¶</Txt> : null}
+      </Pressable>
       <View style={{ flex: 1 }}>{children}</View>
     </View>
   );
+}
+
+/** The text of a message as written, for the select sheet. */
+function messageText(m: WireMessage & Record<string, any>): string {
+  switch (m.role) {
+    case "user": return typeof m.content === "string" ? m.content : textOf(m.content);
+    case "assistant": return Array.isArray(m.content)
+      ? (m.content as ContentBlock[]).filter((b) => b.type === "text").map((b) => stripAnsi(String((b as { text: string }).text ?? ""))).join("\n\n")
+      : String(m.content ?? "");
+    case "bashExecution": return `$ ${String(m.command ?? "")}\n${String(m.output ?? "")}`;
+    case "custom": return typeof m.content === "string" ? m.content : textOf(m.content);
+    default: return "";
+  }
 }
 
 function Thinking({ text, hidden, a11y }: { text: string; hidden: boolean; a11y: string }) {
@@ -133,7 +158,7 @@ const Row = memo(function Row({ item }: { item: Item }) {
       return (
         <View style={{ marginTop: 14 }}>
           <View style={{ height: 1, backgroundColor: p.faint, marginBottom: 2 }} />
-          <Margin label="you" color={p.pink} a11y={a11y}>
+          <Margin label="you" color={p.pink} a11y={a11y} select={text || undefined}>
             <Txt v={long ? "body" : "em"} selectable style={long ? undefined : { fontSize: 22, lineHeight: 27 }}>{text}</Txt>
             {images ? <Txt v="label" color={p.pink} style={{ marginTop: 4 }}>+ {images} image{images > 1 ? "s" : ""}</Txt> : null}
           </Margin>
@@ -143,7 +168,7 @@ const Row = memo(function Row({ item }: { item: Item }) {
     case "assistant": {
       const blocks = Array.isArray(m.content) ? (m.content as ContentBlock[]) : [{ type: "text", text: String(m.content ?? "") }];
       return (
-        <Margin label={lab("pi")} a11y={a11y}>
+        <Margin label={lab("pi")} a11y={a11y} select={messageText(m).trim() || undefined}>
           <Blocks blocks={blocks} ctx={ctx} prefix={a11y} />
           {m.stopReason === "error" && m.errorMessage ? <Txt v="mono" color={p.danger} style={{ marginTop: 4 }}>✕ {String(m.errorMessage)}</Txt> : null}
           {m.stopReason === "aborted" ? <Txt v="label" soft>— stopped</Txt> : null}
@@ -153,12 +178,12 @@ const Row = memo(function Row({ item }: { item: Item }) {
     case "toolResult": return <Margin label=""><ToolCard id={String(m.toolCallId ?? item.key)} name={String(m.toolName ?? "tool")} args={{}} result={m} /></Margin>;
     case "bashExecution":
       return (
-        <Margin label={lab("$")} a11y={a11y}>
+        <Margin label={lab("$")} a11y={a11y} select={messageText(m)}>
           <Txt v="mono" style={{ fontFamily: F.monoBold }}>{String(m.command ?? "")}</Txt>
           <Txt v="mono" soft selectable style={{ fontSize: 11 }}>{String(m.output ?? "").split("\n").slice(-200).join("\n")}</Txt>
         </Margin>
       );
-    case "custom": return <Margin label={lab("§")}><CustomCard m={m} idx={item.idx} /></Margin>;
+    case "custom": return <Margin label={lab("§")} a11y={a11y} select={messageText(m).trim() || undefined}><CustomCard m={m} idx={item.idx} /></Margin>;
     case "compactionSummary": return <Divider label="context compacted" text={String(m.summary ?? "")} a11y={a11y} />;
     case "branchSummary": return <Divider label="summary of the abandoned branch" text={String(m.summary ?? "")} a11y={a11y} />;
     default: return null;
@@ -352,7 +377,9 @@ export const Transcript = forwardRef<TranscriptHandle, {
     },
   }), [items, firstIndex]);
 
+  const [selectText, setSelectText] = useState<string | undefined>();
   return (
+    <SelectContext.Provider value={setSelectText}>
     <View style={{ flex: 1 }}>
       <ScrollView
         ref={scrollRef}
@@ -388,6 +415,8 @@ export const Transcript = forwardRef<TranscriptHandle, {
           </Pressable>
         </View>
       ) : null}
+      <SelectSheet text={selectText} onClose={() => setSelectText(undefined)} />
     </View>
+    </SelectContext.Provider>
   );
 });
