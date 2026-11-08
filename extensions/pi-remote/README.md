@@ -1,10 +1,22 @@
 # pi-remote
 
-Use the [pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) running on your Linux computer from an Android phone: watch sessions live, send prompts, steer or stop runs, answer dialogs, and use `/model`, `/thinking`, `/tree`, `/new`, `/fork`, `/resume`, `/compact`, `/settings`. You also see subagents and team members.
+在安卓手机上随时随地远程查看、操作并实时交互运行在 Linux 主机上的 [Pi Coding Agent](https://github.com/badlogic/pi-mono)。
 
-You host the whole network yourself. A small relay on your own VPS only forwards end-to-end encrypted frames: it stores nothing and cannot read anything. The computer needs no public IP. To move to another VPS, computer or phone, you change an address or re-pair; nothing else.
+由 **llMooreyll** 自主设计与开发的自托管全栈远程套件（包含 Android App、Linux 后台守护进程 `hostd`、极简无状态中继 `relay` 及 Pi 桥接插件 `bridge`）。
 
-## How it fits together
+---
+
+## 核心特性
+
+- 📱 **全功能移动端控制**：在手机上实时观看 Pi 会话流式输出，发送 Prompt，中断（Steer/Stop）运行，应答交互式问答（Dialogs），并直观监控子代理（Subagents）与团队成员（Team Members）的执行动向。
+- ⚡ **深度命令集成**：支持在移动端直接调用 `/model`, `/thinking`, `/tree`, `/new`, `/fork`, `/resume`, `/compact`, `/settings` 等核心指令。
+- 🔒 **端到端加密（E2EE）**：手机与主机之间基于 Noise NK 协议进行强加密通信，即使通过中继转发也无法被任何中间节点解密。
+- 🌐 **无需公网 IP**：主机与手机通过自建在个人 VPS 上的极简 WebSocket 中继建立连接，也支持同一局域网（LAN）内直接直连。
+- 🖥️ **本地 tmux 无缝接管**：主机上的 Pi 会话在 tmux 中托管，后台 `pi-hostd` 守护进程管理进程生命周期与事件回放，手机掉线重连后平滑续播。
+
+---
+
+## 架构简图 / Architecture
 
 ```
 Android app ──ws(s)──▶ relay on your VPS ◀──ws── pi-hostd on the computer ◀──unix socket── pi + bridge extension

@@ -1,502 +1,83 @@
 # pi-interactive-subagents
 
-Async subagents for [pi](https://github.com/badlogic/pi-mono) — spawn, orchestrate, and manage sub-agent sessions in multiplexer panes. **Fully non-blocking** — the main agent keeps working while subagents run in the background.
+为 [Pi Coding Agent](https://github.com/badlogic/pi-mono) 提供多窗格非阻塞子代理（Subagent）与长期协同团队（Team Mode）支持。
 
-https://github.com/user-attachments/assets/30adb156-cfb4-4c47-84ca-dd4aa80cba9f
-
-## How It Works
-
-Call `subagent()` and it **returns immediately**. The sub-agent runs in its own terminal pane. A live widget above the input shows all running agents with their current state — `starting`, `active`, `waiting`, `stalled`, or `running`. When a sub-agent finishes, its result is **steered back** into the main session as an async notification — triggering a new turn so the agent can process it.
-
-```
-╭─ Subagents ──────────────────────────── 2 running ─╮
-│ 00:23  Scout: Auth (scout)        active · bash 7m │
-│ 00:45  Scout: DB (scout)                waiting 2m │
-╰────────────────────────────────────────────────────╯
-```
-
-For parallel execution, just call `subagent` multiple times — they all run concurrently:
-
-```typescript
-subagent({ name: "Scout: Auth", agent: "scout", task: "Analyze auth module" });
-subagent({ name: "Scout: DB", agent: "scout", task: "Map database schema" });
-// Both return immediately, results steer back independently
-```
-
-## Install
-
-```bash
-pi install git:github.com/HazAT/pi-interactive-subagents
-```
-
-Supported multiplexers:
-
-- [cmux](https://github.com/manaflow-ai/cmux)
-- [tmux](https://github.com/tmux/tmux)
-- [zellij](https://zellij.dev)
-- [WezTerm](https://wezfurlong.org/wezterm/) (terminal emulator with built-in multiplexing)
-
-Start pi inside one of them:
-
-```bash
-cmux pi
-# or
-tmux new -A -s pi 'pi'
-# or
-zellij --session pi   # then run: pi
-# or
-# just run pi inside WezTerm — no wrapper needed
-```
-
-Optional: set `PI_SUBAGENT_MUX=cmux|tmux|zellij|wezterm` to force a specific backend.
-
-If your shell startup is slow and subagent commands sometimes get dropped before the prompt is ready, set `PI_SUBAGENT_SHELL_READY_DELAY_MS` to a higher value (defaults to `500`):
-
-```bash
-export PI_SUBAGENT_SHELL_READY_DELAY_MS=2500
-```
-
-Subagent panes are created without stealing keyboard focus (cmux, tmux). Launch commands target child surfaces by explicit ID, so focus and command delivery are independent. Note: the `interactive` option controls parent status notifications, not terminal focus.
-
-## What's Included
-
-### Extensions
-
-**Subagents** — 4 main-session tools + 3 commands, plus 1 subagent-only tool:
-
-| Tool                 | Description                                                                                 |
-| -------------------- | ------------------------------------------------------------------------------------------- |
-| `subagent`           | Spawn a sub-agent in a dedicated multiplexer pane (async — returns immediately)             |
-| `subagent_interrupt` | Interrupt a running Pi-backed subagent's current turn                                       |
-| `subagents_list`     | List available agent definitions                                                            |
-| `subagent_resume`    | Resume a previous sub-agent session (async)                                                 |
-
-| Command                    | Description                          |
-| -------------------------- | ------------------------------------ |
-| `/plan`                    | Start a full planning workflow       |
-| `/iterate`                 | Fork into a subagent for quick fixes |
-| `/subagent <agent> <task>` | Spawn a named agent directly         |
-
-### Bundled Agents
-
-| Agent             | Model                  | Role                                                                                     |
-| ----------------- | ---------------------- | ---------------------------------------------------------------------------------------- |
-| **planner**       | Opus (medium thinking) | Brainstorming — clarifies requirements, explores approaches, writes plans, creates todos |
-| **scout**         | Haiku                  | Fast codebase reconnaissance — maps files, patterns, conventions                         |
-| **worker**        | Sonnet                 | Implements tasks from todos — writes code, runs tests, makes polished commits            |
-| **reviewer**      | Opus (medium thinking) | Reviews code for bugs, security issues, correctness                                      |
-| **visual-tester** | Sonnet                 | Visual QA via Chrome CDP — screenshots, responsive testing, interaction testing          |
-
-Agent discovery follows priority: **project-local** (`.pi/agents/`) > **global** (`~/.pi/agent/agents/`) > **package-bundled**. Override any bundled agent by placing your own version in the higher-priority location.
+原版基于 [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents)，由 **llMooreyll** 进行了大规模深度开发与架构增强，扩展了**多模型自动回退链**、**长期存活团队协作模式（Worktree 隔离）**与**高可靠性生命周期监管**。
 
 ---
 
-## Async Subagent Flow
+## 核心新特性（本地重大增强）
 
-```
-1. Agent calls subagent()          → returns immediately ("started")
-2. Sub-agent runs in mux pane      → widget shows live status
-3. User keeps chatting             → main session fully interactive
-4. Sub-agent finishes              → result steered back as a normal completion/failure
-5. Main agent processes result     → continues with new context
-```
+### 1. 🔄 有序模型回退链（Ordered Model Fallback Chain）
+- **多模型配置**：允许在 Agent 定义（frontmatter `model` 字段）或 `subagent({ model: "..." })` 中传入逗号分隔的模型序列：
+  ```yaml
+  model: zero-cat/deepseek-v4.1-flash-1017,antigravity-vps/gemini-3.8-flash-high,claude-vps/claude-haiku-5-5
+  ```
+- **派生前凭据校验**：主 Agent 派生子 Agent 前会自动核对凭据，跳过不可用模型；当链上全部模型不可用时，拒绝盲目派生并请求用户介入。
+- **自动无缝故障转移**：子 Agent 在遭遇提供商限流、网络故障或模型异常并在消耗完 Pi 内部重试次数后，自动切换至链中的下一个模型继续执行任务；若整条链路耗尽，则回传完整的故障尝试日志。
 
-Multiple subagents run concurrently — each steers its result back independently as it finishes. The live widget above the input tracks all running agents:
+### 2. 👥 长期存活团队模式（Team Collaboration Suite）
+不同于一次性、只读的 `subagent`，团队模式支持长驻的多角色独立协作：
+- **独立的 Git Worktree 开发空间（`write: true`）**：
+  为可写入的团队成员（Worker）自动分配独立的 Git worktree 和私有分支（`pi-team/<name>`）。成员在其专有目录中执行代码修改与测试，绝不污染主代理的工作区。
+- **安全的成果集成机制**：
+  - `team_integrate`：将写成员已提交的代码以未暂存（unstaged）形式合并回主工作树，发生冲突时保持主工作树安全无损。
+  - `team_sync`：将主工作树的最新变更一键同步给空闲的写成员。
+- **双向信箱与指令分发**：
+  通过 `team_send` 与成员持续对话，支持 `urgent: true` 紧急插队递送。
+- **主题化专属界面**：
+  支持全局主题的 Team Banner 横幅、实时状态窗格（Member List、状态流转）与边框高亮。
 
-```
-╭─ Subagents ───────────────────────────────── 3 running ─╮
-│ 01:23  Scout: Auth (scout)            active · write 7m │
-│ 00:45  Researcher (researcher)               stalled 4m │
-│ 00:12  Scout: DB (scout)                      starting… │
-╰─────────────────────────────────────────────────────────╯
-```
+### 3. 🛡️ 稳健的生命周期治理（agent_before_settle 与 .exit Sidecar）
+- **杜绝过早关闭**：原版在 `agent_end` 触发时即尝试退出，导致网络瞬态故障在 Pi 重试前误触发退出关闭窗格。现将判定逻辑延后至 `agent_before_settle`，确保重试流程完整执行完毕。
+- **统一 Sidecar 信号**：正常完成与异常结束均写入确定性的 `.exit` sidecar 文件，主会话无竞态、零轮询捕获子 Agent 终态。
 
-Completion messages render with a colored background and are expandable with `Ctrl+O` to show the full summary and session file path.
-
-### In-progress status updates
-
-The widget tracks each Pi-backed sub-agent from a child-written runtime snapshot and labels it with a coarse state:
-
-- `starting` — launched, but no valid child snapshot has been observed yet
-- `active` — the child is doing observed runtime work: agent turn, provider request, streaming, or tool execution
-- `waiting` — the child finished a turn and is intentionally open for more input or another stage
-- `stalled` — the parent has gone too long without a valid current child snapshot and can no longer trust the run is healthy
-- `running` — fallback for backends without child snapshots (e.g. Claude)
-
-These labels are no longer derived from session-file growth. Session JSONL is still used for transcript, resume, lineage, and result extraction, but Pi-backed liveness now comes from a small activity snapshot written by the child extension. A fixed internal watchdog marks a run as `stalled` when valid snapshots never appear, stop being readable, or stop matching the current child; valid long-running `active` or `waiting` states do not become `stalled` just because time passes. When a run enters `stalled` or recovers from it, the parent agent receives a steer message so it can react. All other status transitions stay in the widget only.
-
-**Interactive subagents stay silent.** Long-running user-driven subagents (e.g. `planner`, or any `/iterate` fork) do not wake the parent session on `stalled`/`recovered` transitions — the user is working directly in the subagent's pane, and a steer message there would just burn an orchestrator turn on a no-op "still waiting" ping. The widget still updates normally, and child snapshots are still recorded/classified regardless of the `interactive` setting. By default, agents with `auto-exit: true` are treated as autonomous and get stall pings; agents without it are treated as interactive and stay quiet. Override per-agent with `interactive: true|false` in frontmatter, or per-spawn with `interactive: true|false` on the tool call.
-
-#### Configuration
-
-Status display is controlled by `config.json` in the extension directory. Copy `config.json.example` to get started:
-
-```bash
-cp config.json.example config.json
-```
-
-```json
-{
-  "status": {
-    "enabled": true
-  }
-}
-```
-
-`config.json` is gitignored so local overrides don't get committed.
+### 4. 🏷️ 会话标签标准化
+所有派生的子代理会话自动附加 `<subagent:name>` 标签，方便在进程管理器与历史记录中快速检索。
 
 ---
 
-## Spawning Subagents
+## 工具生态（Tools）
 
-```typescript
-// Named agent with defaults from agent definition
-subagent({ name: "Scout", agent: "scout", task: "Analyze the codebase..." });
+### 一次性代理调度（只读 / 独立任务）
+- `subagent({ name, agent, task, model, tools, ... })`：派生异步子代理，立即返回，完成后自动回传结果（Steer message）。
+- `subagent_interrupt({ name, id })`：向正在运行的子 Agent 发送中断信号（Escape），保持窗格存活。
+- `subagent_resume({ sessionPath, ... })`：恢复此前意外中断的子 Agent 会话。
+- `subagents_list`：列出全局与项目本地可用的子 Agent 规范文件。
 
-// Force a full-context fork for this spawn
-subagent({ name: "Iterate", fork: true, task: "Fix the bug where..." });
-
-// Agent defaults can choose a different session-mode via frontmatter
-subagent({ name: "Planner", agent: "planner", task: "Work through the design with me" });
-
-// Custom working directory
-subagent({ name: "Designer", agent: "game-designer", cwd: "agents/game-designer", task: "..." });
-```
-
-### Parameters
-
-| Parameter              | Type    | Default        | Description                                                                                       |
-| ---------------------- | ------- | -------------- | ------------------------------------------------------------------------------------------------- |
-| `name`                 | string  | required       | Display name (shown in widget and pane title)                                                     |
-| `task`                 | string  | required       | Task prompt for the sub-agent                                                                     |
-| `agent`                | string  | —              | Load defaults from agent definition                                                               |
-| `fork`                 | boolean | `false`        | Force the full-context fork mode for this spawn, overriding any agent `session-mode` frontmatter  |
-| `interactive`          | boolean | derived        | Mark this spawn as interactive (don't wake the parent on stall/recovery). Defaults to the agent's `interactive` frontmatter, otherwise the inverse of `auto-exit`. |
-| `model`                | string  | —              | Override agent's default model                                                                    |
-| `systemPrompt`         | string  | —              | Append to system prompt                                                                           |
-| `skills`               | string  | —              | Comma-separated skill names                                                                       |
-| `tools`                | string  | —              | Comma-separated tool names                                                                        |
-| `cwd`                  | string  | —              | Working directory for the sub-agent (see [Role Folders](#role-folders))                           |
+### 团队模式协作（长期存活 / 独立 Worktree）
+- `team_spawn({ name, agent, task, write, ... })`：派生长期成员，`write: true` 自动创建 Git worktree。
+- `team_send({ to, message, urgent })`：向团队成员发送后续任务或指示。
+- `team_list`：查看当前团队所有成员的状态、分支与最新进展。
+- `team_integrate({ name })`：集成写成员的成果到主工作区。
+- `team_sync({ name })`：同步主工作区最新代码至成员 worktree。
+- `team_interrupt({ name })` / `team_stop({ name })`：暂停当前轮次或安全关闭成员。
 
 ---
 
-## Interrupting a running subagent
+## 终端复用器支持（Multiplexers）
 
-Use `subagent_interrupt` to cancel the active turn of a running Pi-backed subagent:
-
-```typescript
-subagent_interrupt({ id: "abcd1234" });
-// or
-subagent_interrupt({ name: "Scout" });
-```
-
-This sends Escape to the child pane, cancelling the in-progress model turn. The subagent session stays alive — the pane, session file, and background polling all remain intact. After the interrupt, the widget immediately moves the child back to `waiting`, and stale pre-interrupt snapshots are ignored. If the child starts work later, newer snapshots return it to `active`; completion, failure, and `caller_ping` still flow through normally.
-
-This is a turn-level interrupt, not a method for forcibly terminating a subagent session.
-
-> **Note:** Only Pi-backed subagents are supported. Claude-backed runs will return an error.
+支持在以下复用器中全自动分屏：
+- **cmux**：原生长驻侧边栏集成
+- **tmux**：`tmux new -A -s pi`
+- **zellij**：`zellij --session pi`
+- **WezTerm**：原生终端标签与分屏
 
 ---
 
-## caller_ping — Child-to-Parent Help Request
+## 安装与使用
 
-The `caller_ping` tool lets a subagent request help from its parent agent. When called, the child session **exits** and the parent receives a notification with the help message. The parent can then **resume** the child session with a response using `subagent_resume`.
+在 Pi 中安装本本地扩展：
 
-**`caller_ping` parameters:**
-- `message` (required): What you need help with
-
-**`subagent_resume` parameters:**
-- `sessionPath` (required): Path to the child session `.jsonl` file
-- `name` (optional): Display name for the resumed pane (defaults to `Resume`)
-- `message` (optional): Follow-up prompt to send after resuming
-- `autoExit` (optional): Whether the resumed session should auto-exit after its next response. Defaults to `true` for autonomous follow-up work; set `false` when resuming for an interactive handoff.
-
-**Interaction flow:**
-1. Child calls `caller_ping({ message: "Not sure which schema to use" })`
-2. Child session exits (like `subagent_done`)
-3. Parent receives a steer notification: *"Sub-agent Worker needs help: Not sure which schema to use"*
-4. Parent resumes the child session via `subagent_resume` with the response
-5. Child picks up where it left off with the parent's guidance
-
-**Example:**
-```typescript
-// Inside a worker subagent
-await caller_ping({
-  message: "Found two conflicting migration files — should I use v1 or v2?"
-});
-// Session exits here. Parent receives the ping, then resumes this session
-// with guidance like "Use v2, v1 is deprecated"
+```zsh
+pi install ~/Projects/Pi-extension-dev/extensions/pi-interactive-subagents
 ```
 
-> **Note:** `caller_ping` is only available inside subagent contexts. Calling it from a standalone pi session returns an error.
+在 Pi 中输入 `/reload` 重新加载。
 
 ---
 
-## The `/plan` Workflow
+## 许可
 
-The `/plan` command orchestrates a full planning-to-implementation pipeline.
-
-```
-/plan Add a dark mode toggle to the settings page
-```
-
-```
-Phase 1: Investigation    → Quick codebase scan
-Phase 2: Planning         → Interactive planner subagent (user collaborates)
-Phase 3: Review Plan      → Confirm todos, adjust if needed
-Phase 4: Execute          → Scout + sequential workers implement todos
-Phase 5: Review           → Reviewer subagent checks all changes
-```
-
-Tab/window titles update to show current phase:
-
-```
-🔍 Investigating: dark mode → 💬 Planning: dark mode
-→ 🔨 Executing: 1/3 → 🔎 Reviewing → ✅ Done
-```
-
----
-
-## The `/iterate` Workflow
-
-For quick, focused work without polluting the main session's context.
-
-```
-/iterate Fix the off-by-one error in the pagination logic
-```
-
-This always forks the current session into a subagent with full conversation context. It does not inherit an agent default `session-mode`. Make the fix, verify it, and exit to return. The main session gets a summary of what was done.
-
----
-
-## Custom Agents
-
-Place a `.md` file in `.pi/agents/` (project) or `~/.pi/agent/agents/` (global):
-
-```markdown
----
-name: my-agent
-description: Does something specific
-model: anthropic/claude-sonnet-4-6
-thinking: minimal
-tools: read, bash, edit, write
-session-mode: lineage-only
-spawning: false
----
-
-# My Agent
-
-You are a specialized agent that does X...
-```
-
-### Frontmatter Reference
-
-| Field         | Type    | Description                                                                                                                                                                                                                                                                 |
-| ------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`        | string  | Agent name (used in `agent: "my-agent"`)                                                                                                                                                                                                                                    |
-| `description` | string  | Shown in `subagents_list` output                                                                                                                                                                                                                                            |
-| `model`       | string  | Default model (e.g. `anthropic/claude-sonnet-4-6`)                                                                                                                                                                                                                          |
-| `thinking`    | string  | Thinking level: `minimal`, `medium`, `high`                                                                                                                                                                                                                                 |
-| `tools`       | string  | Comma-separated **native pi tools only**: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`                                                                                                                                                                             |
-| `skills`      | string  | Comma-separated skill names to auto-load                                                                                                                                                                                                                                    |
-| `session-mode` | string | Default child-session mode: `standalone`, `lineage-only`, or `fork` |
-| `spawning`    | boolean | Set `false` to deny all subagent-spawning tools                                                                                                                                                                                                                             |
-| `deny-tools`  | string  | Comma-separated extension tool names to deny                                                                                                                                                                                                                                |
-| `auto-exit`   | boolean | Auto-shutdown when the agent finishes its turn — no `subagent_done` call needed. If the user sends any input, auto-exit is permanently disabled and the user takes over the session. Recommended for autonomous agents (scout, worker); not for interactive ones (planner). Also determines the default value of `interactive` (see below). |
-| `interactive` | boolean | derived        | Override whether stall/recovery transitions wake the parent session. Defaults to the inverse of `auto-exit`: autonomous agents (`auto-exit: true`) are non-interactive and get stall pings; agents without `auto-exit` are interactive and stay quiet. Explicit values take precedence. |
-| `cwd`         | string  | Default working directory (absolute or relative to project root)                                                                                                                                                                                                            |
-| `disable-model-invocation` | boolean | Hide this agent from discovery surfaces like `subagents_list`. The agent still remains directly invokable by explicit name via `subagent({ agent: "name", ... })`. |
-
----
-
-Discovery still resolves precedence before visibility filtering. If a project-local hidden agent has the same name as a visible global or bundled agent, the hidden project agent wins and the lower-precedence agent does not appear in `subagents_list`.
-
-### `session-mode`
-
-Choose how a subagent session starts:
-
-- `standalone` — default fresh session with no lineage link to the caller
-- `lineage-only` — fresh blank child session with `parentSession` linkage, but no copied turns from the caller
-- `fork` — linked child session seeded with the caller's prior conversation context
-
-`lineage-only` is useful when you want session discovery and fork lineage UX to show the relationship later, but you do **not** want the child to inherit the parent's turns.
-
-`fork: true` on the tool call always forces the `fork` mode for that specific spawn. `/iterate` uses this explicit override on purpose.
-
-```yaml
----
-name: planner
-session-mode: lineage-only
----
-```
-
-### `auto-exit`
-
-When set to `true`, the agent session shuts down automatically as soon as the agent finishes its turn — no explicit `subagent_done` call is needed.
-
-**Behavior:**
-
-- The session closes after the agent's final message (on the `agent_end` event)
-- If the user sends **any input** before the agent finishes, auto-exit is permanently disabled for that session — the user takes over interactively
-- The modeHint injected into the agent's task is adjusted accordingly: autonomous agents see "Complete your task autonomously." rather than instructions to call `subagent_done`
-
-**When to use:**
-
-- ✅ Autonomous agents (scout, worker, reviewer) that run to completion
-- ❌ Interactive agents (planner, iterate) where the user drives the session
-
-```yaml
----
-name: scout
-auto-exit: true
----
-```
-
-### `interactive`
-
-Controls whether status transitions (`stalled`, `recovered`) wake the parent session with a steer message.
-
-**Default:** the inverse of `auto-exit`. Autonomous agents (`auto-exit: true`) are non-interactive and ping the parent on stall/recovery; agents without `auto-exit` are interactive and stay quiet. Bare spawns with no agent defs (e.g. `/iterate` with `fork: true`) are treated as interactive.
-
-**Why it exists:** Interactive agents can run for minutes or hours while the user thinks, types, and reads in the subagent's pane. Child snapshots still update the widget, but stalled/recovered supervision messages rarely need to wake the parent for user-driven sessions. Skipping the steer keeps the parent quiet until the child actually finishes.
-
-**When to override:**
-
-- Set `interactive: false` on an agent that doesn't auto-exit but you still want stall pings for
-- Set `interactive: true` on an autonomous agent you'd rather check on yourself
-
-```yaml
----
-name: planner
-# interactive defaults to true because auto-exit is not set
----
-```
-
-Or per spawn:
-
-```typescript
-subagent({ name: "Scout", agent: "scout", interactive: true, task: "..." });
-```
-
----
-
-## Tool Access Control
-
-By default, every sub-agent can spawn further sub-agents. Control this with frontmatter:
-
-### `spawning: false`
-
-Denies all subagent lifecycle tools (`subagent`, `subagent_interrupt`, `subagents_list`, `subagent_resume`):
-
-```yaml
----
-name: worker
-spawning: false
----
-```
-
-### `deny-tools`
-
-Fine-grained control over individual extension tools:
-
-```yaml
----
-name: focused-agent
-deny-tools: subagent
----
-```
-
-### Recommended Configuration
-
-| Agent      | `spawning`  | Rationale                                    |
-| ---------- | ----------- | -------------------------------------------- |
-| planner    | _(default)_ | Legitimately spawns scouts for investigation |
-| worker     | `false`     | Should implement tasks, not delegate         |
-| researcher | `false`     | Should research, not spawn                   |
-| reviewer   | `false`     | Should review, not spawn                     |
-| scout      | `false`     | Should gather context, not spawn             |
-
----
-
-## Role Folders
-
-The `cwd` parameter lets sub-agents start in a specific directory with its own configuration:
-
-```
-project/
-├── agents/
-│   ├── game-designer/
-│   │   └── CLAUDE.md          ← "You are a game designer..."
-│   ├── sre/
-│   │   ├── CLAUDE.md          ← "You are an SRE specialist..."
-│   │   └── .pi/skills/        ← SRE-specific skills
-│   └── narrative/
-│       └── CLAUDE.md          ← "You are a narrative designer..."
-```
-
-```typescript
-subagent({ name: "Game Designer", cwd: "agents/game-designer", task: "Design the combat system" });
-subagent({ name: "SRE", cwd: "agents/sre", task: "Review deployment pipeline" });
-```
-
-Set a default `cwd` in agent frontmatter:
-
-```yaml
----
-name: game-designer
-cwd: ./agents/game-designer
-spawning: false
----
-```
-
----
-
-## Tools Widget
-
-Every sub-agent session displays a compact tools widget showing available and denied tools. Toggle with `Ctrl+J`:
-
-```
-[scout] — 12 tools · 4 denied  (Ctrl+J)              ← collapsed
-[scout] — 12 available  (Ctrl+J to collapse)          ← expanded
-  read, bash, edit, write, todo, ...
-  denied: subagent, subagents_list, ...
-```
-
----
-
-## Requirements
-
-- [pi](https://github.com/badlogic/pi-mono) — the coding agent
-- One supported multiplexer:
-  - [cmux](https://github.com/manaflow-ai/cmux)
-  - [tmux](https://github.com/tmux/tmux)
-  - [zellij](https://zellij.dev)
-  - [WezTerm](https://wezfurlong.org/wezterm/)
-
-```bash
-cmux pi
-# or
-tmux new -A -s pi 'pi'
-# or
-zellij --session pi   # then run: pi
-# or
-# just run pi inside WezTerm
-```
-
-Optional backend override:
-
-```bash
-export PI_SUBAGENT_MUX=cmux   # or tmux, zellij, wezterm
-```
-
----
-
-## Acknowledgements
-
-The sub-agent status supervision and turn-only interruption features were inspired by [RepoPrompt](https://repoprompt.com/)'s sub-agent snapshot polling and run cancellation features.
-
----
-
-## License
-
-MIT
+本项目整体基于 GPL-3.0 聚合分发。
+本插件核心历史与组件保留原作者版权：Copyright (c) 2026 HazAT (MIT License)。详见 [LICENSE](LICENSE)。
