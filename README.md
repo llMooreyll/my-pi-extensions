@@ -22,4 +22,9 @@ pi install ~/Projects/Pi-extension-dev/extensions/pi-language-tutor
 
 ## 许可
 
-MIT，保留各上游作者的版权声明（见根目录与各插件的 LICENSE）。
+本项目整体采用 [GNU General Public License v3.0 (GPL-3.0)](LICENSE) 授权。
+
+第三方插件保留各上游作者的 MIT 版权声明与许可文本（见各插件子目录下的 `LICENSE` 及 [docs/UPSTREAM.md](docs/UPSTREAM.md)）：
+- `statusline-pi`: MIT License, Copyright (c) 2024 luongnv89
+- `pi-interactive-subagents`: MIT License, Copyright (c) 2026 HazAT
+- `pi-language-tutor`: MIT License, Copyright (c) 2026 Mack

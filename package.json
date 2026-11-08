@@ -5,7 +5,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/llMooreyll/pi-extensions"
+    "url": "https://github.com/llMooreyll/my-pi-extensions"
   },
   "keywords": [
     "pi",
@@ -13,7 +13,7 @@
     "extensions"
   ],
   "author": "llMooreyll",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "engines": {
     "node": ">=18.0.0"
   },
