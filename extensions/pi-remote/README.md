@@ -122,3 +122,7 @@ The core features are done: milestones M0–M8 in `plan.md`. Two-way file transf
 ## Fonts
 
 The bundled fonts are Instrument Serif, JetBrains Mono, Space Grotesk, and GB2312 subsets of Noto Serif SC and Noto Sans SC. All of them are under the SIL Open Font License 1.1.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0) — see the [LICENSE](LICENSE) file for details. Any derivative works must remain open source under the same license.
