@@ -4,7 +4,7 @@ import { Pressable, View } from "react-native";
 import type { WireMessage } from "@pi-remote/protocol";
 import { Button, Sheet, Spinner, Txt } from "../ds/primitives";
 import { F, GUTTER, usePalette } from "../ds/tokens";
-import { stripAnsi, textOf } from "../lib/format";
+import { plainPreview, stripAnsi, textOf } from "../lib/format";
 import { useTestAction } from "../lib/test-hooks";
 import { call, errText } from "../net/connection";
 import { Seg, useTreePanel } from "./Sheets";
@@ -81,6 +81,7 @@ export function buildTurns(messages: WireMessage[]): Turn[] {
 const fmtDur = (a?: number, b?: number) => {
   if (!a || !b || b < a) return "";
   const s = Math.round((b - a) / 1000);
+  if (s < 1) return "";
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 };
 const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
@@ -136,7 +137,7 @@ function TurnRow({ t, last, running, onJump, onRewind, onFork, busy }: {
             {t.answer ? (
               <View style={{ gap: 3 }}>
                 <Txt v="label" soft>pi's last words</Txt>
-                <Txt v="body" selectable lines={12} style={{ fontSize: 14.5, lineHeight: 21 }}>{t.answer.trim()}</Txt>
+                <Txt v="body" selectable lines={10} style={{ fontSize: 14.5, lineHeight: 21 }}>{plainPreview(t.answer)}</Txt>
               </View>
             ) : null}
             {t.error ? <Txt v="mono" color={p.danger} selectable style={{ fontSize: 11.5 }}>✕ {t.error}</Txt> : null}

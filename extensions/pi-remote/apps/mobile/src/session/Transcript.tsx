@@ -208,6 +208,7 @@ function Anchored({ id, index, keeper, children }: { id: string; index: number; 
 export interface TranscriptHandle { jumpTo: (entryId: string) => boolean }
 
 const AT_BOTTOM = 16;
+const LIST_PAD = 10;
 
 export const Transcript = forwardRef<TranscriptHandle, {
   messages: WireMessage[]; inflight?: AssistantDraft; queued?: Queued[]; running?: Record<string, { toolName: string; args: unknown; partialText: string }>;
@@ -245,6 +246,7 @@ export const Transcript = forwardRef<TranscriptHandle, {
   const data = useMemo(() => [...items].reverse(), [items]);
   const offset = useRef(0);
   const maxVisible = useRef(0);
+  const viewH = useRef(0);
   const [newBelow, setNewBelow] = useState(false);
   const keeper = useMemo<Keeper>(() => ({
     heights: new Map(), pending: new Map(), offset, maxVisible,
@@ -288,8 +290,13 @@ export const Transcript = forwardRef<TranscriptHandle, {
     jumpTo: (entryId: string) => {
       const index = data.findIndex((it) => it.kind === "msg" && it.m.entryId === entryId);
       if (index < 0) return false;
-      // viewPosition 1 puts the row at the visual top of the inverted list.
-      listRef.current?.scrollToIndex({ index, viewPosition: 1, animated: true });
+      // Put the row's top at the top of the view. Distance of that edge from the bottom of the content is
+      // the padding plus the heights of every newer row and this one.
+      let dist = LIST_PAD;
+      let known = true;
+      for (let i = 0; i <= index; i++) { const h = keeper.heights.get(data[i]!.key); if (h === undefined) { known = false; break; } dist += h; }
+      if (known && viewH.current) listRef.current?.scrollToOffset({ offset: Math.max(0, dist - viewH.current + 8), animated: true });
+      else listRef.current?.scrollToIndex({ index, viewPosition: 1, animated: true });
       return true;
     },
   }), [data]);
@@ -303,7 +310,8 @@ export const Transcript = forwardRef<TranscriptHandle, {
         data={data}
         keyExtractor={(i) => i.key}
         renderItem={({ item, index }) => <Anchored id={item.key} index={index} keeper={keeper}><Row item={item} ctx={ctx} /></Anchored>}
-        contentContainerStyle={{ paddingHorizontal: MARGIN, paddingVertical: 10 }}
+        contentContainerStyle={{ paddingHorizontal: MARGIN, paddingVertical: LIST_PAD }}
+        onLayout={(e) => { viewH.current = e.nativeEvent.layout.height; }}
         onScroll={onScroll}
         scrollEventThrottle={16}
         onViewableItemsChanged={onViewable}
