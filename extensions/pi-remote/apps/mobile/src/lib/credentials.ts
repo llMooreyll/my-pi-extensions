@@ -33,8 +33,8 @@ export async function rememberTrust(cwd: string, trust: Trust): Promise<void> {
 }
 export async function clearTrust(): Promise<void> { await kv.del(TRUST_KEY); }
 
-export interface AppPrefs { keepAlive: boolean; notifyChildDone: boolean }
-export const DEFAULT_PREFS: AppPrefs = { keepAlive: true, notifyChildDone: false };
+export interface AppPrefs { keepAlive: boolean; notifyChildDone: boolean; /** Download offered files up to this size by itself; 0 = never. */ autoDownloadMB: number }
+export const DEFAULT_PREFS: AppPrefs = { keepAlive: true, notifyChildDone: false, autoDownloadMB: 0 };
 export async function loadPrefs(): Promise<AppPrefs> {
   try { return { ...DEFAULT_PREFS, ...JSON.parse((await kv.get(PREFS_KEY)) ?? "{}") }; } catch { return DEFAULT_PREFS; }
 }

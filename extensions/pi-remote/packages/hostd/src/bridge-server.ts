@@ -8,6 +8,8 @@ import { NdjsonDecoder } from "./ndjson.ts";
 import { BRIDGE_SOCKET, RUNTIME_DIR } from "./paths.ts";
 import { BridgeConn, registry, withActivity } from "./registry.ts";
 import { notifySpawnToken } from "./spawner.ts";
+import { toRemoteError } from "./errors.ts";
+import { offerFiles } from "./transfers.ts";
 
 function relink(): void {
   for (const info of recompute()) hub.broadcastProc("changed", info);
@@ -65,6 +67,15 @@ export function startBridgeServer(): Server {
           return;
         }
         case "res": conn.settle(f.id, f.ok, f.ok ? f.data : f.error); return;
+        case "call": {
+          const id = f.id;
+          if (f.op !== "offer_files") { conn.send({ t: "ret", id, ok: false, error: { code: "bad_request", message: `unknown call ${String(f.op)}` } }); return; }
+          offerFiles(f.args).then(
+            (transfers) => conn.send({ t: "ret", id, ok: true, data: { transfers } }),
+            (e) => conn.send({ t: "ret", id, ok: false, error: toRemoteError(e) }),
+          );
+          return;
+        }
         case "bye": onGone(); socket.end(); return;
       }
     };

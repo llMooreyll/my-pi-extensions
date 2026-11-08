@@ -1,4 +1,5 @@
 import type { CommandInfo, ForkPoint, ModelSummary, ProcessInfo, ProjectItem, SessionListItem, TreeNodeWire, WireMessage } from "./model.ts";
+import type { TransferInfo } from "./files.ts";
 import type { RpivAnswer, RpivPrompt, UiRequest, UiResponse } from "./ui.ts";
 
 export type Trust = "approve" | "deny";
@@ -35,6 +36,13 @@ export interface OpMap {
   /** 列出电脑上某个目录下的子目录，供新建会话时补全路径；path 可用 ~ */
   list_dirs: [{ path: string }, { path: string; home: string; dirs: string[] }];
   read_session: [{ sessionFile: string; beforeEntryId?: string; limit?: number }, { cwd: string; name?: string; messages: WireMessage[]; hasMoreBefore: boolean }];
+  // ---- file transfer (7.7) ----
+  list_transfers: [{}, { transfers: TransferInfo[]; inboxDir: string }];
+  upload_begin: [{ name: string; size: number; mime?: string; processId?: string }, { transfer: TransferInfo }];
+  /** to_phone: mark cancelled and delete the zip in outbox; to_computer: delete the .part */
+  transfer_cancel: [{ id: string }, {}];
+  /** Only drop the record; a file already saved in the inbox stays. */
+  transfer_forget: [{ id: string }, {}];
   // ---- 转发给 bridge ----
   prompt: [{ processId: string; text: string; images?: ImageInput[]; deliverAs?: DeliverAs }, { accepted: true }];
   abort: [{ processId: string }, {}];
@@ -65,6 +73,7 @@ export type OpResult<K extends OpName> = OpMap[K][1];
 export const HOSTD_LOCAL_OPS: readonly OpName[] = [
   "list_processes", "list_sessions", "list_projects", "open_session", "new_process",
   "subscribe", "unsubscribe", "get_settings", "set_setting", "read_session", "list_dirs",
+  "list_transfers", "upload_begin", "transfer_cancel", "transfer_forget",
 ];
 
 /** hostd → bridge 请求超时（毫秒）。未列出的用 DEFAULT */

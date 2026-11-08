@@ -5,12 +5,13 @@ import { listProjects, listSessions } from "./sessions-index.ts";
 import { listDirs } from "./dirs.ts";
 import { getSettings, setSetting } from "./settings-service.ts";
 import { openSession, spawnPi } from "./spawner.ts";
+import { cancelTransfer, forgetTransfer, inboxDir, listTransfers, uploadBegin } from "./transfers.ts";
 
 type Args = Record<string, unknown>;
 type Result = { handled: true; result: unknown } | { handled: false };
 
 /** Ops that hostd answers itself (subscribe/unsubscribe live in client-hub). */
-export async function runLocalOp(op: string, a: Args): Promise<Result> {
+export async function runLocalOp(op: string, a: Args, deviceId?: string): Promise<Result> {
   const done = (result: unknown): Result => ({ handled: true, result });
   switch (op) {
     case "list_processes": return done({ processes: registry.list() });
@@ -22,6 +23,10 @@ export async function runLocalOp(op: string, a: Args): Promise<Result> {
     case "set_setting": return done(await setSetting(a.key as string, a.value));
     case "list_dirs": return done(await listDirs(String(a.path)));
     case "read_session": return done(readSession(a.sessionFile as string, a.beforeEntryId as string | undefined, (a.limit as number | undefined) ?? 200));
+    case "list_transfers": return done({ transfers: listTransfers(), inboxDir: inboxDir() });
+    case "upload_begin": return done({ transfer: uploadBegin(a as { name: string; size: number; mime?: string; processId?: string }, deviceId) });
+    case "transfer_cancel": cancelTransfer(a.id as string, deviceId); return done({});
+    case "transfer_forget": forgetTransfer(a.id as string); return done({});
     default: return { handled: false };
   }
 }

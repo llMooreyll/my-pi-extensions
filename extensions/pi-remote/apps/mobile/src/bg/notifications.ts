@@ -1,14 +1,17 @@
 import notifee, { EventType, type Event } from "react-native-notify-kit";
 import { router } from "expo-router";
 import type { ProcessInfo } from "@pi-remote/protocol";
-import { loadPrefs, type AppPrefs } from "../lib/credentials";
+import { DEFAULT_PREFS, loadPrefs, type AppPrefs } from "../lib/credentials";
 import { testLog } from "../lib/test-hooks";
 import { useStore } from "../state/store";
 import { EVENTS_CHANNEL, ensureChannels, isForegroundRunning, startForeground, stopForeground } from "./foreground";
 
 const last = new Map<string, ProcessInfo>();
 const lastSent = new Map<string, number>();
-let prefs: AppPrefs = { keepAlive: true, notifyChildDone: false };
+let prefs: AppPrefs = DEFAULT_PREFS;
+/** Extra status for the foreground notification (file transfers); set by state/transfers via setForegroundExtra. */
+let fgExtra: () => string | undefined = () => undefined;
+export function setForegroundExtra(fn: () => string | undefined): void { fgExtra = fn; }
 
 export async function reloadPrefs(): Promise<AppPrefs> { prefs = await loadPrefs(); syncForeground(); return prefs; }
 
@@ -60,12 +63,29 @@ export function syncForeground(): void {
   const waiting = procs.filter((p) => p.status === "waiting_ui").length;
   const want = prefs.keepAlive && st.conn !== "no_credentials" && !!st.host;
   if (!want) { if (isForegroundRunning()) void stopForeground(); return; }
-  const body = st.conn === "ready" ? `${running} running · ${waiting} waiting for input` : st.conn === "backoff" ? "Reconnecting…" : "Connecting…";
+  const extra = st.conn === "ready" ? fgExtra() : undefined;
+  const body = extra ?? (st.conn === "ready" ? `${running} running · ${waiting} waiting for input` : st.conn === "backoff" ? "Reconnecting…" : "Connecting…");
   void startForeground(body).catch(() => {});
+}
+
+/** File transfer notices; tapping opens the Files page. */
+export async function notifyFiles(title: string, body: string): Promise<void> {
+  const key = `file:${title}:${body}`;
+  const now = Date.now();
+  if (now - (lastSent.get(key) ?? 0) < 10_000) return;
+  lastSent.set(key, now);
+  await ensureChannels();
+  testLog("notify", { title, body, files: true });
+  await notifee.displayNotification({
+    title, body: body || " ",
+    data: { files: "1" },
+    android: { channelId: EVENTS_CHANNEL, pressAction: { id: "default", launchActivity: "default" }, smallIcon: "ic_launcher" },
+  });
 }
 
 function onEvent({ type, detail }: Event): void {
   if (type !== EventType.PRESS) return;
+  if (detail.notification?.data?.files === "1") { try { router.push("/files"); } catch { /* router not ready */ } return; }
   const pid = detail.notification?.data?.processId;
   if (typeof pid === "string" && pid) {
     try { router.push({ pathname: "/session/[processId]", params: { processId: pid } }); } catch { /* router not ready */ }

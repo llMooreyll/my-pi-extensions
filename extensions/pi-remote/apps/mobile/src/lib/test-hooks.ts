@@ -12,6 +12,10 @@ export const TEST_HOOKS = process.env.EXPO_PUBLIC_TEST_HOOKS === "1";
 const setters = new Map<string, (text: string) => void>();
 const actions = new Map<string, () => void>();
 let dumpProvider: (() => unknown) | undefined;
+const commands = new Map<string, (params: URLSearchParams) => void>();
+
+/** Extra piremote://test/<name> commands registered by feature modules (test builds only). */
+export function registerTestCommand(name: string, fn: (params: URLSearchParams) => void): void { if (TEST_HOOKS) commands.set(name, fn); }
 
 export function setDumpProvider(fn: () => unknown): void { dumpProvider = fn; }
 
@@ -63,6 +67,10 @@ export function handleTestUrl(url: string): boolean {
     testLog("labels", { labels: registeredLabels() });
   } else if (m[1] === "dump") {
     testLog("dump", { state: dumpProvider?.() ?? null });
+  } else {
+    const fn = commands.get(m[1]!);
+    testLog(m[1]!, { ok: !!fn });
+    if (fn) { try { fn(params); } catch (e) { testLog(m[1]!, { error: String(e) }); } }
   }
   return true;
 }

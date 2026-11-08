@@ -13,6 +13,8 @@ export interface AppState {
   lastError?: string;
   hostName?: string;
   hostVersion?: string;
+  /** Capabilities announced by hostd in auth_ok (e.g. "files"). */
+  features?: string[];
   host?: SavedHost;
   procs: Record<string, ProcessInfo>;
   views: Record<string, ProcessView>;
@@ -36,7 +38,7 @@ export const store = {
   setConn(conn: ConnState) { set({ conn }); },
   setVia(via: "direct" | "relay" | undefined) { set({ via }); },
   setLastError(lastError: string | undefined) { set({ lastError }); },
-  setHostInfo(hostName: string, hostVersion: string) { set({ hostName, hostVersion }); },
+  setHostInfo(hostName: string, hostVersion: string, features: string[] = []) { set({ hostName, hostVersion, features }); },
   setHost(host: SavedHost | undefined) { set({ host }); },
   setActive(activeProcessId: string | undefined) { set({ activeProcessId }); },
   setAppActive(appActive: boolean) { set({ appActive }); },

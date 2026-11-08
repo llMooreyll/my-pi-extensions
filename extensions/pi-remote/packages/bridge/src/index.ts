@@ -6,11 +6,13 @@ import { emit, ensureConnected } from "./host-conn.ts";
 import { logError, logInfo } from "./log.ts";
 import { registerRemoteOpCommand } from "./remote-op-cmd.ts";
 import { registerRpiv } from "./rpiv.ts";
+import { registerSendTool } from "./send-tool.ts";
 import { buildInfo } from "./snapshot.ts";
 import { g } from "./state.ts";
 import { clearSessionUiState, patchUi } from "./ui-mirror.ts";
 
 const RUNNER_HOOKED = Symbol.for("pi-remote.runnerHooked");
+const toolRegistered = new WeakSet<object>();
 
 /**
  * Patch ctx.ui as soon as the runner receives its UI context, i.e. before any extension's session_start runs.
@@ -48,6 +50,8 @@ export default function piRemoteBridge(pi: ExtensionAPI): void {
       s.runningTools.clear();
       s.lastStatus = undefined;
       if (s.compat === "ok") patchUi(ctx.ui);
+      // Once per extension instance: /reload and session replacement load the extension again with a new `pi`.
+      if (!toolRegistered.has(pi)) { toolRegistered.add(pi); registerSendTool(pi); }
       rebuildChildren();
       ensureConnected();
       if (first) logInfo(`bridge enabled, pi ${VERSION}, compat ${s.compat}`);

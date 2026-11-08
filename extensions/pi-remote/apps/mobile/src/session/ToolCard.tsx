@@ -7,6 +7,7 @@ import { textOf } from "../lib/format";
 import { openSessionFile } from "../lib/nav";
 import { useTestAction } from "../lib/test-hooks";
 import { FoldBar, useAnchor } from "./anchor";
+import { FileRow } from "./FileRow";
 import { PatchView } from "./PatchView";
 import { toolSummary } from "./toolSummary";
 
@@ -24,6 +25,9 @@ function ToolCardInner(props: { id: string; name: string; args: unknown; result?
   const lines = text.split("\n");
   const patch = props.name === "edit" && typeof r?.details?.patch === "string" ? (r.details.patch as string) : undefined;
   const childFile = (props.name === "subagent" || props.name === "subagent_resume") ? ((r?.details?.sessionFile ?? r?.details?.sessionPath) as string | undefined) : undefined;
+  const sent = props.name === "send_to_phone" && !isError && Array.isArray(r?.details?.transfers)
+    ? (r!.details!.transfers as { id: string; name: string; size: number }[]).filter((x) => x && typeof x.id === "string")
+    : undefined;
   const color = isError ? p.danger : live ? p.blue : p.soft;
   const anchor = useAnchor();
   const toggle = () => { anchor("top"); setOpen((o) => !o); };
@@ -45,6 +49,12 @@ function ToolCardInner(props: { id: string; name: string; args: unknown; result?
           {!patch && lines.length > MAX_LINES && !all ? <Button a11y={`tool-showall-${props.id}`} label={`show all ${lines.length} lines`} onPress={() => { anchor("top"); setAll(true); }} /> : null}
           {r.truncated ? <Txt v="label" soft>truncated for the phone</Txt> : null}
           <FoldBar a11y={`tool-fold-${props.id}`} onFold={() => { setOpen(false); setAll(false); }} />
+        </View>
+      ) : null}
+      {sent?.length ? (
+        // Files offered to the phone stay visible: they are something to act on, not a log to fold away.
+        <View accessibilityLabel={`tool-files-${props.id}`} style={{ marginLeft: 24, marginTop: 4, borderLeftWidth: 2, borderLeftColor: p.pink, paddingLeft: 10 }}>
+          {sent.map((f) => <FileRow key={f.id} id={f.id} known={{ name: f.name, size: f.size }} />)}
         </View>
       ) : null}
       {childFile ? <View style={{ marginLeft: 24, marginTop: 4 }}><Button a11y={`tool-open-child-${props.id}`} label="open the subagent →" color={p.blue} onPress={() => openSessionFile(childFile)} /></View> : null}

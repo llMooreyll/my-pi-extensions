@@ -2,6 +2,9 @@ import { openClientSecureChannel, type SecureChannel, type Transport } from "@ge
 
 export interface SecureConn {
   send(text: string): void;
+  /** Resolves once the encrypted frame is handed to the socket (file lanes pace on it). */
+  sendBinary(data: Uint8Array): Promise<void>;
+  onBinary: ((data: Uint8Array) => void) | null;
   close(): void;
   onText: ((t: string) => void) | null;
   onClose: ((code: number, reason: string) => void) | null;
@@ -22,7 +25,7 @@ export function openSecure(url: string, hostKey: string, timeoutMs: number): Pro
       close: (c, r) => ws.close(c, r),
       onmessage: null, onclose: null, onerror: null,
     };
-    const conn: SecureConn = { send: () => {}, close: () => { try { ws.close(); } catch { /* ignore */ } }, onText: null, onClose: null };
+    const conn: SecureConn = { send: () => {}, sendBinary: async () => {}, close: () => { try { ws.close(); } catch { /* ignore */ } }, onText: null, onBinary: null, onClose: null };
     let settled = false;
     let closedNotified = false;
     const fail = (e: unknown) => {
@@ -48,10 +51,19 @@ export function openSecure(url: string, hostKey: string, timeoutMs: number): Pro
           minimumMode: "protected",
           events: {
             onopen: () => { if (settled) return; settled = true; clearTimeout(timer); resolve(conn); },
-            onmessage: (d) => conn.onText?.(typeof d === "string" ? d : new TextDecoder().decode(d)),
+            onmessage: (d) => {
+              if (typeof d === "string") conn.onText?.(d);
+              else conn.onBinary?.(d instanceof Uint8Array ? d : new Uint8Array(d as ArrayBuffer));
+            },
           },
         });
         conn.send = (t) => { chain = chain.then(() => ch.send(t)).catch(() => {}); };
+        conn.sendBinary = (b) => {
+          const buf = (b.byteOffset === 0 && b.byteLength === b.buffer.byteLength ? b.buffer : b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)) as ArrayBuffer;
+          const p = chain.then(() => ch.send(buf));
+          chain = p.catch(() => {});
+          return p;
+        };
         conn.close = () => { try { ch.close(1000, "bye"); } catch { ws.close(); } };
       } catch (e) { fail(e); }
     };

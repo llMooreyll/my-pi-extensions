@@ -7,3 +7,4 @@ export * from "./ops.ts";
 export * from "./frames.ts";
 export * from "./relay.ts";
 export * from "./settings.ts";
+export * from "./files.ts";

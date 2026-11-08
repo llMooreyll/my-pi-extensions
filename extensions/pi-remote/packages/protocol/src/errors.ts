@@ -15,6 +15,11 @@ export type ErrorCode =
   | "timeout"
   | "incompatible"         // 协议版本不匹配
   | "unsupported"
+  | "no_device"            // no phone is paired with this computer
+  | "file_denied"          // path on the deny list or not a regular file / directory
+  | "file_too_large"
+  | "no_space"
+  | "missing"              // file does not exist
   | "internal";
 
 export interface RemoteError { code: ErrorCode; message: string }

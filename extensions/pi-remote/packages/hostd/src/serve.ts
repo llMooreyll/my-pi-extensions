@@ -15,6 +15,7 @@ import { STATE_DIR, STATUS_FILE } from "./paths.ts";
 import { registry } from "./registry.ts";
 import { startRelayClient, type RelayClient } from "./relay-client.ts";
 import { runtime } from "./runtime.ts";
+import { loadTransfers, onTransferChange, startTransferSweeper } from "./transfers.ts";
 
 const SDK_VERSION = "1.5.0";
 
@@ -48,6 +49,9 @@ export async function serve(): Promise<void> {
 
   startBridgeServer();
   hub.start();
+  onTransferChange((info) => hub.broadcastTransfer(info));
+  try { loadTransfers(); } catch (e) { log.warn("could not load transfers", e); }
+  startTransferSweeper();
 
   let relay: RelayClient | undefined;
   let direct: DirectServer | undefined;

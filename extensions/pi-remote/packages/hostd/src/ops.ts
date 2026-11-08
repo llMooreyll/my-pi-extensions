@@ -19,6 +19,10 @@ export const VALIDATORS: Record<OpName, (a: Args) => void> = {
   set_setting: (a) => { str(a, "key"); if (!("value" in a)) throw err("bad_request", "value is required"); },
   list_dirs: (a) => { anyStr(a, "path"); },
   read_session: (a) => { str(a, "sessionFile"); optStr(a, "beforeEntryId"); optInt(a, "limit", 1, 1000); },
+  list_transfers: () => {},
+  upload_begin: (a) => { str(a, "name"); optInt(a, "size", 0, Number.MAX_SAFE_INTEGER); if (typeof a.size !== "number") throw err("bad_request", "size is required"); optStr(a, "mime"); optStr(a, "processId"); },
+  transfer_cancel: (a) => { str(a, "id"); },
+  transfer_forget: (a) => { str(a, "id"); },
   prompt: (a) => {
     pid(a); anyStr(a, "text"); optOneOf(a, "deliverAs", ["steer", "followUp"]);
     const imgs = a.images;
@@ -61,6 +65,7 @@ export const SIDE_EFFECT_OPS: ReadonlySet<string> = new Set([
   "prompt", "abort", "ui_respond", "rpiv_answer", "set_model", "set_thinking", "compact", "navigate_tree", "fork",
   "new_session", "switch_session", "set_name", "reload", "shutdown", "open_session", "new_process", "set_setting",
 ]);
+// upload_begin and transfer_cancel are audited by transfers.ts with file names.
 
 export function isOpName(op: string): op is OpName {
   return Object.prototype.hasOwnProperty.call(VALIDATORS, op);

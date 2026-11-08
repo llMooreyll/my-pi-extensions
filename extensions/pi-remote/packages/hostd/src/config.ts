@@ -7,6 +7,7 @@ import { CONFIG_FILE } from "./paths.ts";
 
 export interface RelayConf { url: string; secret: string }
 export interface DirectConf { enabled: boolean; listenHost: string; listenPort: number; advertise: string }
+export interface FilesConf { inboxDir: string; maxFileBytes: number; offerTtlHours: number; denyPaths: string[] }
 export interface Config {
   hostName: string;
   relays: RelayConf[];
@@ -16,7 +17,11 @@ export interface Config {
   spawnShell: string;
   snapshotMessages: number;
   ringSize: number;
+  files: FilesConf;
 }
+
+/** Folders are packed without zip64, so one transfer stays below 4 GiB. */
+export const MAX_FILE_BYTES_CAP = 4 * 1024 * 1024 * 1024 - 64 * 1024 * 1024;
 
 export function defaultConfig(): Config {
   return {
@@ -28,6 +33,7 @@ export function defaultConfig(): Config {
     spawnShell: "zsh",
     snapshotMessages: 200,
     ringSize: 5000,
+    files: { inboxDir: "~/Downloads/pi-remote", maxFileBytes: 2 * 1024 * 1024 * 1024, offerTtlHours: 168, denyPaths: [] },
   };
 }
 
@@ -71,6 +77,18 @@ export function normalizeConfig(raw: unknown): Config {
     spawnShell: str(r.spawnShell, d.spawnShell),
     snapshotMessages: num(r.snapshotMessages, d.snapshotMessages),
     ringSize: num(r.ringSize, d.ringSize),
+    files: normalizeFiles(r.files, d.files),
+  };
+}
+
+function normalizeFiles(raw: unknown, d: FilesConf): FilesConf {
+  const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const max = Math.min(Math.max(num(f.maxFileBytes, d.maxFileBytes), 1), MAX_FILE_BYTES_CAP);
+  return {
+    inboxDir: str(f.inboxDir, d.inboxDir) || d.inboxDir,
+    maxFileBytes: Math.floor(max),
+    offerTtlHours: Math.max(num(f.offerTtlHours, d.offerTtlHours), 1),
+    denyPaths: Array.isArray(f.denyPaths) ? f.denyPaths.filter((x): x is string => typeof x === "string") : [],
   };
 }
 

@@ -1,7 +1,8 @@
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BRIDGE_VERSION, PROTOCOL_VERSION, type BridgeEvent, type BridgeToHost, type HostToBridge } from "../../protocol/src/index.ts";
+import { randomUUID } from "node:crypto";
+import { BRIDGE_VERSION, PROTOCOL_VERSION, type BridgeEvent, type BridgeToHost, type HostToBridge, type OfferFilesArgs, type RemoteError, type TransferInfo } from "../../protocol/src/index.ts";
 import { logError, logInfo } from "./log.ts";
 import { encodeNdjson, NdjsonDecoder } from "./ndjson.ts";
 import { handleRequest } from "./ops.ts";
@@ -21,6 +22,23 @@ export class HostConn {
   private retry?: ReturnType<typeof setTimeout>;
   private helloSent = false;
   private spawnTokenUsed = false;
+  private calls = new Map<string, { resolve: (v: { transfers: TransferInfo[] }) => void; reject: (e: RemoteError) => void; timer: ReturnType<typeof setTimeout> }>();
+
+  /** Bridge-initiated request to hostd (7.7.3). Rejects at once when hostd is not connected. */
+  call(op: "offer_files", args: OfferFilesArgs, timeoutMs: number): Promise<{ transfers: TransferInfo[] }> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket || !this.welcomed) { reject({ code: "unsupported", message: "pi-remote is not running on this computer (pi-hostd is not connected)" } satisfies RemoteError); return; }
+      const id = randomUUID();
+      const timer = setTimeout(() => { this.calls.delete(id); reject({ code: "timeout", message: `${op} timed out` } satisfies RemoteError); }, timeoutMs);
+      this.calls.set(id, { resolve, reject, timer });
+      this.write({ t: "call", id, op, args });
+    });
+  }
+
+  private failCalls(): void {
+    for (const c of this.calls.values()) { clearTimeout(c.timer); c.reject({ code: "bridge_gone", message: "Lost the connection to pi-hostd" }); }
+    this.calls.clear();
+  }
 
   connect(): void {
     if (this.closed || this.socket) return;
@@ -33,7 +51,7 @@ export class HostConn {
     sock.on("data", (d) => decoder.push(d));
     sock.on("error", () => { /* close follows */ });
     sock.on("close", () => {
-      if (this.socket === sock) { this.socket = undefined; this.welcomed = false; }
+      if (this.socket === sock) { this.socket = undefined; this.welcomed = false; this.failCalls(); }
       this.scheduleRetry();
     });
     sock.unref();
@@ -63,6 +81,14 @@ export class HostConn {
       const q = this.queue;
       this.queue = [];
       for (const ev of q) this.write(ev);
+      return;
+    }
+    if (f.t === "ret") {
+      const c = this.calls.get(f.id);
+      if (!c) return;
+      this.calls.delete(f.id);
+      clearTimeout(c.timer);
+      if (f.ok) c.resolve(f.data); else c.reject(f.error);
       return;
     }
     if (f.t === "req") {

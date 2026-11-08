@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
-  CLOSE, HOSTD_VERSION, OP_TIMEOUT_MS, PROTOCOL_VERSION,
-  type BridgeEvent, type ClientToHost, type HostToClient, type OpName, type ProcessInfo, type Snapshot,
+  CLOSE, FEATURE_FILES, HOSTD_VERSION, MAX_LANES_PER_DEVICE, OP_TIMEOUT_MS, PROTOCOL_VERSION,
+  type BridgeEvent, type ClientToHost, type HostToClient, type LaneOpen, type OpName, type ProcessInfo, type Snapshot, type TransferInfo,
 } from "../../protocol/src/index.ts";
+import { openLane, type Lane } from "./file-lane.ts";
 import { audit } from "./audit.ts";
 import { consumePairing, loadDevices, touchDevice, verifyDevice } from "./devices.ts";
 import { err, toRemoteError } from "./errors.ts";
@@ -24,6 +25,10 @@ export interface Client {
   lastFrameAt: number;
   subs: Map<string, Sub>;
   authTimer?: ReturnType<typeof setTimeout>;
+  /** File lane (7.7.4): authenticated with purpose "lane"; gets no broadcasts and handles no req. */
+  purpose: "main" | "lane";
+  lane?: Lane;
+  laneOpening?: boolean;
 }
 
 const MAX_UNAUTHED = 20;
@@ -44,10 +49,21 @@ class ClientHub {
 
   accept(sock: ClientSocket): void {
     if (this.unauthedCount() >= MAX_UNAUTHED) { sock.close(CLOSE.RATE_LIMITED, "too many pending connections"); return; }
-    const c: Client = { id: randomUUID(), sock, authed: false, closed: false, lastFrameAt: Date.now(), subs: new Map() };
+    const c: Client = { id: randomUUID(), sock, authed: false, closed: false, lastFrameAt: Date.now(), subs: new Map(), purpose: "main" };
     this.clients.add(c);
     c.authTimer = setTimeout(() => { if (!c.authed) this.close(c, CLOSE.AUTH_TIMEOUT, "auth timeout"); }, 10_000);
-    sock.onClose = () => { c.closed = true; clearTimeout(c.authTimer); this.clients.delete(c); log.info("client closed", sock.remote, c.deviceId ?? "-"); };
+    sock.onClose = () => {
+      c.closed = true;
+      clearTimeout(c.authTimer);
+      this.clients.delete(c);
+      try { c.lane?.onClose(); } catch (e) { log.warn("lane close", e); }
+      log.info(c.purpose === "lane" ? "lane closed" : "client closed", sock.remote, c.deviceId ?? "-");
+    };
+    sock.onBinary = (data) => {
+      c.lastFrameAt = Date.now();
+      if (!c.lane) { this.close(c, 1003, "unexpected binary frame"); return; }
+      try { c.lane.onBinary(data); } catch (e) { log.warn("lane data", e); }
+    };
     sock.onText = (text) => {
       c.lastFrameAt = Date.now();
       let f: ClientToHost;
@@ -81,7 +97,26 @@ class ClientHub {
       this.close(c, CLOSE.UNAUTHORIZED, "not authenticated");
       return;
     }
+    if (c.purpose === "lane") { await this.onLaneFrame(c, f); return; }
     if (f.t === "req") { await this.onReq(c, f.id, f.op, f.args ?? {}); return; }
+  }
+
+  private async onLaneFrame(c: Client, f: ClientToHost): Promise<void> {
+    if (c.lane) { if (f.t === "ack" || f.t === "cancel") c.lane.onFrame(f); return; }
+    if (f.t !== "lane" || c.laneOpening) { this.close(c, 1008, "expected lane"); return; }
+    clearTimeout(c.authTimer);
+    const busy = [...this.clients].filter((o) => o !== c && o.purpose === "lane" && o.deviceId === c.deviceId && (o.lane || o.laneOpening)).length;
+    if (busy >= MAX_LANES_PER_DEVICE) {
+      this.send(c, { t: "lane_err", code: "busy", message: "Too many transfers at once" });
+      this.close(c, 1000, "busy");
+      return;
+    }
+    c.laneOpening = true;
+    try {
+      const lane = await openLane(c.sock, f as LaneOpen, c.deviceId);
+      if (c.closed) { lane?.onClose(); return; }
+      c.lane = lane;
+    } finally { c.laneOpening = false; }
   }
 
   private onAuth(c: Client, f: Extract<ClientToHost, { t: "auth" }>): void {
@@ -94,8 +129,15 @@ class ClientHub {
       return;
     }
     this.markAuthed(c, d.id);
+    if (f.purpose === "lane") {
+      c.purpose = "lane";
+      // The lane must name its file soon; reuse the auth timer for that.
+      c.authTimer = setTimeout(() => { if (!c.lane && !c.laneOpening) this.close(c, CLOSE.AUTH_TIMEOUT, "no lane"); }, 10_000);
+      this.send(c, { t: "auth_ok", hostVersion: HOSTD_VERSION, hostName: runtime.config.hostName, features: [FEATURE_FILES] });
+      return;
+    }
     log.info("client authed", c.sock.remote, d.id, d.name);
-    this.send(c, { t: "auth_ok", hostVersion: HOSTD_VERSION, hostName: runtime.config.hostName });
+    this.send(c, { t: "auth_ok", hostVersion: HOSTD_VERSION, hostName: runtime.config.hostName, features: [FEATURE_FILES] });
     for (const info of registry.list()) this.send(c, { t: "proc", kind: "up", info });
   }
 
@@ -137,7 +179,7 @@ class ClientHub {
         return;
       }
       if (op === "unsubscribe") { c.subs.delete(args.processId as string); reply({}); return; }
-      const local = await runLocalOp(op, args);
+      const local = await runLocalOp(op, args, c.deviceId);
       if (local.handled) { reply(local.result); return; }
       const processId = args.processId as string;
       if (!registry.get(processId)) throw err("not_found", `process ${processId} not found`);
@@ -198,9 +240,13 @@ class ClientHub {
     }
   }
 
+  broadcastTransfer(info: TransferInfo): void {
+    for (const c of this.clients) if (c.authed && c.purpose === "main") this.send(c, { t: "transfer", info });
+  }
+
   broadcastProc(kind: "up" | "down" | "changed", info: ProcessInfo): void {
     for (const c of this.clients) {
-      if (!c.authed) continue;
+      if (!c.authed || c.purpose !== "main") continue;
       this.send(c, { t: "proc", kind, info });
       if (kind === "down") c.subs.delete(info.processId);
     }

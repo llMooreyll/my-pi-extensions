@@ -23,6 +23,7 @@ export function toolSummary(name: string, args: unknown): string {
     case "team_ask": return "Ask the lead";
     case "caller_ping": return "Ask parent agent for help";
     case "subagent_done": return "Subagent finished";
+    case "send_to_phone": return `Send to phone: ${Array.isArray(a.paths) ? (a.paths as unknown[]).map((x) => s(x)).join(", ") : s(a.paths)}`;
     default: {
       let j = "";
       try { j = JSON.stringify(args); } catch { j = ""; }

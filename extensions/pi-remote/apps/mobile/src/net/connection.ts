@@ -1,5 +1,5 @@
 import { AppState } from "react-native";
-import { PROTOCOL_VERSION, type BridgeEvent, type HostToClient, type OpArgs, type OpName, type OpResult, type RemoteError } from "@pi-remote/protocol";
+import { PROTOCOL_VERSION, type BridgeEvent, type HostToClient, type OpArgs, type OpName, type OpResult, type RemoteError, type TransferInfo } from "@pi-remote/protocol";
 import { loadHosts } from "../lib/credentials";
 import { testLog } from "../lib/test-hooks";
 import { store, useStore } from "../state/store";
@@ -22,6 +22,7 @@ class Connection {
   private started = false;
   private procListeners = new Set<Listener>();
   private readyListeners = new Set<() => void>();
+  private transferListeners = new Set<(t: TransferInfo) => void>();
 
   start(): void {
     if (this.started) return;
@@ -35,6 +36,7 @@ class Connection {
 
   onProcFrame(l: Listener): () => void { this.procListeners.add(l); return () => this.procListeners.delete(l); }
   onReady(l: () => void): () => void { this.readyListeners.add(l); return () => this.readyListeners.delete(l); }
+  onTransfer(l: (t: TransferInfo) => void): () => void { this.transferListeners.add(l); return () => this.transferListeners.delete(l); }
 
   private async open(): Promise<void> {
     const gen = ++this.generation;
@@ -79,7 +81,7 @@ class Connection {
       case "auth_ok":
         this.backoffMs = 1000;
         store.clearProcs();
-        store.setHostInfo(f.hostName, f.hostVersion);
+        store.setHostInfo(f.hostName, f.hostVersion, f.features ?? []);
         store.setLastError(undefined);
         store.setConn("ready");
         testLog("conn", { state: "ready", via: useStore.getState().via });
@@ -109,6 +111,7 @@ class Connection {
         store.onProc(f.kind, f.info);
         for (const l of this.procListeners) l(f);
         break;
+      case "transfer": for (const l of this.transferListeners) l(f.info); break;
       case "pong": break;
       default: break;
     }

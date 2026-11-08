@@ -2,9 +2,12 @@ import { openDaemonSecureChannel, SecureChannelRejectedError, type KeyPair, type
 import type { RawData, WebSocket } from "ws";
 import { log } from "./log.ts";
 
-/** Application-level socket after the Noise handshake. All frames are JSON text. */
+/** Application-level socket after the Noise handshake. Control frames are JSON text; file lanes also carry binary frames. */
 export interface ClientSocket {
   send(text: string): void;
+  /** Resolves once the frame is handed to the transport; file lanes use it to pace reads. */
+  sendBinary(data: Uint8Array): Promise<void>;
+  onBinary: ((data: Uint8Array) => void) | null;
   close(code: number, reason: string): void;
   onText: ((text: string) => void) | null;
   onClose: (() => void) | null;
@@ -39,7 +42,7 @@ export function wsTransport(ws: WebSocket): Transport {
 
 export async function secureServerSocket(ws: WebSocket, keyPair: KeyPair, remote: string): Promise<ClientSocket> {
   const transport = wsTransport(ws);
-  const sock: ClientSocket = { send: () => {}, close: () => {}, onText: null, onClose: null, remote };
+  const sock: ClientSocket = { send: () => {}, sendBinary: async () => {}, close: () => {}, onText: null, onBinary: null, onClose: null, remote };
   let closed = false;
   const fireClose = () => { if (closed) return; closed = true; sock.onClose?.(); };
   ws.on("close", fireClose);
@@ -50,7 +53,10 @@ export async function secureServerSocket(ws: WebSocket, keyPair: KeyPair, remote
       daemonKeyPair: keyPair,
       minimumMode: "protected",
       events: {
-        onmessage: (d) => sock.onText?.(typeof d === "string" ? d : new TextDecoder().decode(d)),
+        onmessage: (d) => {
+          if (typeof d === "string") sock.onText?.(d);
+          else sock.onBinary?.(d instanceof Uint8Array ? d : new Uint8Array(d as ArrayBuffer));
+        },
         onclose: () => fireClose(),
         onerror: (e) => log.warn("channel error", remote, e.message),
       },
@@ -64,6 +70,12 @@ export async function secureServerSocket(ws: WebSocket, keyPair: KeyPair, remote
   clearTimeout(timer);
   let chain: Promise<void> = Promise.resolve();
   sock.send = (text) => { chain = chain.then(() => channel.send(text)).catch((e) => log.warn("send failed", remote, e)); };
+  sock.sendBinary = (data) => {
+    const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+    const p = chain.then(() => channel.send(buf));
+    chain = p.catch((e) => log.warn("send failed", remote, e));
+    return p;
+  };
   sock.close = (code, reason) => {
     // Flush queued sends before closing so final frames (auth_err, pair_err) arrive.
     chain = chain.then(() => { try { channel.close(code, reason); } catch { ws.terminate(); } });
