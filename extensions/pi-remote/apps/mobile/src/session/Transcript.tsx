@@ -175,7 +175,11 @@ const WINDOW = 40;
 
 /** Measures a row and, for a fold asking to keep its bottom edge, scrolls by the change. */
 function Measured({ id, rows, children }: { id: string; rows: RowGeometry; children: ReactNode }) {
-  const request = useCallback((a: Anchor) => { if (a === "bottom") rows.pending.add(id); }, [id, rows]);
+  const request = useCallback((a: Anchor) => {
+    // Opening or folding is the reader's own doing: neither "new output" nor a reason to follow the end.
+    rows.hold();
+    if (a === "bottom") rows.pending.add(id);
+  }, [id, rows]);
   const onLayout = (e: LayoutChangeEvent) => {
     const { y, height } = e.nativeEvent.layout;
     const prev = rows.heights.get(id);
@@ -186,7 +190,13 @@ function Measured({ id, rows, children }: { id: string; rows: RowGeometry; child
   return <AnchorContext.Provider value={request}><View onLayout={onLayout}>{children}</View></AnchorContext.Provider>;
 }
 
-interface RowGeometry { heights: Map<string, number>; tops: Map<string, number>; pending: Set<string>; scrollBy: (d: number) => void }
+interface RowGeometry {
+  heights: Map<string, number>; tops: Map<string, number>; pending: Set<string>;
+  scrollBy: (d: number) => void;
+  /** Ignore the size change the reader is about to cause (see Measured). */
+  hold: () => void;
+  held: { current: boolean };
+}
 
 type Run = { toolName: string; args: unknown; partialText: string };
 
@@ -286,16 +296,28 @@ export const Transcript = forwardRef<TranscriptHandle, {
   const [ready, setReady] = useState(false);
   const [away, setAway] = useState(false);
   const [newBelow, setNewBelow] = useState(false);
-  const rows = useMemo<RowGeometry>(() => ({
-    heights: new Map(), tops: new Map(), pending: new Set(),
-    scrollBy: (d) => { const y = Math.max(0, offset.current + d); offset.current = y; scrollRef.current?.scrollTo({ y, animated: false }); },
-  }), []);
+  const heldTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const rows = useMemo<RowGeometry>(() => {
+    const held = { current: false };
+    return {
+      heights: new Map(), tops: new Map(), pending: new Set(), held,
+      scrollBy: (d) => { const y = Math.max(0, offset.current + d); offset.current = y; scrollRef.current?.scrollTo({ y, animated: false }); },
+      hold: () => {
+        held.current = true;
+        clearTimeout(heldTimer.current);
+        heldTimer.current = setTimeout(() => { held.current = false; }, 400);
+      },
+    };
+  }, []);
 
   const toEnd = (animated: boolean) => scrollRef.current?.scrollToEnd({ animated });
   const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
     offset.current = contentOffset.y;
+    if (rows.held.current) return;
     const gap = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    // While the "latest" scroll animates, the view is on its way to the end: keep following.
+    if (jumping.current) { if (gap > FOLLOW_SLACK) return; jumping.current = false; }
     following.current = gap <= FOLLOW_SLACK;
     setAway(!following.current);
     if (following.current) setNewBelow(false);
@@ -307,10 +329,12 @@ export const Transcript = forwardRef<TranscriptHandle, {
   const onContentSizeChange = (_w: number, h: number) => {
     const grew = h > contentH.current;
     contentH.current = h;
+    if (rows.held.current) return;
     if (following.current) { toEnd(false); if (!ready) requestAnimationFrame(() => setReady(true)); }
     else if (grew && ready) setNewBelow(true);
   };
-  const jump = () => { following.current = true; toEnd(true); setAway(false); setNewBelow(false); };
+  const jumping = useRef(false);
+  const jump = () => { jumping.current = true; following.current = true; toEnd(true); setAway(false); setNewBelow(false); };
 
   useImperativeHandle(ref, () => ({
     jumpTo: (entryId: string) => {
@@ -338,6 +362,7 @@ export const Transcript = forwardRef<TranscriptHandle, {
         onLayout={(e) => { viewH.current = e.nativeEvent.layout.height; if (following.current) toEnd(false); }}
         onContentSizeChange={onContentSizeChange}
         onScroll={onScroll}
+        onScrollBeginDrag={() => { jumping.current = false; }}
         scrollEventThrottle={32}
         keyboardShouldPersistTaps="handled"
         // Keeps the rows on screen still when earlier rows are added above them.
