@@ -132,3 +132,26 @@
     - 每个文件单独开一条加密连接传输，按确认控制流量，可续传。
     - 电脑 → 手机：由 AI 工具 `send_to_phone` 发起。
     - 手机 → 电脑：由 App 的"附件"或"文件"页发起；作为附件时，在消息末尾附上电脑上的路径。
+64. **M9 双向文件传输已实现**（无人值守完成，2026-11-09）。
+    - **电脑端**：`hostd/src/transfers.ts`（登记、禁止列表、过期清理）、`zip-store.ts`（不压缩的 zip，用 `zlib.crc32`）、`file-lane.ts`（文件通道）、`client-hub.ts`（`purpose:"lane"` 连接、每台设备最多 2 条）、`secure-socket.ts`（二进制帧）。bridge 新增 `send-tool.ts`，只在 TUI 模式的 `session_start` 中注册，每个扩展实例注册一次。dev-client 新增 `transfers`、`get`、`put`、`rtt`。
+    - **手机端**：`net/lane.ts`、`state/transfers.ts`（队列、重试 2/5/15 秒、自动下载）、`session/FileRow.tsx`、`app/files.tsx`、Composer 附件（`lib/attach.ts`）、首页 `files` 入口、设置第 04 节。
+    - **验收**：第 1～12 条通过（dev-client 跑第 1～9 条，Waydroid 跑第 10～12 条）。第 10 条中"旧 hostd 时隐藏界面"只做了静态核对：所有入口都经过 `filesSupported()`，它要求 `auth_ok.features` 含 `files`。
+    - **实测速度**：
+      - 经中继约 0.55 MB/s，瓶颈是 VPS 或家庭上行带宽。
+      - 本机 dev-client 直连约 150 MB/s。
+      - Waydroid 直连下载约 3 MB/s、上传约 3 MB/s，受纯 JS 加解密限制。
+      - 传输期间 Waydroid 掉帧比例 28.8%，空闲时 23.5%，处于 Waydroid 自身的噪声范围内。
+    - **窗口由 2 MiB 改为 256 KiB，块由 256 KiB 改为 64 KiB**：在同一条已建连接上测请求延迟，空闲时约 0.09 秒；传输时窗口 512 KiB 为 0.6～1.9 秒，256 KiB 为 0.45～1.5 秒。吞吐量没有变化。剩余的延迟不随窗口减小而下降，判断来自链路本身（限速丢包或上行排队），应用层无法再降。
+    - **中继**：传 200 MB 期间，VPS 上 pi-relay 的内存从 39.6 MB 到最高 44.7 MB；日志只有连接事件。因此 M9d（中继背压）不做。
+    - **与计划不同的两处**：
+      - expo-file-system 58.0.13 支持对 SAF 文件分块写入，"存到文件夹"不再按大小限制，100 MB 实测正常。
+      - 用 `File.preview` 打开文件，不再需要 `expo-intent-launcher`（已卸载）。
+65. **既有 bug：文字草稿从未写入磁盘**。SecureStore 的键只允许 `[A-Za-z0-9._-]`，`draft:<sessionId>` 中的冒号让写入抛错，而错误被吞掉了，所以第四轮的草稿只在内存中有效，App 重启后丢失。`lib/kv.ts` 现在统一把不允许的字符替换为 `_`，已有的合法键不受影响。Waydroid 实测：文字和附件在 App 被强制停止并重新打开后都能恢复。
+66. **常驻通知停在 "Receiving … 99%"**：`startForeground` 内部先 await 再显示通知，并发调用时旧内容可能覆盖新内容。现在所有显示和停止操作排成一个队列，只显示最新内容；传输结束时强制刷新一次。
+67. **Waydroid 测试经验**：
+    - **构建**：测试构建用 `EXPO_PUBLIC_TEST_HOOKS=1 ./gradlew assembleRelease -PreactNativeArchitectures=x86_64`。gradle 不会因为环境变量变化而重新打包 JS，所以切换测试版和正式版前要删除 `app/build/generated/assets/react` 和 `app/build/intermediates/assets/release`。
+    - **安装**：`adb install` 偶尔会卡住，而且超时后设备端的安装仍在继续，完成时会把 App 结束掉。改用 `adb push … /data/local/tmp/pr.apk` 加 `adb shell pm install -r`。
+    - **启动**：`monkey -p` 偶尔返回 -5，改用 `am start -n dev.moorey.piremote/.MainActivity`。
+    - **dump**：logcat 单行约 4 KB，完整的 dump 会被截断；用 `piremote://test/dump?part=<key>` 只输出一部分。App 重启后的第一次深链接可能早于初始化，此时返回 `null`。
+    - **新测试钩子**：`piremote://test/mkfile?name=&size=|text=`，生成文件并作为下一次"选择文件"的结果，代替系统选择器。
+    - **Waydroid 环境**：没有能打开 txt/pdf 的应用，txt 会弹出 Browser/HTML Viewer，图片会打开相册。SAF 目录选择器可以用 uiautomator 按文字点击操作（Documents → USE THIS FOLDER → ALLOW）。

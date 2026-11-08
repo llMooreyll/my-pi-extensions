@@ -4,6 +4,7 @@ import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ProcessInfo, ProjectItem, SessionListItem } from "@pi-remote/protocol";
 import { ConnStatus, ErrorDialog, TrustDialog } from "../ds/common";
+import { filesSupported, useTransfers } from "../state/transfers";
 import { Button, Field, Pad, Row, Spinner, StatusText, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { baseName, plainPreview, processTitle, relTime } from "../lib/format";
@@ -123,6 +124,9 @@ export default function Home() {
   const conn = useStore((s) => s.conn);
   const procsMap = useStore((s) => s.procs);
   const procs = useMemo(() => Object.values(procsMap), [procsMap]);
+  useStore((s) => s.features);
+  const filesOn = filesSupported();
+  const filesWaiting = useTransfers((s) => Object.values(s.items).filter((t) => t.dir === "to_phone" && t.state === "waiting" && !s.local[t.id] && !s.progress[t.id]?.running).length);
   const tree = useMemo(() => buildTree(procs), [procs]);
   const waiting = useMemo(() => procs.filter((x) => x.status === "waiting_ui"), [procs]);
   const [sessions, setSessions] = useState<SessionListItem[] | undefined>();
@@ -185,7 +189,10 @@ export default function Home() {
             </View>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
               <View style={{ flex: 1 }}><ConnStatus /></View>
-              <Button kind="outline" compact a11y="home-settings" label="settings" onPress={() => router.push("/settings")} />
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {filesOn ? <Button kind="outline" compact a11y="home-files" color={filesWaiting ? p.pink : undefined} label={filesWaiting ? `files · ${filesWaiting}` : "files"} onPress={() => router.push("/files")} /> : null}
+                <Button kind="outline" compact a11y="home-settings" label="settings" onPress={() => router.push("/settings")} />
+              </View>
             </View>
           </Pad>
 

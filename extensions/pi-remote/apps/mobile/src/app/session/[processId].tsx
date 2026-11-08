@@ -1,4 +1,4 @@
-import { drafts } from "../../lib/drafts";
+import { draftFiles, drafts } from "../../lib/drafts";
 import * as Clipboard from "expo-clipboard";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,6 +19,7 @@ import { AttentionDock, RpivSheet } from "../../session/Attention";
 import { CommandsSheet, type DeckAction } from "../../session/Commands";
 import { CrewTray } from "../../session/CrewTray";
 import { Composer } from "../../session/Composer";
+import { filesSupported } from "../../state/transfers";
 import { OutlineSheet } from "../../session/Outline";
 import { CompactSheet, ForkSheet, InfoSheet, ModelSheet, ResumeSheet, ThinkingSheet } from "../../session/Sheets";
 import { Transcript, type TranscriptHandle } from "../../session/Transcript";
@@ -101,6 +102,16 @@ export default function SessionScreen() {
   }, [draftKey]);
   // Saving waits for the restore, otherwise the empty initial text would overwrite the stored draft.
   useEffect(() => { if (draftKey && restored.current === draftKey) drafts.save(draftKey, text); }, [draftKey, text]);
+  const [fileIds, setFileIdsState] = useState<string[]>([]);
+  const filesOn = useStore((s) => (s.features ?? []).includes("files")) && filesSupported();
+  useEffect(() => {
+    setFileIdsState([]);
+    if (!draftKey) return;
+    let live = true;
+    void draftFiles.load(draftKey).then((ids) => { if (live) setFileIdsState(ids); });
+    return () => { live = false; };
+  }, [draftKey]);
+  const setFileIds = useCallback((ids: string[]) => { setFileIdsState(ids); if (draftKey) draftFiles.save(draftKey, ids); }, [draftKey]);
 
   useFocusEffect(useCallback(() => {
     store.setActive(pid);
@@ -332,6 +343,7 @@ export default function SessionScreen() {
           onSend={onSend}
           onAbort={() => void doCall(() => call("abort", { processId: pid }))}
           onOpenCommands={() => setSheet("deck")}
+          files={filesOn ? { processId: pid, ids: fileIds, setIds: setFileIds } : undefined}
         />
       </Screen>
 

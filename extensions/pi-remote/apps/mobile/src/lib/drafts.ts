@@ -29,3 +29,22 @@ export const drafts = {
     }, 500));
   },
 };
+
+/** Uploaded attachments of an unsent message: the files are already on the computer, so keep them with the draft. */
+const fileKey = (sessionKey: string) => `draftfiles:${sessionKey}`;
+const fileMem = new Map<string, string[]>();
+export const draftFiles = {
+  async load(sessionKey: string): Promise<string[]> {
+    const hit = fileMem.get(sessionKey);
+    if (hit) return hit;
+    let ids: string[] = [];
+    try { ids = JSON.parse((await kv.get(fileKey(sessionKey))) ?? "[]"); } catch { /* none */ }
+    if (!Array.isArray(ids)) ids = [];
+    fileMem.set(sessionKey, ids);
+    return ids;
+  },
+  save(sessionKey: string, ids: string[]): void {
+    fileMem.set(sessionKey, ids);
+    (ids.length ? kv.set(fileKey(sessionKey), JSON.stringify(ids)) : kv.del(fileKey(sessionKey))).catch(() => {});
+  },
+};

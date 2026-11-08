@@ -6,6 +6,7 @@ import { REMOTE_SETTINGS, type RemoteSettingDef } from "@pi-remote/protocol";
 import { stopForeground } from "../bg/foreground";
 import { reloadPrefs } from "../bg/notifications";
 import { openBatteryOptimization } from "../bg/platform";
+import { filesSupported, forgetSaveFolder, hasSaveFolder, useTransfers } from "../state/transfers";
 import { Button, Choice, Field, Pad, Screen, SectionHead, Sheet, Spinner, Toggle, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { clearTrust, loadHosts, loadPrefs, saveHosts, savePrefs, type AppPrefs, type SavedHost } from "../lib/credentials";
@@ -199,7 +200,43 @@ function PhoneSettings() {
   );
 }
 
+const AUTO_DOWNLOAD = [
+  { mb: 0, label: "Only when I tap download", sub: "files wait on the computer until you fetch them" },
+  { mb: 20, label: "Files up to 20 MB", sub: "larger files still wait for a tap" },
+  { mb: 200, label: "Files up to 200 MB", sub: "uses mobile data when you are not on Wi-Fi" },
+];
+
+function FileSettings() {
+  const [prefs, setPrefs] = useState<AppPrefs | undefined>();
+  const [hasFolder, setHasFolder] = useState(false);
+  const inboxDir = useTransfers((s) => s.inboxDir);
+  useEffect(() => { void loadPrefs().then(setPrefs); void hasSaveFolder().then(setHasFolder); }, []);
+  if (!prefs) return null;
+  const update = async (n: AppPrefs) => { setPrefs(n); await savePrefs(n); await reloadPrefs(); };
+  return (
+    <Pad indent style={{ paddingTop: 6, gap: 4 }}>
+      <Txt v="label" soft style={{ marginTop: 6 }}>download files pi sends</Txt>
+      {AUTO_DOWNLOAD.map((o) => (
+        <Choice key={o.mb} a11y={`settings-autodl-${o.mb}`} label={o.label} sub={o.sub} selected={prefs.autoDownloadMB === o.mb} onPress={() => void update({ ...prefs, autoDownloadMB: o.mb })} />
+      ))}
+      {inboxDir ? (
+        <View style={{ marginTop: 12 }}>
+          <Txt v="label" soft>files you send arrive on the computer in</Txt>
+          <Txt v="mono" selectable a11y="settings-inbox">{inboxDir}</Txt>
+          <Txt v="small" soft>change it with files.inboxDir in ~/.config/pi-remote/config.json</Txt>
+        </View>
+      ) : null}
+      {hasFolder ? (
+        <View style={{ flexDirection: "row", marginTop: 12 }}>
+          <Button kind="outline" compact a11y="settings-forget-folder" label="forget the save-to folder" onPress={async () => { await forgetSaveFolder(); setHasFolder(false); }} />
+        </View>
+      ) : null}
+    </Pad>
+  );
+}
+
 export default function SettingsScreen() {
+  useStore((s) => s.features);
   return (
     <Screen back kicker="pi remote" title="Settings">
       <SectionHead n="01" title="Connection" />
@@ -208,6 +245,7 @@ export default function SettingsScreen() {
       <PiSettings />
       <SectionHead n="03" title="This phone" />
       <PhoneSettings />
+      {filesSupported() ? <><SectionHead n="04" title="Files" /><FileSettings /></> : null}
       <View style={{ height: 30, marginLeft: MARGIN + GUTTER }} />
     </Screen>
   );

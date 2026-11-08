@@ -11,6 +11,7 @@ import { AnchorContext, type Anchor, FoldBar, useAnchor } from "./anchor";
 import { Markdown } from "./Markdown";
 import { SelectContext, SelectSheet, useSelectText } from "./SelectSheet";
 import { ToolCard } from "./ToolCard";
+import { splitAttachments, type AttachedLine } from "../lib/attach";
 
 type Item = (
   | { key: string; kind: "msg"; m: WireMessage; idx: number }
@@ -123,6 +124,26 @@ function Divider({ label, text, a11y }: { label: string; text: string; a11y: str
   );
 }
 
+/** Files that went with a message: they sit on the computer now, so show their path there. */
+function AttachedFiles({ files }: { files: AttachedLine[] }) {
+  const p = usePalette();
+  if (!files.length) return null;
+  return (
+    <View accessibilityLabel="msg-attachments" style={{ marginTop: 8, borderLeftWidth: 2, borderLeftColor: p.blue, paddingLeft: 10, gap: 6 }}>
+      {files.map((f, i) => (
+        <View key={i}>
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "baseline" }}>
+            <Txt v="mono" color={p.blue} style={{ fontFamily: F.monoBold }}>↑</Txt>
+            <Txt v="mono" style={{ flex: 1, fontFamily: F.monoBold }} lines={2}>{f.name}</Txt>
+            <Txt v="mono" soft>{f.meta.split(",")[0]}</Txt>
+          </View>
+          <Txt v="mono" soft selectable style={{ fontSize: 11, marginLeft: 18 }}>{f.path}</Txt>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const Row = memo(function Row({ item }: { item: Item }) {
   const ctx = item.ctx;
   const p = usePalette();
@@ -130,11 +151,13 @@ const Row = memo(function Row({ item }: { item: Item }) {
   if (item.kind === "draft") return <Margin label={lab("pi")} color={p.blue} a11y="msg-inflight"><Blocks blocks={item.d.content} ctx={ctx} prefix="draft" streaming /></Margin>;
   if (item.kind === "queued") {
     const q = item.q;
+    const qa = splitAttachments(q.text);
     return (
       <View accessibilityLabel="msg-queued" style={{ marginTop: 14, opacity: 0.78 }}>
         <View style={{ height: 1, backgroundColor: p.faint, marginBottom: 2 }} />
         <Margin label="you" color={p.pink}>
-          <Txt v={q.text.length > 280 ? "body" : "em"} selectable style={q.text.length > 280 ? undefined : { fontSize: 22, lineHeight: 27 }} color={p.soft}>{q.text}</Txt>
+          {qa.body ? <Txt v={qa.body.length > 280 ? "body" : "em"} selectable style={qa.body.length > 280 ? undefined : { fontSize: 22, lineHeight: 27 }} color={p.soft}>{qa.body}</Txt> : null}
+          <AttachedFiles files={qa.files} />
           {q.images ? <Txt v="label" color={p.pink} style={{ marginTop: 4 }}>+ {q.images} image{q.images > 1 ? "s" : ""}</Txt> : null}
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
             <View style={{ borderWidth: 1, borderColor: q.mode === "steer" ? p.blue : p.soft, paddingHorizontal: 6, paddingVertical: 2 }}>
@@ -154,12 +177,14 @@ const Row = memo(function Row({ item }: { item: Item }) {
       const c = m.content;
       const text = typeof c === "string" ? c : textOf(c);
       const images = Array.isArray(c) ? c.filter((x: any) => x?.type === "image").length : 0;
-      const long = text.length > 280;
+      const att = splitAttachments(text);
+      const long = att.body.length > 280;
       return (
         <View style={{ marginTop: 14 }}>
           <View style={{ height: 1, backgroundColor: p.faint, marginBottom: 2 }} />
           <Margin label="you" color={p.pink} a11y={a11y} select={text || undefined}>
-            <Txt v={long ? "body" : "em"} selectable style={long ? undefined : { fontSize: 22, lineHeight: 27 }}>{text}</Txt>
+            {att.body ? <Txt v={long ? "body" : "em"} selectable style={long ? undefined : { fontSize: 22, lineHeight: 27 }}>{att.body}</Txt> : null}
+            <AttachedFiles files={att.files} />
             {images ? <Txt v="label" color={p.pink} style={{ marginTop: 4 }}>+ {images} image{images > 1 ? "s" : ""}</Txt> : null}
           </Margin>
         </View>

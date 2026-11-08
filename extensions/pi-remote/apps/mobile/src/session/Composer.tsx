@@ -2,8 +2,11 @@ import * as ImagePicker from "expo-image-picker";
 import { useMemo, useState } from "react";
 import { Image, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { CommandInfo, DeliverAs, ImageInput } from "@pi-remote/protocol";
-import { Spinner, Txt } from "../ds/primitives";
+import { formatBytes, type CommandInfo, type DeliverAs, type ImageInput, type TransferInfo } from "@pi-remote/protocol";
+import { Choice, Sheet, Spinner, Txt } from "../ds/primitives";
+import { withAttachments } from "../lib/attach";
+import { pickFiles } from "../lib/pick";
+import { cancel as cancelTransfer, uploadFiles, useTransfers } from "../state/transfers";
 import { F, MARGIN, usePalette } from "../ds/tokens";
 import { BUILTIN_COMMANDS } from "../lib/slash";
 import { testLog, useTestAction, useTestInput } from "../lib/test-hooks";
@@ -19,6 +22,36 @@ export interface ComposerProps {
   onSend: (text: string, images: ImageInput[], deliverAs?: DeliverAs) => Promise<boolean>;
   onAbort: () => void;
   onOpenCommands: () => void;
+  /** File attachments (7.7.5): ids of uploads; undefined when hostd or the platform has no file support. */
+  files?: { processId: string; ids: string[]; setIds: (ids: string[]) => void };
+}
+
+const MAX_FILES = 10;
+
+/** An upload riding along with the message being written. */
+function AttachmentChip({ id, onRemove }: { id: string; onRemove: () => void }) {
+  const c = usePalette();
+  const t = useTransfers((s) => s.items[id]) as TransferInfo | undefined;
+  const pr = useTransfers((s) => s.progress[id]);
+  const done = t?.state === "done";
+  const failed = !t || t.state === "cancelled" || t.state === "expired" || t.state === "failed" || (!!pr?.final && !!pr.error);
+  const pct = t && t.size ? Math.floor(((done ? t.size : pr?.bytes ?? 0) / t.size) * 100) : 100;
+  const col = failed ? c.danger : done ? c.ink : c.blue;
+  useTestAction(`composer-file-remove-${id}`, onRemove);
+  return (
+    <View accessibilityLabel={`composer-file-${id}`} style={{ borderWidth: 1, borderColor: failed ? c.danger : c.faint, paddingLeft: 8, paddingRight: 4, paddingVertical: 4, flexDirection: "row", alignItems: "center", gap: 8, maxWidth: 260 }}>
+      <Txt v="mono" color={c.blue} style={{ fontFamily: F.monoBold }}>↑</Txt>
+      <View style={{ flexShrink: 1 }}>
+        <Txt v="mono" lines={1} style={{ fontSize: 12 }}>{t?.name ?? "file"}</Txt>
+        <Txt v="label" color={col} style={{ fontSize: 9.5 }}>{failed ? (pr?.error ?? "failed") : done ? formatBytes(t!.size) : `uploading ${pct}%`}</Txt>
+        {!done && !failed ? <View style={{ height: 2, backgroundColor: c.faint, marginTop: 2 }}><View style={{ height: 2, width: `${pct}%`, backgroundColor: c.blue }} /></View> : null}
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel={`composer-file-remove-${id}`} onPress={onRemove} hitSlop={10} style={{ width: 22, height: 22, alignItems: "center", justifyContent: "center" }}>
+        <View style={{ position: "absolute", width: 12, height: 1.5, backgroundColor: c.soft, transform: [{ rotate: "45deg" }] }} />
+        <View style={{ position: "absolute", width: 12, height: 1.5, backgroundColor: c.soft, transform: [{ rotate: "-45deg" }] }} />
+      </Pressable>
+    </View>
+  );
 }
 
 function Suggestion({ s, onPick }: { s: { name: string; description?: string; source: string }; onPick: () => void }) {
@@ -49,7 +82,19 @@ export function Composer(p: ComposerProps) {
   const [sending, setSending] = useState(false);
   const [webH, setWebH] = useState(LINE_BOX);
   const [hint, setHint] = useState<string | undefined>();
+  const [attachOpen, setAttachOpen] = useState(false);
   useTestInput("composer-input", p.setText);
+  const fileIds = p.files?.ids ?? [];
+  const items = useTransfers((s) => s.items);
+  const progress = useTransfers((s) => s.progress);
+  const attached = fileIds.map((id) => items[id]).filter((t): t is TransferInfo => !!t);
+  const uploading = attached.filter((t) => t.state !== "done");
+  const uploadPct = (() => {
+    const total = uploading.reduce((n, t) => n + t.size, 0);
+    const got = uploading.reduce((n, t) => n + (progress[t.id]?.bytes ?? 0), 0);
+    return total ? Math.floor((got / total) * 100) : 0;
+  })();
+  const uploadsFailed = uploading.some((t) => t.state === "cancelled" || t.state === "expired" || t.state === "failed" || (progress[t.id]?.final && progress[t.id]?.error));
 
   const slashQuery = p.text.startsWith("/") && !p.text.includes(" ") ? p.text.slice(1).toLowerCase() : undefined;
   const suggestions = useMemo(() => {
@@ -66,15 +111,40 @@ export function Composer(p: ComposerProps) {
     setImages((prev) => [...prev, ...add].slice(0, 4));
   };
 
+  const attachFiles = async () => {
+    setAttachOpen(false);
+    if (!p.files) return;
+    try {
+      const picked = await pickFiles();
+      if (!picked?.length) return;
+      const room = MAX_FILES - p.files.ids.length;
+      if (picked.length > room) setHint(`Up to ${MAX_FILES} files per message.`);
+      const made = await uploadFiles(picked.slice(0, Math.max(room, 0)), p.files.processId);
+      p.files.setIds([...p.files.ids, ...made.map((t) => t.id)]);
+    } catch (e) { setHint((e as { message?: string })?.message ?? String(e)); }
+  };
+  const removeFile = (id: string) => {
+    if (!p.files) return;
+    const t = items[id];
+    if (t && t.state !== "done") void cancelTransfer(id);
+    p.files.setIds(p.files.ids.filter((x) => x !== id));
+  };
+  const onPlus = () => {
+    if (p.files) { setAttachOpen(true); return; }
+    void pick();
+  };
+
   const send = async () => {
-    testLog("send", { sending, disabled: p.disabled, len: p.text.length });
+    testLog("send", { sending, disabled: p.disabled, len: p.text.length, files: fileIds.length });
     if (sending || p.disabled) return;
-    if (!p.text.trim() && !images.length) return;
+    if (!p.text.trim() && !images.length && !attached.length) return;
+    if (uploading.length) { setHint(uploadsFailed ? "An upload failed. Remove it to send." : `Uploading… ${uploadPct}%`); return; }
+    if (attached.length && p.text.trimStart().startsWith("/")) { setHint("Files go with a message, not with a command."); return; }
     setSending(true);
     setHint(undefined);
     try {
-      const ok = await p.onSend(p.text, images.map(({ data, mimeType }) => ({ data, mimeType })), p.running ? mode : undefined);
-      if (ok) setImages([]);
+      const ok = await p.onSend(withAttachments(p.text, attached), images.map(({ data, mimeType }) => ({ data, mimeType })), p.running ? mode : undefined);
+      if (ok) { setImages([]); p.files?.setIds([]); }
     } finally { setSending(false); }
   };
   useTestAction("composer-send", p.disabled ? undefined : () => void send());
@@ -82,9 +152,9 @@ export function Composer(p: ComposerProps) {
   useTestAction("composer-mode-steer", p.running ? () => setMode("steer") : undefined);
   useTestAction("composer-mode-followup", p.running ? () => setMode("followUp") : undefined);
   useTestAction("composer-commands", p.onOpenCommands);
-  useTestAction("composer-image", p.disabled ? undefined : () => void pick());
+  useTestAction("composer-image", p.disabled ? undefined : onPlus);
 
-  const canSend = !p.disabled && (!!p.text.trim() || images.length > 0);
+  const canSend = !p.disabled && (!!p.text.trim() || images.length > 0 || attached.length > 0) && !uploading.length;
   return (
     <View accessibilityLabel="composer" style={{ backgroundColor: c.paper, paddingBottom: insets.bottom }}>
       {p.running ? (
@@ -140,6 +210,12 @@ export function Composer(p: ComposerProps) {
           ))}
         </ScrollView>
       ) : null}
+      {fileIds.length ? (
+        <ScrollView horizontal accessibilityLabel="composer-files" contentContainerStyle={{ gap: 8, paddingHorizontal: MARGIN, paddingTop: 10 }}>
+          {fileIds.map((id) => <AttachmentChip key={id} id={id} onRemove={() => removeFile(id)} />)}
+        </ScrollView>
+      ) : null}
+      {uploading.length && !hint ? <Txt v="small" color={uploadsFailed ? c.danger : c.blue} a11y="composer-upload-hint" style={{ paddingHorizontal: MARGIN, paddingTop: 6 }}>{uploadsFailed ? "An upload failed. Remove it to send." : `Uploading… ${uploadPct}% — send is ready when it finishes`}</Txt> : null}
       {hint || p.disabledReason ? <Txt v="small" color={c.pink} a11y="composer-hint" style={{ paddingHorizontal: MARGIN, paddingTop: 8 }}>{hint ?? p.disabledReason}</Txt> : null}
       {/* Icons sit in a box exactly one input line tall and stay at the bottom as the input grows. They are
           drawn shapes rather than glyphs, so font ascent/descent cannot push them off centre. */}
@@ -148,9 +224,9 @@ export function Composer(p: ComposerProps) {
           <Pressable accessibilityRole="button" accessibilityLabel="composer-commands" onPress={p.onOpenCommands} hitSlop={12} style={{ width: 16, height: 20, alignItems: "center", justifyContent: "center" }}>
             <View style={{ width: 2, height: 21, backgroundColor: c.ink, transform: [{ rotate: "22deg" }] }} />
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="composer-image" onPress={() => void pick()} disabled={p.disabled} hitSlop={12} style={{ width: 16, height: 16, alignItems: "center", justifyContent: "center" }}>
-            <View style={{ position: "absolute", width: 16, height: 2, backgroundColor: p.imagesAllowed && !p.disabled ? c.ink : c.faint }} />
-            <View style={{ position: "absolute", width: 2, height: 16, backgroundColor: p.imagesAllowed && !p.disabled ? c.ink : c.faint }} />
+          <Pressable accessibilityRole="button" accessibilityLabel="composer-image" onPress={onPlus} disabled={p.disabled} hitSlop={12} style={{ width: 16, height: 16, alignItems: "center", justifyContent: "center" }}>
+            <View style={{ position: "absolute", width: 16, height: 2, backgroundColor: (p.imagesAllowed || p.files) && !p.disabled ? c.ink : c.faint }} />
+            <View style={{ position: "absolute", width: 2, height: 16, backgroundColor: (p.imagesAllowed || p.files) && !p.disabled ? c.ink : c.faint }} />
           </Pressable>
         </View>
         <TextInput
@@ -177,6 +253,14 @@ export function Composer(p: ComposerProps) {
           {p.running && !sending ? <Txt v="label" color={canSend ? c.invert : c.faint} style={{ fontSize: 9 }}>{mode === "steer" ? "now" : "after"}</Txt> : null}
         </Pressable>
       </View>
+      <Sheet visible={attachOpen} a11y="attach-sheet" kicker="add to the message" title="Attach" onClose={() => setAttachOpen(false)}>
+        <Choice a11y="composer-attach-image" label="Image for the model" strong
+          sub={p.imagesAllowed ? "pi looks at the picture itself" : "this model cannot read images; switch the model first"}
+          disabled={!p.imagesAllowed} onPress={() => { setAttachOpen(false); void pick(); }} />
+        <Choice a11y="composer-attach-file" label="File to the computer" strong
+          sub={`any file, saved on the computer; pi gets its path${fileIds.length ? ` · ${fileIds.length} attached` : ""}`}
+          disabled={fileIds.length >= MAX_FILES} onPress={() => void attachFiles()} />
+      </Sheet>
     </View>
   );
 }

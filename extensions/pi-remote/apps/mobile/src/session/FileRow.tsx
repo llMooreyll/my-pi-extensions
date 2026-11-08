@@ -18,6 +18,13 @@ export function ProgressLine({ value, color }: { value: number; color: string })
 
 const pct = (bytes: number, size: number) => (size ? Math.floor((bytes / size) * 100) : 100);
 
+function daysLeft(at: number): string {
+  const h = (at - Date.now()) / 3_600_000;
+  if (h < 1) return "expires within the hour";
+  if (h < 48) return `expires in ${Math.round(h)} h`;
+  return `expires in ${Math.round(h / 24)} days`;
+}
+
 /**
  * One file in either direction: name, size, where it stands, and what can be done with it now.
  * `known` covers files mentioned in old messages after hostd forgot them.
@@ -62,9 +69,10 @@ export function FileRow(props: { id: string; known?: { name: string; size: numbe
     else if (t.state === "failed" && t.error?.code === "changed") { status = "changed on the computer — ask pi to send it again"; statusColor = p.danger; }
     else if (t.state === "failed") { status = t.error?.message ?? "failed"; statusColor = p.danger; }
     else {
-      status = pr?.error ? pr.error : pr?.bytes ? `paused at ${pct(pr.bytes, size)}%` : t.expiresAt ? `waiting · until ${new Date(t.expiresAt).toLocaleDateString()}` : "waiting";
+      const until = t.expiresAt ? ` · ${daysLeft(t.expiresAt)}` : "";
+      status = pr?.error ? pr.error : pr?.bytes ? `paused at ${pct(pr.bytes, size)}%` : t.state === "done" ? `downloaded before, not on this phone now${until}` : `waiting${until}`;
       if (pr?.error) statusColor = p.danger;
-      actions.push({ label: pr?.bytes ? "resume" : "download", a11y: a("download"), run: () => startDownload(t.id), kind: "outline", color: p.pink });
+      actions.push({ label: pr?.bytes ? "resume" : t.state === "done" ? "download again" : "download", a11y: a("download"), run: () => startDownload(t.id), kind: "outline", color: p.pink });
     }
   } else {
     if (t.state === "done") { status = "saved on the computer"; statusColor = p.ok; }
@@ -89,10 +97,10 @@ export function FileRow(props: { id: string; known?: { name: string; size: numbe
       </View>
       <View style={{ marginLeft: 22 }}>
         <Txt v="label" color={statusColor} a11y={a("status")} style={{ marginTop: 2 }}>{status}</Txt>
-        {running || (bytes > 0 && !local && t?.state !== "done") ? <ProgressLine value={size ? bytes / size : 1} color={running ? p.blue : p.faint} /> : null}
+        {running || (bytes > 0 && !local && (t?.state === "waiting" || t?.state === "active")) ? <ProgressLine value={size ? bytes / size : 1} color={running ? p.blue : p.faint} /> : null}
         {!toPhone && t?.state === "done" && t.computerPath ? <Txt v="mono" soft selectable style={{ fontSize: 11, marginTop: 2 }}>{t.computerPath}</Txt> : null}
         {props.full && t?.note ? <Txt v="small" soft style={{ marginTop: 2 }}>“{t.note}”</Txt> : null}
-        {props.full && (props.origin || t) ? <Txt v="small" faint style={{ marginTop: 2, fontSize: 12 }}>{[props.origin, t ? relTime(t.createdAt) : undefined].filter(Boolean).join(" · ")}</Txt> : null}
+        {props.full && (props.origin || t) ? <Txt v="small" soft style={{ marginTop: 2, fontSize: 12 }}>{[props.origin, t ? relTime(t.createdAt) : undefined].filter(Boolean).join(" · ")}</Txt> : null}
         {actions.length ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 14, marginTop: 8 }}>
             {actions.map((x) => <Button key={x.a11y} a11y={x.a11y} label={x.label} kind={x.kind ?? "text"} compact color={x.color} onPress={() => { setNote(undefined); void x.run(); }} />)}

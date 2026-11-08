@@ -4,7 +4,7 @@ import type { ProcessInfo } from "@pi-remote/protocol";
 import { DEFAULT_PREFS, loadPrefs, type AppPrefs } from "../lib/credentials";
 import { testLog } from "../lib/test-hooks";
 import { useStore } from "../state/store";
-import { EVENTS_CHANNEL, ensureChannels, isForegroundRunning, startForeground, stopForeground } from "./foreground";
+import { EVENTS_CHANNEL, ensureChannels, startForeground, stopForeground } from "./foreground";
 
 const last = new Map<string, ProcessInfo>();
 const lastSent = new Map<string, number>();
@@ -62,7 +62,8 @@ export function syncForeground(): void {
   const running = procs.filter((p) => p.status === "running").length;
   const waiting = procs.filter((p) => p.status === "waiting_ui").length;
   const want = prefs.keepAlive && st.conn !== "no_credentials" && !!st.host;
-  if (!want) { if (isForegroundRunning()) void stopForeground(); return; }
+  // stopForeground is queued behind any pending start and checks the real state itself.
+  if (!want) { void stopForeground(); return; }
   const extra = st.conn === "ready" ? fgExtra() : undefined;
   const body = extra ?? (st.conn === "ready" ? `${running} running · ${waiting} waiting for input` : st.conn === "backoff" ? "Reconnecting…" : "Connecting…");
   void startForeground(body).catch(() => {});

@@ -86,7 +86,7 @@ export function download(t: TransferInfo, onProgress: (bytes: number) => void): 
             onProgress(pos);
             c.send(JSON.stringify({ t: "ack", bytes: pos }));
             if (pos >= t.size) { finished = true; resolve(); }
-          }).catch((e) => { reject(laneErr("io", (e as Error)?.message ?? "write failed")); c.close(); });
+          }).catch((e) => { reject(cancelled ? laneErr("cancelled", "Cancelled") : laneErr("io", (e as Error)?.message ?? "write failed")); c.close(); });
         };
         c.onClose = () => { void chain.then(() => { if (!finished) reject(cancelled ? laneErr("cancelled", "Cancelled") : laneErr("io", "Connection lost")); }); };
         c.send(JSON.stringify({ t: "lane", kind: "get", id: t.id, offset: pos }));
@@ -118,7 +118,7 @@ export function upload(t: TransferInfo, src: File, onProgress: (bytes: number) =
         let acked = 0;
         let pumping = false;
         let failed = false;
-        const fail = (e: LaneError) => { if (failed) return; failed = true; reject(e); try { c.close(); } catch { /* ignore */ } };
+        const fail = (e: LaneError) => { if (failed) return; failed = true; reject(cancelled ? laneErr("cancelled", "Cancelled") : e); try { c.close(); } catch { /* ignore */ } };
         const pump = async () => {
           if (pumping || failed) return;
           pumping = true;

@@ -1,4 +1,4 @@
-import { Directory, File, Paths } from "expo-file-system";
+import { Directory, File, FileMode, Paths } from "expo-file-system";
 import { registerTestCommand, testLog } from "./test-hooks";
 
 /**
@@ -14,10 +14,14 @@ registerTestCommand("mkfile", (q) => {
   const text = q.get("text");
   if (text !== null) f.write(text);
   else {
+    // Byte i is (i*31+7)&0xff, written in 1 MiB blocks so large test files need little memory.
     const size = Number(q.get("size") ?? "1024");
-    const b = new Uint8Array(size);
-    for (let i = 0; i < size; i++) b[i] = (i * 31 + 7) & 0xff;
-    f.write(b);
+    const BLOCK = 1 << 20;
+    const pattern = new Uint8Array(BLOCK);
+    for (let i = 0; i < BLOCK; i++) pattern[i] = (i * 31 + 7) & 0xff;
+    f.create({ overwrite: true });
+    const h = f.open(FileMode.Truncate);
+    try { for (let at = 0; at < size; at += BLOCK) h.writeBytesSync(pattern.subarray(0, Math.min(BLOCK, size - at))); } finally { h.close(); }
   }
   queued.push(f);
   testLog("mkfile", { uri: f.uri, size: f.size });

@@ -66,7 +66,10 @@ export function handleTestUrl(url: string): boolean {
   } else if (m[1] === "labels") {
     testLog("labels", { labels: registeredLabels() });
   } else if (m[1] === "dump") {
-    testLog("dump", { state: dumpProvider?.() ?? null });
+    // logcat cuts lines near 4 KB; ?part=<key> logs one top-level key of the summary.
+    const state = dumpProvider?.() as Record<string, unknown> | null | undefined;
+    const part = params.get("part");
+    testLog("dump", { state: part && state ? { [part]: state[part] ?? null } : state ?? null });
   } else {
     const fn = commands.get(m[1]!);
     testLog(m[1]!, { ok: !!fn });

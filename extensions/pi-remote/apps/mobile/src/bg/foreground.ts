@@ -18,7 +18,18 @@ export async function ensureChannels(): Promise<void> {
   await notifee.createChannel({ id: EVENTS_CHANNEL, name: "pi events", importance: AndroidImportance.HIGH });
 }
 
-export async function startForeground(body: string): Promise<void> {
+let chain: Promise<void> = Promise.resolve();
+let wanted = "";
+
+/** Calls are serialized and only the latest body is shown, so a late progress update cannot overwrite a newer one. */
+export function startForeground(body: string): Promise<void> {
+  wanted = body;
+  chain = chain.then(() => showForeground()).catch(() => {});
+  return chain;
+}
+
+async function showForeground(): Promise<void> {
+  const body = wanted;
   if (running && body === lastBody) return;
   await ensureChannels();
   lastBody = body;
@@ -38,13 +49,16 @@ export async function startForeground(body: string): Promise<void> {
   });
 }
 
-export async function stopForeground(): Promise<void> {
-  if (!running) return;
-  running = false;
-  lastBody = "";
-  await notifee.stopForegroundService();
-  stopResolver?.();
-  stopResolver = undefined;
+export function stopForeground(): Promise<void> {
+  chain = chain.then(async () => {
+    if (!running) return;
+    running = false;
+    lastBody = "";
+    await notifee.stopForegroundService();
+    stopResolver?.();
+    stopResolver = undefined;
+  }).catch(() => {});
+  return chain;
 }
 
 export const isForegroundRunning = () => running;

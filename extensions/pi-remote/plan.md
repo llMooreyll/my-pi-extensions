@@ -100,10 +100,10 @@
 | D17 | 子 agent 与 team 成员：不修改 `pi-interactive-subagents` 扩展。bridge 从环境变量识别进程角色，hostd 推导父子关系；扩展用组件函数绘制的 widget 由 bridge 在 60 列宽度下渲染成纯文本转发 | 该扩展的子进程本身就是 TUI 模式的 pi，会加载 bridge；所需信息都已在环境变量、工具结果 `details` 和自定义消息 `details` 中（附录 A-20～A-23） |
 | D18 | 迁移：电脑身份（hostId + 密钥对 + 已配对设备）保存在一个目录中，可导出/导入；手机保存"电脑列表"，每台电脑的中继地址、直连地址可在设置里修改 | 满足"换 VPS / 换电脑 / 换手机都能迁移" |
 | D19 | 文件传输只走现有的加密通道（D5）和中继（D4），中继不存储文件，也不解析内容。文件在电脑上登记：发往手机的文件留在原处，目录打包到 outbox；来自手机的文件写进收件目录。传输时两端需同时在线，中断后可续传 | 满足"VPS 只转发、不存数据"；手机离线时文件在用户自己的电脑上等待 |
-| D20 | 每个文件单独开一条连接（文件通道，`auth.purpose = "lane"`），不占用会话的主连接。数据用二进制帧，接收方按字节回确认，在途数据不超过 2 MiB | 大文件不阻塞会话操作；中继内存不随文件大小增长；断点即接收方已确认的字节数 |
+| D20 | 每个文件单独开一条连接（文件通道，`auth.purpose = "lane"`），不占用会话的主连接。数据用二进制帧，接收方按字节回确认，在途数据不超过 256 KiB（实现时由 2 MiB 下调，见 NOTES 64） | 大文件不阻塞会话操作；中继内存不随文件大小增长；断点即接收方已确认的字节数 |
 | D21 | 电脑 → 手机由 bridge 注册的 AI 工具 `send_to_phone` 发起。工具只登记，不等待下载完成；手机默认手动下载 | 手机可能很久以后才上线，AI 的这一轮不能卡住；手动下载可以避免被诱导发送的大文件消耗流量 |
 | D22 | 手机 → 电脑由用户在 App 中发起，文件存入 `files.inboxDir`（默认 `~/Downloads/pi-remote`），不写进项目目录。作为附件时，在消息末尾附上电脑上的绝对路径，模型用自己的工具读取；给模型看的图片仍走原有的图片输入 | 不污染项目目录和 git；不需要 pi 支持新的消息类型 |
-| D23 | 手机上收到的文件放在 App 私有目录，通过系统"打开方式"和"分享"交给其他应用；"存到下载"是附加操作 | 私有目录可以流式写入和续传；写入 SAF 目录的能力有限制（附录 A-27） |
+| D23 | 手机上收到的文件放在 App 私有目录，通过系统"打开方式"和"分享"交给其他应用；"存到文件夹"（用户选一次的 SAF 目录）是附加操作 | 私有目录可以流式写入和续传；每次都存进公共目录需要额外授权 |
 
 ---
 
@@ -2634,8 +2634,8 @@ export type TransferErrorCode =
   | "cancelled"
   | "io";
 
-export const FILE_CHUNK_BYTES = 256 * 1024;      // 每个二进制帧的数据量
-export const FILE_WINDOW_BYTES = 2 * 1024 * 1024; // 已发送但未确认的数据上限
+export const FILE_CHUNK_BYTES = 64 * 1024;        // 每个二进制帧的数据量
+export const FILE_WINDOW_BYTES = 256 * 1024;      // 已发送但未确认的数据上限（实测依据见 NOTES 64）
 export const MAX_LANES_PER_DEVICE = 2;
 export const ATTACH_HEADER = "[Files from the phone, saved on the computer]";
 
@@ -2769,10 +2769,10 @@ pi.registerTool({
 
 #### 7.7.5 App
 
-**依赖**：用 `npx expo install` 安装以下三个包，并在 NOTES.md 说明原因（第 0 章第 6 条）：
+**依赖**：用 `npx expo install` 安装以下两个包，并在 NOTES.md 说明原因（第 0 章第 6 条）：
 - `expo-file-system`：用 `File`、`Directory`、`FileHandle` 分块读写，用 `File.pickFileAsync` 选择文件，用 `Directory.pickDirectoryAsync` 选择保存目录。
 - `expo-sharing`：调用系统分享。
-- `expo-intent-launcher`：用"打开方式"调起其他应用。
+- 不需要 `expo-intent-launcher`：expo-file-system 自带 `File.canPreview` / `File.preview`（ACTION_VIEW 并授予读取权限）。
 
 **`net/secure-ws.ts`**：`SecureConn` 增加 `sendBinary`、`onBinary`。第 51 行同样需要改为按帧类型分发。
 
@@ -2807,7 +2807,7 @@ pi.registerTool({
   - `In progress`：两个方向正在传输的。
   - `Done`：已完成的，最近 30 天。
 - **每行内容**：方向标记（`→ phone` 或 `→ computer`）、文件名、大小、来源会话名、时间。
-- **每行操作**：`Download`、`Open`、`Share`、`Save to Downloads`、`Retry`、`Cancel`、`Remove`。
+- **每行操作**：`Download`、`Open`、`Share`、`Save to folder`、`Stop`/`Cancel`、`Delete from phone`、`Remove`。
 - **页底按钮**：`Send a file to the computer`。只上传到电脑的收件目录，不关联会话。
 
 **Composer 附件**
@@ -2830,12 +2830,12 @@ pi.registerTool({
 
 **存储与打开**
 - 收到的文件只放在 App 私有目录。
-- `Open`：`IntentLauncher.startActivityAsync("android.intent.action.VIEW", { data: file.contentUri, flags: 1, type: mime })`，其中 `flags: 1` 即 `FLAG_GRANT_READ_URI_PERMISSION`。
+- `Open`：`file.canPreview()` 为真时 `file.preview({ mimeType })`；否则提示用 `Share`。
 - `Share`：`Sharing.shareAsync(file.uri)`。
-- `Save to Downloads`
+- `Save to folder`
   - 第一次使用时调用 `Directory.pickDirectoryAsync()` 让用户选一个目录，把 URI 存进 kv。
   - 之后用 `dir.createFile(name, mime)` 创建文件，分块写入。
-  - 如果 SDK 58 仍不能对 SAF 文件流式写入（附录 A-27），超过 50 MB 的文件隐藏这个按钮，改为引导用户用 `Share` 保存。实际表现记入 NOTES.md。
+  - SDK 58（expo-file-system 58.0.13）可以对 SAF 文件用 `FileMode.Truncate` 打开句柄分块写入，不再按大小限制（NOTES 64）。
 
 **后台与通知**
 - 前台服务的常驻通知在传输时显示 `Receiving report.pdf · 42%` 或 `Sending …`。
@@ -2850,7 +2850,7 @@ pi.registerTool({
 
 #### 7.7.6 中继（可选）
 
-文件通道已经用 `FILE_WINDOW_BYTES` 控制流量，每条通道在中继上积压的数据不超过约 2 MiB，所以中继功能上不用改。
+文件通道已经用 `FILE_WINDOW_BYTES` 控制流量，每条通道在中继上积压的数据不超过约 256 KiB，所以中继功能上不用改。
 
 可选的保护措施：在 `onHostData` 的双向转发中，对端 `bufferedAmount` 超过 8 MiB 时暂停读取本端底层 socket，每 50 ms 检查一次，降到阈值以下再恢复。这样即使有异常客户端，中继内存也有上限。做了这项需要按 5.2 重新部署中继。
 
@@ -3060,6 +3060,8 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 ### M9 双向文件传输（7.7）
 
+状态：M9a～M9c 已完成（2026-11-09），验收 1～12 通过，第 13 条真机项待用户验证；M9d 未做（实测中继内存不随文件增长，见 NOTES 64）。
+
 前提：M0～M8 已完成。按顺序做。
 
 - **M9a 协议与 hostd**：7.7.2 全部；7.7.4 的 `transfers.ts`、`zip-store.ts`、`file-lane.ts`、`client-hub.ts` 与 `secure-socket.ts` 的改动、配置项、审计、dev-client 的三个命令。
@@ -3080,7 +3082,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 10. （Waydroid）对话里的 `send_to_phone` 卡片可以下载并显示进度，`Open` 能调起系统应用打开 txt 或 pdf，`Share` 能弹出系统分享；文件页的三个分区和各个操作正常；连接一个没有 `files` 功能的旧 hostd 时，文件相关界面全部隐藏。
 11. （Waydroid）在 Composer 中附加一个文本文件并发送：上传完成前发送按钮不可用；发出的消息显示为文件行；模型读取到该文件，回答中引用了文件内容。
 12. （Waydroid）局域网直连时测量 100 MB 下载与上传的速度，并检查传输期间滚动对话是否流畅，结果记入 NOTES.md。
-13. 真机项：锁屏状态下 200 MB 下载持续进行，前台通知显示进度，完成后有通知；传输中切换 Wi-Fi 和移动数据，自动续传且结果正确；`Save to Downloads` 可用，大文件的限制按 7.7.5 处理；`Download automatically` 生效。
+13. 真机项：锁屏状态下 200 MB 下载持续进行，前台通知显示进度，完成后有通知；传输中切换 Wi-Fi 和移动数据，自动续传且结果正确；`Save to folder` 可用；`Download automatically` 生效。
 
 ---
 
@@ -3141,7 +3143,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 | 子 agent 父子关系推导 | 依赖 pi-interactive-subagents 的环境变量和工具结果字段（附录 A-20～A-23）；该扩展改动后可能失效 | 失效时子进程仍显示，只是作为顶层并带角色徽标；M5b 验收覆盖 |
 | 组件 widget 转文本 | 依赖组件只用 `theme` 而不依赖真实 TUI | 渲染失败的 widget 不显示，不影响其他功能 |
 | 文件传输速度（M9） | 手机端在 JS 线程上用纯 JS 加解密；经中继时还受 VPS 带宽和流量额度限制 | M9 验收第 12 条实测；局域网下优先走直连；只有确实太慢时，才考虑换原生加密实现（改动限于 `secure-ws.ts`） |
-| 写入 SAF 目录的限制（M9） | SDK 54 起 `FileHandle` 和流式写入不能用于用户所选目录（附录 A-27），可能仍未修复 | 文件先存在 App 私有目录；"存到下载"只对小文件提供，大文件改用系统分享 |
+| 写入 SAF 目录（M9） | SDK 54 时 `FileHandle` 不能用于用户所选目录（附录 A-27）；58.0.13 已支持 WRITE/APPEND/TRUNCATE 模式，Waydroid 实测分块写入 100 MB 正常 | 文件先存在 App 私有目录；"存到文件夹"按 1 MiB 分块复制 |
 | AI 误发文件（M9） | 提示注入可能让 AI 调用 `send_to_phone` | 文件只会到达已配对设备；默认手动下载；禁止列表保护凭据目录；全部写入审计日志 |
 
 ---
@@ -3178,7 +3180,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 | A-24 | `SessionManager.open` 加载旧版本文件时会迁移并重写文件；加载后叶子为文件中最后一个条目 | `P/dist/core/session-manager.js` 718～742 行 |
 | A-25 | `@getpaseo/relay@0.15.3` 的 `e2ee` 子路径导出 `openClientSecureChannel`、`openDaemonSecureChannel`、密钥生成与序列化函数；依赖 tweetnacl、@noble/*、base64-js，需要 `crypto.getRandomValues` 与 `TextEncoder`/`TextDecoder` | 本机 `npm pack` 后检查 `dist/e2ee.d.ts`、`dist/secure-channel.d.ts`、`dist/crypto.js` |
 | A-26 | `pi.registerTool` 支持 `promptSnippet`、`promptGuidelines`；`execute(toolCallId, params, signal, onUpdate, ctx)` 可以 await；参数用 `typebox` 的 `Type` | `P/docs/extensions.md` 1580～1620 行 |
-| A-27 | expo-file-system（SDK 54 起的新 API）：`File.open(mode)` 返回 `FileHandle`，支持 `readBytes`、`writeBytes` 和可设置的 `offset`；SAF `content://` 文件默认只读，不支持 `ReadWrite`；提供 `File.pickFileAsync`、`Directory.pickDirectoryAsync`、`file.contentUri`。对用户所选目录中的文件，不能用 `FileHandle` 或流式写入（expo/expo issue #42273，2026-01） | docs.expo.dev/versions/latest/sdk/filesystem；github.com/expo/expo/issues/42273 |
+| A-27 | expo-file-system（SDK 54 起的新 API）：`File.open(mode)` 返回 `FileHandle`，支持 `readBytes`、`writeBytes` 和可设置的 `offset`；SAF `content://` 文件默认只读，不支持 `ReadWrite`；提供 `File.pickFileAsync`、`Directory.pickDirectoryAsync`、`file.contentUri`。对用户所选目录中的文件，不能用 `FileHandle` 或流式写入（expo/expo issue #42273，2026-01）。**更正**：本项目使用的 58.0.13 中 `FileSystemFileHandle.forContentURI` 已支持 WRITE/APPEND/TRUNCATE，实测可用 | docs.expo.dev/versions/latest/sdk/filesystem；github.com/expo/expo/issues/42273 |
 | A-28 | 加密通道支持二进制密文帧（`binaryCiphertext`，`dist/secure-channel.js` 478～497 行），但 hostd `secure-socket.ts:53` 与 App `secure-ws.ts:51` 现在会把二进制帧当文本解码 | 本项目源码 |
 | A-29 | 中继拼接后原样双向转发，不检查对端的 `bufferedAmount`；单帧上限 16 MiB；拼接前最多缓存 1 MiB | `packages/relay/src/main.ts` 46、87、106～107 行 |
 | A-30 | 本机 Node v26.13.0 提供 `zlib.crc32` 与 `fs.statfsSync` | 实测 `node -e` |

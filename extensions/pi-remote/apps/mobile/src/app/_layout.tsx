@@ -27,7 +27,7 @@ function boot(): void {
   setTransferHooks({
     notify: (title, body) => { void notifyFiles(title, body); },
     // Progress changes often; refresh the ongoing notification at most once a second.
-    changed: () => { const now = Date.now(); if (now - fgAt > 1000) { fgAt = now; syncForeground(); } },
+    changed: (force) => { const now = Date.now(); if (force || now - fgAt > 1000) { fgAt = now; syncForeground(); } },
   });
   installTransfers();
   connection.start();

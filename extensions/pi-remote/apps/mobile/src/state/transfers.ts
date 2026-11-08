@@ -31,10 +31,10 @@ export function filesSupported(): boolean {
   return Platform.OS === "android" && (useStore.getState().features ?? []).includes(FEATURE_FILES);
 }
 
-interface Job { id: string; kind: "get" | "put"; src?: File; attempts: number; lane?: LaneJob; timer?: ReturnType<typeof setTimeout> }
+interface Job { id: string; kind: "get" | "put"; src?: File; attempts: number; lane?: LaneJob; timer?: ReturnType<typeof setTimeout>; cancelled?: boolean }
 const jobs = new Map<string, Job>();
 const RETRY_MS = [2000, 5000, 15000];
-let listeners: { notify?: (title: string, body: string) => void; changed?: () => void } = {};
+let listeners: { notify?: (title: string, body: string) => void; changed?: (force?: boolean) => void } = {};
 
 export function setTransferHooks(h: typeof listeners): void { listeners = h; }
 
@@ -106,7 +106,7 @@ function run(j: Job): void {
   setProgress(j.id, { running: true, queued: false, error: undefined, final: false });
   const onBytes = (bytes: number) => { setProgress(j.id, { bytes }); listeners.changed?.(); };
   j.lane = j.kind === "get" ? download(t, onBytes) : upload(t, j.src!, onBytes);
-  testLog("lane_start", { id: j.id, kind: j.kind });
+  testLog("lane_start", { id: j.id, lane: j.kind });
   j.lane.done.then(
     () => {
       jobs.delete(j.id);
@@ -115,20 +115,22 @@ function run(j: Job): void {
         set({ local: { ...get().local, [j.id]: true } });
         if (AppState.currentState !== "active") listeners.notify?.("File received", t.name);
       }
-      testLog("lane_done", { id: j.id, kind: j.kind });
-      listeners.changed?.();
+      testLog("lane_done", { id: j.id, lane: j.kind });
+      listeners.changed?.(true);
       pump();
     },
     (e: LaneError) => {
       j.lane = undefined;
+      // A cancelled job is already out of the queue; whatever error its closing lane reports is not news.
+      if (j.cancelled || jobs.get(j.id) !== j) { listeners.changed?.(true); pump(); return; }
       const final = isFinal(e) || j.attempts >= RETRY_MS.length;
       testLog("lane_error", { id: j.id, code: e.code, message: e.message, attempt: j.attempts });
       setProgress(j.id, { running: false, error: e.message, final });
-      if (final || e.code === "cancelled") { jobs.delete(j.id); listeners.changed?.(); pump(); return; }
+      if (final || e.code === "cancelled") { jobs.delete(j.id); listeners.changed?.(true); pump(); return; }
       const wait = RETRY_MS[j.attempts++]!;
       setProgress(j.id, { queued: true });
       j.timer = setTimeout(() => { j.timer = undefined; pump(); }, wait);
-      listeners.changed?.();
+      listeners.changed?.(true);
       pump();
     },
   );
@@ -167,8 +169,9 @@ export function retry(id: string): boolean {
 /** Stop the lane; for uploads and offers also cancel on the computer. */
 export async function cancel(id: string): Promise<void> {
   const j = jobs.get(id);
-  if (j) { clearTimeout(j.timer); jobs.delete(id); j.lane?.cancel(); }
-  setProgress(id, { running: false, queued: false });
+  if (j) { j.cancelled = true; clearTimeout(j.timer); jobs.delete(id); j.lane?.cancel(); }
+  setProgress(id, { running: false, queued: false, error: undefined, final: false });
+  listeners.changed?.(true);
   const t = get().items[id];
   if (t && t.dir === "to_computer" && t.state !== "done") await call("transfer_cancel", { id }).catch(() => {});
 }
@@ -217,11 +220,20 @@ export async function shareLocal(id: string): Promise<string | undefined> {
 
 const SAVE_DIR_KEY = "files.saveDir";
 
-/** Copy into a folder the user picked once (Storage Access Framework), in chunks. */
-export async function saveToFolder(id: string, pickAgain = false): Promise<string> {
+/** Copy into a folder the user picked once (Storage Access Framework), in chunks. Asks again if that folder went away. */
+export async function saveToFolder(id: string): Promise<string> {
+  try { return await saveToFolderOnce(id, false); }
+  catch (e) {
+    if (!(await hasSaveFolder())) throw e;
+    await forgetSaveFolder();
+    return saveToFolderOnce(id, true);
+  }
+}
+
+async function saveToFolderOnce(id: string, pickAgain: boolean): Promise<string> {
   const t = get().items[id];
   if (!t) throw new Error("Unknown file");
-  let uri = pickAgain ? null : await kv.get(SAVE_DIR_KEY);
+  const uri = pickAgain ? null : await kv.get(SAVE_DIR_KEY);
   let dir: Directory;
   if (uri) dir = new Directory(uri);
   else { dir = await Directory.pickDirectoryAsync(); await kv.set(SAVE_DIR_KEY, dir.uri); }
@@ -244,6 +256,7 @@ export async function saveToFolder(id: string, pickAgain = false): Promise<strin
 }
 
 export function hasSaveFolder(): Promise<boolean> { return kv.get(SAVE_DIR_KEY).then((v) => !!v, () => false); }
+export function forgetSaveFolder(): Promise<void> { return kv.del(SAVE_DIR_KEY).catch(() => {}); }
 
 /** "Receiving report.pdf · 42%" for the foreground notification; undefined when idle. */
 export function transferSummary(): string | undefined {
