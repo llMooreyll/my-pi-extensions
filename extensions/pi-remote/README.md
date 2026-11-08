@@ -117,7 +117,7 @@ Then scan the QR code in the app.
 
 ## Status
 
-The core features are done: milestones M0–M8 in `plan.md`. Two-way file transfer between the computer and the phone is planned as M9 and not implemented yet. Only Android is supported.
+Milestones M0–M9 in `plan.md` are done, including two-way file transfer (M9): pi can send files and folders to the phone with the `send_to_phone` tool, and the app can send files to the computer (saved in `~/Downloads/pi-remote` by default). Real-device checks of M9 are still pending. Only Android is supported.
 
 ## Fonts
 
