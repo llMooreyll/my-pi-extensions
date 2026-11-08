@@ -1,5 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
-import { FlatList, Pressable, View, type ListViewToken, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { Pressable, ScrollView, View, type ScrollViewInstance, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { WireMessage } from "@pi-remote/protocol";
 import { Button, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
@@ -16,7 +16,7 @@ type Item = (
   | { key: string; kind: "draft"; d: AssistantDraft }
   | { key: string; kind: "tool"; id: string; name: string; args: unknown; partialText: string }
   | { key: string; kind: "queued"; q: Queued }
-) & { label?: boolean };
+) & { label?: boolean; ctx: Ctx };
 
 /** Who "speaks" an item; the margin label is printed only when the speaker changes. */
 function speaker(i: Item): string {
@@ -32,6 +32,8 @@ function speaker(i: Item): string {
 }
 
 interface Ctx { results: Map<string, WireMessage>; running: Record<string, { toolName: string; args: unknown; partialText: string }>; hideThinking: boolean }
+const NO_CTX: Ctx = { results: new Map(), running: {}, hideThinking: false };
+const EMPTY_RUNS: Record<string, { toolName: string; args: unknown; partialText: string }> = {};
 
 /** Every entry hangs a small label in the margin column: YOU, PI, §. */
 function Margin({ label, color, children, a11y }: { label: string; color?: string; children: ReactNode; a11y?: string }) {
@@ -96,7 +98,8 @@ function Divider({ label, text, a11y }: { label: string; text: string; a11y: str
   );
 }
 
-const Row = memo(function Row({ item, ctx }: { item: Item; ctx: Ctx }) {
+const Row = memo(function Row({ item }: { item: Item }) {
+  const ctx = item.ctx;
   const p = usePalette();
   const lab = (s: string) => (item.label ? s : "");
   if (item.kind === "draft") return <Margin label={lab("pi")} color={p.blue} a11y="msg-inflight"><Blocks blocks={item.d.content} ctx={ctx} prefix="draft" streaming /></Margin>;
@@ -162,179 +165,196 @@ const Row = memo(function Row({ item, ctx }: { item: Item; ctx: Ctx }) {
   }
 });
 
-/**
- * Keeps the view still while rows change size. The list is inverted: offset 0 is the bottom (newest),
- * a larger offset shows older content, and a row that changes size moves every older row (higher index).
- * So whenever a row grows by d and the reader should not move, the list scrolls by +d.
- *
- * - A fold inside a row asked for its top edge to stay ("top"): always compensate, so it opens downward.
- * - A fold asked for its bottom edge ("bottom"): leave it, the list does that by itself.
- * - Anything else (the answer streaming in, a tool's live output, a new row arriving) while the reader
- *   is not at the bottom and the row lies at or below what is on screen: compensate, so what they are
- *   reading stays put and the new output extends below, out of view. At the bottom, the list follows.
- *
- * Heights live in the list (keyed by row), not in the row component, so a row that virtualisation
- * unmounted and mounted again is not mistaken for new content.
- */
-interface Keeper {
-  heights: Map<string, number>;
-  pending: Map<string, Anchor>;
-  offset: { current: number };
-  maxVisible: { current: number };
-  atBottom: () => boolean;
-  shift: (d: number, fresh?: boolean) => void;
-}
+/** Imperative handle: scroll to a message by entry id (used by the outline). */
+export interface TranscriptHandle { jumpTo: (entryId: string) => boolean }
 
-function Anchored({ id, index, keeper, children }: { id: string; index: number; keeper: Keeper; children: ReactNode }) {
-  const request = useCallback((a: Anchor) => { keeper.pending.set(id, a); }, [id, keeper]);
+/** Within this distance of the end the list follows new output; further up it holds still. */
+const FOLLOW_SLACK = 24;
+/** Rows rendered at first, and added each time the reader reaches the top. */
+const WINDOW = 40;
+
+/** Measures a row and, for a fold asking to keep its bottom edge, scrolls by the change. */
+function Measured({ id, rows, children }: { id: string; rows: RowGeometry; children: ReactNode }) {
+  const request = useCallback((a: Anchor) => { if (a === "bottom") rows.pending.add(id); }, [id, rows]);
   const onLayout = (e: LayoutChangeEvent) => {
-    const h = e.nativeEvent.layout.height;
-    const prev = keeper.heights.get(id);
-    keeper.heights.set(id, h);
-    const d = h - (prev ?? 0);
-    if (d === 0) return;
-    const asked = keeper.pending.get(id);
-    if (asked !== undefined && prev !== undefined) {
-      keeper.pending.delete(id);
-      if (asked === "top") keeper.shift(d);
-      return;
-    }
-    if (!keeper.atBottom() && index <= keeper.maxVisible.current) keeper.shift(d, true);
+    const { y, height } = e.nativeEvent.layout;
+    const prev = rows.heights.get(id);
+    rows.heights.set(id, height);
+    rows.tops.set(id, y);
+    if (prev !== undefined && rows.pending.delete(id) && height !== prev) rows.scrollBy(height - prev);
   };
   return <AnchorContext.Provider value={request}><View onLayout={onLayout}>{children}</View></AnchorContext.Provider>;
 }
 
-/** Imperative handle: scroll to a message by entry id (used by the outline). */
-export interface TranscriptHandle { jumpTo: (entryId: string) => boolean }
+interface RowGeometry { heights: Map<string, number>; tops: Map<string, number>; pending: Set<string>; scrollBy: (d: number) => void }
 
-const AT_BOTTOM = 16;
-const LIST_PAD = 10;
+type Run = { toolName: string; args: unknown; partialText: string };
 
+/** Tool call ids a message or draft refers to. */
+function callIds(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  return (content as ContentBlock[]).filter((b) => b?.type === "toolCall").map((b) => String((b as { id: string }).id));
+}
+
+const sameDeps = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * The conversation, read top to bottom like a page.
+ *
+ * A plain (not inverted) scroll view: an inverted list flips its content, which on Android breaks text
+ * selection and makes a tap on selectable text scroll the list. Reading top to bottom also gives the wanted
+ * behaviour for free: a row that opens or grows pushes only what is below it, so the text being read stays
+ * put while the answer streams in further down. At the end, the view follows new output.
+ *
+ * Only the last rows are rendered at first; reaching the top adds more, and maintainVisibleContentPosition
+ * keeps the view still while they appear above. Every row keeps the same item object (and so skips
+ * re-rendering) until something it shows has changed.
+ */
 export const Transcript = forwardRef<TranscriptHandle, {
-  messages: WireMessage[]; inflight?: AssistantDraft; queued?: Queued[]; running?: Record<string, { toolName: string; args: unknown; partialText: string }>;
+  messages: WireMessage[]; inflight?: AssistantDraft; queued?: Queued[]; running?: Record<string, Run>;
   hasMoreBefore: boolean; onLoadMore?: () => Promise<void>; hideThinking?: boolean; header?: ReactElement | null;
 }>(function Transcript(props, ref) {
   const p = usePalette();
-  const listRef = useRef<FlatList<Item>>(null);
-  const [showJump, setShowJump] = useState(false);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const running = props.running ?? {};
+  const running = props.running ?? EMPTY_RUNS;
+  const hideThinking = !!props.hideThinking;
+  const cache = useRef(new Map<string, { deps: unknown[]; item: Item }>());
 
-  const { items, ctx } = useMemo(() => {
+  const items = useMemo(() => {
     const results = new Map<string, WireMessage>();
     const calls = new Set<string>();
     for (const m of props.messages) {
       if (m.role === "toolResult" && typeof m.toolCallId === "string") results.set(m.toolCallId, m);
-      if (m.role === "assistant" && Array.isArray(m.content)) for (const b of m.content as ContentBlock[]) if (b.type === "toolCall") calls.add((b as { id: string }).id);
+      if (m.role === "assistant") for (const id of callIds(m.content)) calls.add(id);
     }
-    if (props.inflight) for (const b of props.inflight.content) if (b?.type === "toolCall") calls.add((b as { id: string }).id);
-    const out: Item[] = [];
+    if (props.inflight) for (const id of callIds(props.inflight.content)) calls.add(id);
+    type Raw = { key: string; build: (label: boolean) => Item; deps: unknown[]; speaker: string };
+    const raw: Raw[] = [];
+    const ctxFor = (ids: string[]): Ctx => {
+      const r = new Map<string, WireMessage>(); const run: Record<string, Run> = {};
+      for (const id of ids) { const x = results.get(id); if (x) r.set(id, x); if (running[id]) run[id] = running[id]!; }
+      return { results: r, running: run, hideThinking };
+    };
+    const subDeps = (ids: string[]) => ids.flatMap((id) => [results.get(id), running[id]]);
     props.messages.forEach((m, idx) => {
       if (m.role === "toolResult" && typeof m.toolCallId === "string" && calls.has(m.toolCallId)) return;
-      out.push({ key: m.entryId ? `e${m.entryId}` : `i${idx}`, kind: "msg", m, idx });
+      const key = m.entryId ? `e${m.entryId}` : `i${idx}`;
+      const ids = m.role === "assistant" ? callIds(m.content) : [];
+      const it = { key, kind: "msg" as const, m, idx };
+      raw.push({ key, deps: [m, idx, hideThinking, ...subDeps(ids)], speaker: speaker(it as Item), build: (label) => ({ ...it, label, ctx: ctxFor(ids) }) });
     });
-    if (props.inflight) out.push({ key: "inflight", kind: "draft", d: props.inflight });
-    for (const [id, t] of Object.entries(running)) if (!calls.has(id)) out.push({ key: `run-${id}`, kind: "tool", id, name: t.toolName, args: t.args, partialText: t.partialText });
+    if (props.inflight) {
+      const d = props.inflight; const ids = callIds(d.content);
+      raw.push({ key: "inflight", deps: [d, hideThinking, ...subDeps(ids)], speaker: "pi", build: (label) => ({ key: "inflight", kind: "draft", d, label, ctx: ctxFor(ids) }) });
+    }
+    for (const [id, t] of Object.entries(running)) if (!calls.has(id)) {
+      raw.push({ key: `run-${id}`, deps: [t], speaker: "pi", build: (label) => ({ key: `run-${id}`, kind: "tool", id, name: t.toolName, args: t.args, partialText: t.partialText, label, ctx: NO_CTX }) });
+    }
     // Queued messages are not in the conversation yet, so they close the list.
-    for (const q of props.queued ?? []) out.push({ key: q.id, kind: "queued", q });
-    let prev = "";
-    for (const it of out) { const sp = speaker(it); it.label = sp !== prev; prev = sp; }
-    return { items: out, ctx: { results, running, hideThinking: !!props.hideThinking } as Ctx };
-  }, [props.messages, props.inflight, props.queued, running, props.hideThinking]);
+    for (const q of props.queued ?? []) raw.push({ key: q.id, deps: [q], speaker: "you", build: (label) => ({ key: q.id, kind: "queued", q, label, ctx: NO_CTX }) });
 
-  // Inverted list: offset 0 is the newest entry, so new output stays in view.
-  const data = useMemo(() => [...items].reverse(), [items]);
+    const next = new Map<string, { deps: unknown[]; item: Item }>();
+    let prev = "";
+    const out = raw.map((r) => {
+      const label = r.speaker !== prev; prev = r.speaker;
+      const deps = [...r.deps, label];
+      const hit = cache.current.get(r.key);
+      const item = hit && sameDeps(hit.deps, deps) ? hit.item : r.build(label);
+      next.set(r.key, { deps, item });
+      return item;
+    });
+    cache.current = next;
+    return out;
+  }, [props.messages, props.inflight, props.queued, running, hideThinking]);
+
+  // Render from `firstKey` on. Rows added before it (earlier history) wait until the reader scrolls up.
+  const [firstKey, setFirstKey] = useState<string | undefined>();
+  const firstIndex = useMemo(() => {
+    const i = firstKey ? items.findIndex((it) => it.key === firstKey) : -1;
+    return i >= 0 ? i : Math.max(0, items.length - WINDOW);
+  }, [items, firstKey]);
+  useEffect(() => { if (items.length && (!firstKey || !items.some((it) => it.key === firstKey))) setFirstKey(items[Math.max(0, items.length - WINDOW)]!.key); }, [items, firstKey]);
+  const shown = items.slice(firstIndex);
+  const more = firstIndex > 0;
+  const extendUp = () => { if (firstIndex > 0) setFirstKey(items[Math.max(0, firstIndex - WINDOW)]!.key); };
+
   const offset = useRef(0);
-  const maxVisible = useRef(0);
   const viewH = useRef(0);
+  const contentH = useRef(0);
+  const following = useRef(true);
+  const [ready, setReady] = useState(false);
+  const [away, setAway] = useState(false);
   const [newBelow, setNewBelow] = useState(false);
-  const keeper = useMemo<Keeper>(() => ({
-    heights: new Map(), pending: new Map(), offset, maxVisible,
-    atBottom: () => offset.current <= AT_BOTTOM,
-    shift: (d, fresh) => {
-      const y = Math.max(0, offset.current + d);
-      offset.current = y;
-      listRef.current?.scrollToOffset({ offset: y, animated: false });
-      if (fresh && d > 0) setNewBelow(true);
-    },
+  const rows = useMemo<RowGeometry>(() => ({
+    heights: new Map(), tops: new Map(), pending: new Set(),
+    scrollBy: (d) => { const y = Math.max(0, offset.current + d); offset.current = y; scrollRef.current?.scrollTo({ y, animated: false }); },
   }), []);
 
-  // Rows that left the data (the streamed draft replaced by the saved message, a queued message delivered)
-  // take their height with them; below the reader that would pull the view, so give it back.
-  const lastIndex = useRef(new Map<string, number>());
-  useEffect(() => {
-    const now = new Map(data.map((it, i) => [it.key, i]));
-    if (!keeper.atBottom()) {
-      let gone = 0;
-      for (const [key, i] of lastIndex.current) if (!now.has(key) && i <= maxVisible.current) gone += keeper.heights.get(key) ?? 0;
-      if (gone) keeper.shift(-gone);
-    }
-    for (const key of keeper.heights.keys()) if (!now.has(key)) keeper.heights.delete(key);
-    lastIndex.current = now;
-  }, [data]);
-
+  const toEnd = (animated: boolean) => scrollRef.current?.scrollToEnd({ animated });
   const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    offset.current = e.nativeEvent.contentOffset.y;
-    const away = offset.current > AT_BOTTOM;
-    setShowJump(away);
-    if (!away) setNewBelow(false);
-  }, []);
-  const onViewable = useRef(({ viewableItems }: { viewableItems: ListViewToken[] }) => {
-    let m = 0;
-    for (const v of viewableItems) if (v.index != null && v.index > m) m = v.index;
-    maxVisible.current = m;
-  }).current;
-  const jump = () => { listRef.current?.scrollToOffset({ offset: 0, animated: true }); setShowJump(false); setNewBelow(false); };
+    const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+    offset.current = contentOffset.y;
+    const gap = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    following.current = gap <= FOLLOW_SLACK;
+    setAway(!following.current);
+    if (following.current) setNewBelow(false);
+    // Near the top: show the next slice of rows already on the phone.
+    if (contentOffset.y < 400 && more) extendUp();
+  }, [more, items, firstIndex]);
+  // After "read earlier messages" the reader is at the top already: show what arrived without a scroll.
+  useEffect(() => { if (more && ready && !following.current && offset.current < 400) extendUp(); }, [more, firstIndex]);
+  const onContentSizeChange = (_w: number, h: number) => {
+    const grew = h > contentH.current;
+    contentH.current = h;
+    if (following.current) { toEnd(false); if (!ready) requestAnimationFrame(() => setReady(true)); }
+    else if (grew && ready) setNewBelow(true);
+  };
+  const jump = () => { following.current = true; toEnd(true); setAway(false); setNewBelow(false); };
 
   useImperativeHandle(ref, () => ({
     jumpTo: (entryId: string) => {
-      const index = data.findIndex((it) => it.kind === "msg" && it.m.entryId === entryId);
+      const index = items.findIndex((it) => it.kind === "msg" && it.m.entryId === entryId);
       if (index < 0) return false;
-      // Put the row's top at the top of the view. Distance of that edge from the bottom of the content is
-      // the padding plus the heights of every newer row and this one.
-      let dist = LIST_PAD;
-      let known = true;
-      for (let i = 0; i <= index; i++) { const h = keeper.heights.get(data[i]!.key); if (h === undefined) { known = false; break; } dist += h; }
-      if (known && viewH.current) listRef.current?.scrollToOffset({ offset: Math.max(0, dist - viewH.current + 8), animated: true });
-      else listRef.current?.scrollToIndex({ index, viewPosition: 1, animated: true });
+      const key = items[index]!.key;
+      const go = () => {
+        const y = rows.tops.get(key);
+        if (y === undefined) return;
+        following.current = false;
+        scrollRef.current?.scrollTo({ y: Math.max(0, y - 8), animated: true });
+      };
+      if (index < firstIndex) { setFirstKey(key); setTimeout(go, 250); } else go();
       return true;
     },
-  }), [data]);
+  }), [items, firstIndex]);
 
   return (
     <View style={{ flex: 1 }}>
-      <FlatList
-        ref={listRef}
-        inverted
+      <ScrollView
+        ref={scrollRef}
         accessibilityLabel="transcript"
-        data={data}
-        keyExtractor={(i) => i.key}
-        renderItem={({ item, index }) => <Anchored id={item.key} index={index} keeper={keeper}><Row item={item} ctx={ctx} /></Anchored>}
-        contentContainerStyle={{ paddingHorizontal: MARGIN, paddingVertical: LIST_PAD }}
-        onLayout={(e) => { viewH.current = e.nativeEvent.layout.height; }}
+        style={{ opacity: ready || !items.length ? 1 : 0 }}
+        contentContainerStyle={{ paddingHorizontal: MARGIN, paddingTop: 10, paddingBottom: 18 }}
+        onLayout={(e) => { viewH.current = e.nativeEvent.layout.height; if (following.current) toEnd(false); }}
+        onContentSizeChange={onContentSizeChange}
         onScroll={onScroll}
-        scrollEventThrottle={16}
-        onViewableItemsChanged={onViewable}
-        viewabilityConfig={{ itemVisiblePercentThreshold: 1 }}
-        onScrollToIndexFailed={(info) => {
-          // The row is not measured yet: get close first, then aim again.
-          listRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
-          setTimeout(() => listRef.current?.scrollToIndex({ index: info.index, viewPosition: 1, animated: true }), 120);
-        }}
-        ListFooterComponent={
-          <View style={{ paddingTop: 10, alignItems: "center", gap: 10 }}>
-            {props.header}
-            {props.hasMoreBefore && props.onLoadMore ? (
+        scrollEventThrottle={32}
+        keyboardShouldPersistTaps="handled"
+        // Keeps the rows on screen still when earlier rows are added above them.
+        maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
+      >
+        <View style={{ paddingBottom: 10, alignItems: "center", gap: 10 }}>
+          {props.header}
+          {more ? <Txt v="label" faint>scroll up for earlier messages</Txt>
+            : props.hasMoreBefore && props.onLoadMore ? (
               <Button a11y="transcript-load-more" label={loadingMore ? "loading…" : "read earlier messages"} disabled={loadingMore}
-                onPress={async () => { setLoadingMore(true); try { await props.onLoadMore?.(); } finally { setLoadingMore(false); } }} />
+                onPress={async () => { setLoadingMore(true); following.current = false; try { await props.onLoadMore?.(); } finally { setLoadingMore(false); } }} />
             ) : items.length ? <Txt v="label" faint>— beginning of the session —</Txt> : null}
-          </View>
-        }
-        ListEmptyComponent={<Txt v="em" soft center style={{ marginTop: 60 }}>Nothing said yet.</Txt>}
-        initialNumToRender={15}
-        windowSize={11}
-      />
-      {showJump ? (
+        </View>
+        {shown.map((it) => <Measured key={it.key} id={it.key} rows={rows}><Row item={it} /></Measured>)}
+        {!items.length ? <Txt v="em" soft center style={{ marginTop: 60 }}>Nothing said yet.</Txt> : null}
+      </ScrollView>
+      {away ? (
         // Centred, clear of the stop control at the right of the run bar below.
         <View pointerEvents="box-none" style={{ position: "absolute", left: 0, right: 0, bottom: 12, alignItems: "center" }}>
           <Pressable accessibilityRole="button" accessibilityLabel="transcript-jump-latest" onPress={jump}

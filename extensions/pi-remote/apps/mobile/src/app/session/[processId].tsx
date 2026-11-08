@@ -26,38 +26,30 @@ import { Transcript, type TranscriptHandle } from "../../session/Transcript";
 type Confirm = { title: string; body?: string; label?: string; run: () => Promise<void> };
 
 /** One cell of the spec strip under the header: caption, value, a rotating line of detail, optional bar or meter. */
-function Spec({ label, value, subs, onPress, a11y, color, bar, meter }: {
-  label: string; value: string; subs?: string[]; onPress?: () => void; a11y: string; color?: string;
+function Spec({ label, value, sub, onPress, a11y, color, bar, meter }: {
+  label: string; value: string; sub?: string; onPress?: () => void; a11y: string; color?: string;
   bar?: { pct: number; color: string }; meter?: { level: number; of: number; color: string };
 }) {
   const p = usePalette();
   useTestAction(a11y, onPress);
-  const tint = p.tint;
-  // Only caption and value take the tap. The detail line is a sibling, so a sideways swipe on it scrolls
-  // instead of being captured as a press by the cell.
+  // The whole cell is the button; the second line is one short fact, shown in full.
   return (
-    <View style={{ flex: 1, paddingBottom: 8 }}>
-      <Pressable accessibilityRole={onPress ? "button" : undefined} accessibilityLabel={a11y} onPress={onPress} disabled={!onPress}
-        style={({ pressed }) => ({ paddingTop: 9, paddingHorizontal: 10, paddingBottom: 2, gap: 2, backgroundColor: pressed ? tint : "transparent" })}>
-        <Txt v="label" soft>{label}{onPress ? "  ›" : ""}</Txt>
-        <Txt v="bodyBold" color={color ?? p.ink} lines={1} fit={0.75} style={{ fontSize: 14.5, lineHeight: 19 }}>{value}</Txt>
-      </Pressable>
-      {subs?.length ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled contentContainerStyle={{ paddingHorizontal: 10 }}>
-          <Txt v="mono" soft style={{ fontSize: 10.5, lineHeight: 15 }}>{subs.filter(Boolean).join("  ·  ")}</Txt>
-        </ScrollView>
-      ) : null}
+    <Pressable accessibilityRole={onPress ? "button" : undefined} accessibilityLabel={a11y} onPress={onPress} disabled={!onPress}
+      style={({ pressed }) => ({ flex: 1, paddingTop: 9, paddingBottom: 9, paddingHorizontal: 10, gap: 2, backgroundColor: pressed ? p.tint : "transparent" })}>
+      <Txt v="label" soft>{label}{onPress ? "  ›" : ""}</Txt>
+      <Txt v="bodyBold" color={color ?? p.ink} lines={1} fit={0.75} style={{ fontSize: 14.5, lineHeight: 19 }}>{value}</Txt>
+      {sub ? <Txt v="mono" soft lines={2} style={{ fontSize: 10.5, lineHeight: 14 }}>{sub}</Txt> : null}
       {bar ? (
-        <View style={{ height: 3, backgroundColor: p.faint, marginTop: 4, marginHorizontal: 10 }}>
+        <View style={{ height: 3, backgroundColor: p.faint, marginTop: 4 }}>
           <View style={{ height: 3, width: `${Math.max(2, Math.min(100, bar.pct))}%`, backgroundColor: bar.color }} />
         </View>
       ) : null}
       {meter ? (
-        <View style={{ flexDirection: "row", gap: 2, marginTop: 4, marginHorizontal: 10 }}>
+        <View style={{ flexDirection: "row", gap: 2, marginTop: 4 }}>
           {Array.from({ length: meter.of }, (_, i) => <View key={i} style={{ flex: 1, height: 3, backgroundColor: i <= meter.level ? meter.color : p.faint }} />)}
         </View>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -253,25 +245,16 @@ export default function SessionScreen() {
         {info ? (
           <View style={{ flexDirection: "row", borderBottomWidth: 1, borderBottomColor: p.ink }}>
             <Spec a11y="chip-model" label="model" value={info.model ? (info.model.name || info.model.id) : "none"}
-              subs={info.model ? [
-                info.model.provider,
-                info.model.id !== info.model.name ? info.model.id : "",
-                info.model.input.includes("image") ? "reads images" : "text only",
-                info.model.reasoning ? "reasoning model" : "no reasoning",
-                info.contextUsage ? `${fmtTokens(info.contextUsage.contextWindow)} context window` : "",
-              ] : ["choose one"]}
+              sub={info.model ? info.model.provider : "choose one"}
               color={info.model ? p.ink : p.danger} onPress={ready ? () => setSheet("model") : undefined} />
             <View style={{ width: 1, backgroundColor: p.faint }} />
             <Spec a11y="chip-thinking" label="thinking" value={info.thinkingLevel} color={thinkColor(p, info.thinkingLevel)}
-              subs={info.model?.reasoning ? [`level ${thinkIndex(info.thinkingLevel)} of ${THINK_LEVELS.length - 1}`, "tap to change"] : ["model does not reason"]}
+              sub={info.model?.reasoning === false ? "model does not reason" : `level ${thinkIndex(info.thinkingLevel)} of ${THINK_LEVELS.length - 1}`}
               meter={{ level: thinkIndex(info.thinkingLevel), of: THINK_LEVELS.length, color: thinkColor(p, info.thinkingLevel) }}
               onPress={ready ? () => setSheet("thinking") : undefined} />
             <View style={{ width: 1, backgroundColor: p.faint }} />
             <Spec a11y="chip-context" label="context" value={usage != null ? `${usage.toFixed(usage < 10 ? 1 : 0)}%` : "?"}
-              subs={info.contextUsage ? (info.contextUsage.tokens != null ? [
-                `${fmtTokens(info.contextUsage.tokens)} used of ${fmtTokens(info.contextUsage.contextWindow)}`,
-                `${fmtTokens(Math.max(0, info.contextUsage.contextWindow - info.contextUsage.tokens))} left`,
-              ] : ["known after the next reply", `window ${fmtTokens(info.contextUsage.contextWindow)}`]) : []}
+              sub={info.contextUsage ? `${info.contextUsage.tokens != null ? fmtTokens(info.contextUsage.tokens) : "?"} used of ${fmtTokens(info.contextUsage.contextWindow)}` : undefined}
               color={usage != null && usage > 80 ? p.danger : p.ink}
               bar={usage != null ? { pct: usage, color: usage > 80 ? p.danger : usage > 50 ? p.pink : p.blue } : undefined} />
           </View>

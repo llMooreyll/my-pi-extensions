@@ -6,10 +6,10 @@ import { useTestAction } from "../lib/test-hooks";
 
 /**
  * Which edge of a transcript row must stay put on screen when the row changes size.
- * The transcript is an inverted list, so left alone a row grows upward and shrinks from the top.
- * - "top": the row's top edge stays where it is; the row opens downward (taps on a header, "show all").
+ * The transcript reads top to bottom, so a row that changes size keeps its top edge by itself:
+ * - "top": nothing to do; the row opens and closes downward (taps on a header, "show all").
  * - "bottom": the row's bottom edge stays; used by the fold control at the end of an opened row,
- *   so the reader is left looking at the folded row instead of being thrown somewhere else.
+ *   so the reader is left looking at the folded row instead of the content that slid up under them.
  */
 export type Anchor = "top" | "bottom";
 

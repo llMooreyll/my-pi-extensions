@@ -6,7 +6,7 @@ import { recompute } from "./links.ts";
 import { log } from "./log.ts";
 import { NdjsonDecoder } from "./ndjson.ts";
 import { BRIDGE_SOCKET, RUNTIME_DIR } from "./paths.ts";
-import { BridgeConn, registry } from "./registry.ts";
+import { BridgeConn, registry, withActivity } from "./registry.ts";
 import { notifySpawnToken } from "./spawner.ts";
 
 function relink(): void {
@@ -56,7 +56,7 @@ export function startBridgeServer(): Server {
           e.info.lastSeq = f.seq;
           if (f.ev.type === "info" || f.ev.type === "session_changed") {
             const parent = e.info.parentProcessId;
-            e.info = { ...(f.ev.info as ProcessInfo), lastSeq: f.seq };
+            e.info = withActivity({ ...(f.ev.info as ProcessInfo), lastSeq: f.seq });
             if (parent) e.info.parentProcessId = parent;
             relink();
             hub.broadcastProc("changed", e.info);

@@ -69,13 +69,11 @@ export function PathSuggest({ value, onChange, onHome }: { value: string; onChan
   const pool = dirs.filter((d) => hidden || !d.startsWith("."));
   const starts = pool.filter((d) => d.toLowerCase().startsWith(q));
   const contains = q ? pool.filter((d) => !d.toLowerCase().startsWith(q) && d.toLowerCase().includes(q)) : [];
-  const shown = [...starts, ...contains].slice(0, 12);
-  const more = starts.length + contains.length - shown.length;
+  const shown = [...starts, ...contains];
   return (
     <View accessibilityLabel="path-suggestions" style={{ marginTop: 4 }}>
       {shown.map((d, i) => <Suggestion key={d} a11y={`path-suggest-${i}`} name={d} prefix={prefix} onPick={() => onChange(`${dir}${d}/`)} />)}
       {!shown.length ? <Txt v="small" soft style={{ marginTop: 6 }}>{q ? "No folder starts with that." : "No sub-folders here."}</Txt> : null}
-      {more > 0 ? <Txt v="label" soft style={{ marginTop: 6 }}>{more} more — keep typing to narrow</Txt> : null}
     </View>
   );
 }

@@ -1,10 +1,10 @@
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ProcessInfo, ProjectItem, SessionListItem } from "@pi-remote/protocol";
 import { ConnStatus, ErrorDialog, TrustDialog } from "../ds/common";
-import { Button, Field, Pad, Row, Rule, Spinner, StatusText, Txt } from "../ds/primitives";
+import { Button, Field, Pad, Row, Spinner, StatusText, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { baseName, plainPreview, processTitle, relTime } from "../lib/format";
 import { openProcess } from "../lib/nav";
@@ -59,7 +59,6 @@ function ProcRows({ node, depth, index }: { node: Node; depth: number; index: st
   );
 }
 
-/** A big number with a mono caption, like a figure in a newspaper. */
 /** A big number with a mono caption. Not scaled by the system font size, so the header row keeps its shape. */
 function Figure({ n, label, color }: { n: number; label: string; color: string }) {
   return (
@@ -89,13 +88,19 @@ function AppTitle({ room }: { room: number }) {
   );
 }
 
-/** A section heading set as a full-width coloured band: the strongest landmark on the page. */
-function Band({ title, count, total, bg, fg, dot, a11y, flush }: { title: string; count: number; total?: number; bg: string; fg: string; dot?: boolean; a11y: string; flush?: boolean }) {
+/**
+ * A section heading: a square marker and a large serif title in the section's colour, the count at the
+ * right, and a heavy rule in the same colour. Typography and colour carry the weight; no filled band.
+ */
+function Heading({ title, count, total, color, rule, a11y, top = 30 }: { title: string; count: number; total?: number; color: string; rule: string; a11y: string; top?: number }) {
   return (
-    <View accessibilityLabel={a11y} style={{ marginTop: flush ? 0 : 26, backgroundColor: bg, paddingHorizontal: MARGIN, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 10 }}>
-      {dot ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: fg }} /> : null}
-      <Txt v="em" color={fg} style={{ flex: 1, fontSize: 22, lineHeight: 26 }}>{title}</Txt>
-      <Txt v="label" color={fg} style={{ fontFamily: F.monoBold, fontSize: 12 }}>{count}{total !== undefined ? ` of ${total}` : ""}</Txt>
+    <View accessibilityLabel={a11y} style={{ marginTop: top, paddingHorizontal: MARGIN }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ width: 10, height: 10, backgroundColor: color }} />
+        <Txt v="headline" color={color} style={{ flex: 1, fontSize: 28, lineHeight: 32 }}>{title}</Txt>
+        <Txt v="label" color={color} style={{ fontFamily: F.monoBold, fontSize: 12 }}>{count}{total !== undefined ? ` / ${total}` : ""}</Txt>
+      </View>
+      <View style={{ height: 2, backgroundColor: rule, marginTop: 8 }} />
     </View>
   );
 }
@@ -137,6 +142,8 @@ export default function Home() {
     } catch { /* the connection line explains */ }
   }, []);
   useEffect(() => { if (conn === "ready") void load(); }, [conn, load]);
+  // Coming back from a session: its place in "Recent" has changed.
+  useFocusEffect(useCallback(() => { if (useStore.getState().conn === "ready") void load(); }, [load]));
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -163,7 +170,7 @@ export default function Home() {
         stickyHeaderIndices={[1]}
       >
         <View>
-          <Pad style={{ paddingTop: 14, paddingBottom: 16, gap: 12 }}>
+          <Pad style={{ paddingTop: 14, paddingBottom: 4, gap: 12 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }}>
               <View style={{ flex: 1, marginRight: 10 }} onLayout={(e) => setTitleRoom(e.nativeEvent.layout.width)}>
                 <AppTitle room={titleRoom} />
@@ -179,7 +186,6 @@ export default function Home() {
               <Button kind="outline" compact a11y="home-settings" label="settings" onPress={() => router.push("/settings")} />
             </View>
           </Pad>
-          <Rule weight={2} />
 
           {flow.busy ? (
             <Pad style={{ paddingVertical: 14, flexDirection: "row", gap: 10 }}><Spinner color={p.blue} /><Txt v="label" color={p.blue} a11y="home-busy">{flow.busy}</Txt></Pad>
@@ -187,7 +193,7 @@ export default function Home() {
 
           {waiting.length ? (
             <>
-              <Band title="Waiting for you" count={waiting.length} bg={p.pink} fg="#FFFFFF" a11y="band-waiting" />
+              <Heading title="Waiting for you" count={waiting.length} color={p.pink} rule={p.pink} a11y="band-waiting" />
               {waiting.map((w) => (
                 <Row key={w.processId} a11y={`needs-${w.processId}`} accent={p.pink} index="→" indexColor={p.pink} onPress={() => openProcess(w.processId)}>
                   <Txt v="lead" lines={1}>{processTitle(w)}</Txt>
@@ -197,17 +203,17 @@ export default function Home() {
             </>
           ) : null}
 
-          <Band title="Live on the computer" count={procs.length} bg={p.blue} fg="#FFFFFF" dot a11y="band-live" />
+          <Heading title="Live on the computer" count={procs.length} color={p.blue} rule={p.blue} a11y="band-live" />
           {procs.length === 0 ? (
             <Pad indent style={{ paddingVertical: 16 }}><Txt v="body" soft a11y="home-no-procs">Nothing is running. Reopen a session below or start a new one.</Txt></Pad>
           ) : tree.map((n, i) => <ProcRows key={n.info.processId} node={n} depth={0} index={String(i + 1).padStart(2, "0")} />)}
 
-          <View style={{ height: 26 }} />
+          <View style={{ height: 8 }} />
         </View>
 
         {/* Sticky: the Recent heading, search and folder filters stay on screen while the list scrolls. */}
         <View style={{ backgroundColor: p.paper, borderBottomWidth: 1, borderBottomColor: p.ink }}>
-          <Band title="Recent sessions" count={shown.length} total={sessions && shown.length !== sessions.length ? sessions.length : undefined} bg={p.tint} fg={p.ink} a11y="band-recent" flush />
+          <Heading title="Recent sessions" count={shown.length} total={sessions && shown.length !== sessions.length ? sessions.length : undefined} color={p.ink} rule={p.ink} a11y="band-recent" top={22} />
           <Pad indent style={{ paddingTop: 8 }}>
             <Field a11y="home-search" value={query} onChangeText={setQuery} placeholder="search words, names, folders" autoCapitalize="none" autoCorrect={false} />
           </Pad>

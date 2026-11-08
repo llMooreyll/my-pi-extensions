@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 import type { ProcessInfo } from "../../protocol/src/index.ts";
@@ -36,6 +36,17 @@ export class BridgeConn {
   }
 }
 
+/**
+ * Last activity of a process: the later of what its bridge reports and the session file's mtime. The file
+ * is written on every message, so this also orders processes whose bridge predates lastActiveAt.
+ */
+export function withActivity(info: ProcessInfo): ProcessInfo {
+  let mtime = 0;
+  if (info.sessionFile) { try { mtime = statSync(info.sessionFile).mtimeMs; } catch { /* not written yet */ } }
+  const at = Math.max(info.lastActiveAt ?? 0, Math.floor(mtime));
+  return at ? { ...info, lastActiveAt: at } : info;
+}
+
 export interface ProcEntry { conn: BridgeConn; info: ProcessInfo; ring: EventRing }
 
 function real(f: string): string { try { return realpathSync(f); } catch { return f; } }
@@ -49,10 +60,10 @@ class Registry {
     if (prev) {
       if (prev.conn !== conn) prev.conn.failAll();
       prev.conn = conn;
-      prev.info = { ...info, parentProcessId: prev.info.parentProcessId };
+      prev.info = { ...withActivity(info), parentProcessId: prev.info.parentProcessId };
       return prev;
     }
-    const e: ProcEntry = { conn, info: { ...info }, ring: new EventRing(this.ringSize, info.lastSeq) };
+    const e: ProcEntry = { conn, info: withActivity(info), ring: new EventRing(this.ringSize, info.lastSeq) };
     this.procs.set(processId, e);
     return e;
   }

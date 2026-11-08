@@ -73,7 +73,8 @@ export const store = {
       // Keep the process list in sync with the freshest info. The parent link is derived by hostd and
       // not part of what the bridge reports, so a snapshot must not wipe it (it made children fall out of the tree).
       const parent = r.snapshot.info.parentProcessId ?? get().procs[pid]?.parentProcessId;
-      const fresh = parent ? { ...r.snapshot.info, parentProcessId: parent } : r.snapshot.info;
+      const lastActiveAt = Math.max(r.snapshot.info.lastActiveAt ?? 0, get().procs[pid]?.lastActiveAt ?? 0) || undefined;
+      const fresh = { ...r.snapshot.info, ...(parent ? { parentProcessId: parent } : {}), ...(lastActiveAt ? { lastActiveAt } : {}) };
       views[pid] = { ...views[pid]!, info: fresh };
       set({ views, procs: { ...get().procs, [pid]: fresh } });
     } else {
