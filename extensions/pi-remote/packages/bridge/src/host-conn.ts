@@ -22,6 +22,8 @@ export class HostConn {
   private retry?: ReturnType<typeof setTimeout>;
   private helloSent = false;
   private spawnTokenUsed = false;
+  /** Run once after the first welcome; used to retire the connection this one replaces. */
+  afterWelcome?: () => void;
   private calls = new Map<string, { resolve: (v: { transfers: TransferInfo[] }) => void; reject: (e: RemoteError) => void; timer: ReturnType<typeof setTimeout> }>();
 
   /** Bridge-initiated request to hostd (7.7.3). Rejects at once when hostd is not connected. */
@@ -81,6 +83,9 @@ export class HostConn {
       const q = this.queue;
       this.queue = [];
       for (const ev of q) this.write(ev);
+      const after = this.afterWelcome;
+      this.afterWelcome = undefined;
+      try { after?.(); } catch (e) { logError("afterWelcome", e); }
       return;
     }
     if (f.t === "ret") {
@@ -107,6 +112,9 @@ export class HostConn {
     try { this.socket?.write(encodeNdjson(frame)); } catch (e) { logError("write", e); }
   }
 
+  /** Take over events another connection had not delivered yet. */
+  adopt(frames: EvFrame[]): void { this.queue.unshift(...frames); }
+
   sendEvent(frame: EvFrame): void {
     if (this.socket && this.welcomed) { this.write(frame); return; }
     this.queue.push(frame);
@@ -123,8 +131,31 @@ export class HostConn {
   }
 }
 
+/** Events queued in a connection made by older bridge code, read without calling its methods. */
+interface OldConn { queue?: EvFrame[]; closed?: boolean; retry?: ReturnType<typeof setTimeout>; socket?: Socket }
+
+/**
+ * The connection lives on globalThis so the processId and the event sequence survive /reload and session
+ * replacement. Its methods do not: after /reload the object was built by the previous code (e.g. it had no
+ * call(), so send_to_phone failed). Replace such a connection with one of this code. The new one says hello
+ * with the same processId first; only after hostd welcomes it is the old socket dropped, without "bye",
+ * so hostd treats this as a reconnect and the phone never sees the process go away.
+ */
 export function ensureConnected(): void {
   const s = g();
+  if (s.conn && !(s.conn instanceof HostConn)) {
+    const old = s.conn as unknown as OldConn;
+    const fresh = new HostConn();
+    const pending = Array.isArray(old.queue) ? old.queue.splice(0) : [];
+    fresh.adopt(pending);
+    fresh.afterWelcome = () => {
+      old.closed = true;
+      clearTimeout(old.retry);
+      try { old.socket?.destroy(); } catch { /* gone */ }
+    };
+    s.conn = fresh;
+    logInfo("replaced the hostd connection left by previous bridge code");
+  }
   if (!s.conn) s.conn = new HostConn();
   s.conn.connect();
 }

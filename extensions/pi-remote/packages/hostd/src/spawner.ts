@@ -72,15 +72,48 @@ export async function spawnPi(opts: { cwd: string; sessionFile?: string; trust: 
   }
 }
 
-export async function openSession(sessionFile: string, trust: Trust): Promise<{ processId: string; spawned: boolean }> {
-  const live = registry.findBySessionFile(sessionFile);
-  if (live) return { processId: live.info.processId, spawned: false };
+/** Checks openSession would make before starting pi; returns the session's folder. */
+async function checkReopenable(sessionFile: string): Promise<string> {
   if (!sessionFile.endsWith(".jsonl") || !existsSync(sessionFile)) throw err("bad_request", "sessionFile must be an existing .jsonl file");
   const sessionsRoot = realpathSync(join(getAgentDir(), "sessions"));
   if (!isInside(realpathSync(sessionFile), sessionsRoot)) throw err("bad_request", "sessionFile must be inside the pi sessions directory");
   const info = await findSessionInfo(sessionFile);
   const cwd = info?.cwd;
   if (!cwd || !existsSync(cwd)) throw err("bad_request", `session cwd is missing or no longer exists: ${cwd || "(empty)"}`);
+  validateCwd(cwd);
+  return cwd;
+}
+
+export async function openSession(sessionFile: string, trust: Trust): Promise<{ processId: string; spawned: boolean }> {
+  const live = registry.findBySessionFile(sessionFile);
+  if (live) return { processId: live.info.processId, spawned: false };
+  const cwd = await checkReopenable(sessionFile);
   const processId = await spawnPi({ cwd, sessionFile, trust });
   return { processId, spawned: true };
+}
+
+/**
+ * Stop the current run if any, ask pi to quit, wait until its bridge is gone, then open the same session file again.
+ * Used to pick up new extension code (e.g. new tools) in a session that has been running since before the update.
+ */
+export async function restartProcess(processId: string, trust: Trust): Promise<{ processId: string }> {
+  const e = registry.get(processId);
+  if (!e) throw err("not_found", `process ${processId} not found`);
+  const info = e.info;
+  if (info.role.kind !== "main") throw err("bad_request", "Subagents and team members are started by their parent; quit them instead");
+  const file = info.sessionFile;
+  if (!file) throw err("bad_request", "This session is not saved to a file, so it cannot be reopened");
+  // Everything that could stop the reopen is checked while the old pi still runs, so a refusal leaves it untouched.
+  // pi writes the session file with the first message, so an empty conversation has nothing to reopen.
+  if (!existsSync(file)) throw err("bad_request", "This conversation has no messages yet, so there is nothing to reopen. Close it instead.");
+  await checkReopenable(file);
+  if (info.status !== "idle") await registry.request(processId, "abort", {}, 15_000).catch(() => {});
+  await registry.request(processId, "shutdown", {}, 15_000);
+  const until = Date.now() + 60_000;
+  while (registry.get(processId)) {
+    if (Date.now() > until) throw err("timeout", "pi did not quit within a minute; check it on the computer");
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  const r = await openSession(file, trust);
+  return { processId: r.processId };
 }

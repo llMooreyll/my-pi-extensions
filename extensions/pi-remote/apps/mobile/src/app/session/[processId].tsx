@@ -20,11 +20,12 @@ import { CommandsSheet, type DeckAction } from "../../session/Commands";
 import { CrewTray } from "../../session/CrewTray";
 import { Composer } from "../../session/Composer";
 import { filesSupported } from "../../state/transfers";
+import { canRestart, closeProcess, closeText, restartText } from "../../lib/process";
 import { OutlineSheet } from "../../session/Outline";
 import { CompactSheet, ForkSheet, InfoSheet, ModelSheet, ResumeSheet, ThinkingSheet } from "../../session/Sheets";
 import { Transcript, type TranscriptHandle } from "../../session/Transcript";
 
-type Confirm = { title: string; body?: string; label?: string; run: () => Promise<void> };
+type Confirm = { title: string; body?: string; label?: string; danger?: boolean; run: () => Promise<void> };
 
 /** One cell of the spec strip under the header: caption, value, a rotating line of detail, optional bar or meter. */
 function Spec({ label, value, sub, onPress, a11y, color, bar, meter }: {
@@ -173,6 +174,8 @@ export default function SessionScreen() {
       case "copy": { const t = lastAssistantText(); await Clipboard.setStringAsync(t); setError(t ? undefined : "There is no answer to copy yet."); if (t) store.toast(pid, "Copied the last answer"); return; }
       case "new": setConfirm({ title: "Start a fresh session?", body: "This pi leaves the current conversation (it stays on disk) and starts an empty one.", label: "Start fresh", run: () => doCall(() => call("new_session", { processId: pid }, 70_000)) }); return;
       case "reload": setConfirm({ title: "Reload pi?", body: "Extensions, skills and prompts are reloaded on the computer.", label: "Reload", run: () => doCall(() => call("reload", { processId: pid })) }); return;
+      case "quit": if (info) setConfirm({ ...closeText(info), label: "Close pi", danger: true, run: () => doCall(() => closeProcess(info)) }); return;
+      case "restart": if (info && canRestart(info)) setConfirm({ ...restartText(info), label: "Restart pi", run: () => flow.restartProcess(pid, info.cwd, true) }); return;
       case "clone": setConfirm({
         title: "Clone this session?", body: "A new session starts with everything up to now. The original stays as it is.", label: "Clone",
         run: () => doCall(async () => { const t = await call("get_tree", { processId: pid }); if (t.leafId) await call("fork", { processId: pid, entryId: t.leafId, position: "at" }, 70_000); }),
@@ -191,6 +194,7 @@ export default function SessionScreen() {
       case "name": clear(); if (action.name) await doCall(() => call("set_name", { processId: pid, name: action.name! })); else setSheet("rename"); return true;
       case "new": clear(); await runAction("new"); return true;
       case "reload": clear(); await runAction("reload"); return true;
+      case "close": clear(); await runAction("quit"); return true;
       case "clone": clear(); await runAction("clone"); return true;
       case "compact": clear(); await doCall(() => call("compact", { processId: pid, customInstructions: action.instructions }, 620_000)); return true;
       case "prompt": {
@@ -287,6 +291,11 @@ export default function SessionScreen() {
           </View>
         ) : null}
 
+        {flow.busy ? (
+          <View accessibilityLabel="session-busy" style={{ paddingHorizontal: MARGIN, paddingVertical: 12, flexDirection: "row", gap: 10, alignItems: "center", borderBottomWidth: 1, borderBottomColor: p.faint }}>
+            <Spinner color={p.blue} /><Txt v="label" color={p.blue}>{flow.busy}</Txt>
+          </View>
+        ) : null}
         {gone ? (
           <View accessibilityLabel="session-gone" style={{ paddingHorizontal: MARGIN, paddingVertical: 16, gap: 10, borderBottomWidth: 1, borderBottomColor: p.faint }}>
             <Txt v="em">This pi has quit on the computer.</Txt>
@@ -347,7 +356,7 @@ export default function SessionScreen() {
         />
       </Screen>
 
-      <CommandsSheet visible={sheet === "deck"} running={running || waiting} commands={commands} onAction={(a) => void runAction(a)} onInsert={(t) => { setSheet(undefined); setText(t); }} onClose={() => setSheet(undefined)} />
+      <CommandsSheet visible={sheet === "deck"} running={running || waiting} canRestart={!!info && canRestart(info)} commands={commands} onAction={(a) => void runAction(a)} onInsert={(t) => { setSheet(undefined); setText(t); }} onClose={() => setSheet(undefined)} />
       {sheet === "model" ? <ModelSheet processId={pid} onClose={() => setSheet(undefined)} /> : null}
       {sheet === "thinking" ? <ThinkingSheet processId={pid} onClose={() => setSheet(undefined)} /> : null}
       {(sheet === "tree" || sheet === "outline") && view ? (
@@ -360,7 +369,7 @@ export default function SessionScreen() {
       {sheet === "compact" ? <CompactSheet processId={pid} onClose={() => setSheet(undefined)} /> : null}
       {(sheet === "session" || sheet === "rename") && info ? <InfoSheet info={info} renameFirst={sheet === "rename"} onClose={() => setSheet(undefined)} /> : null}
       <RpivSheet prompt={rpivOpen} onClose={() => setRpivOpen(undefined)} onSubmit={(answer) => call("rpiv_answer", { processId: pid, answer })} />
-      <ConfirmDialog title={confirm?.title} body={confirm?.body} confirmLabel={confirm?.label} onCancel={() => setConfirm(undefined)} onConfirm={() => { const c = confirm; setConfirm(undefined); if (c) void c.run(); }} />
+      <ConfirmDialog title={confirm?.title} body={confirm?.body} confirmLabel={confirm?.label} danger={confirm?.danger} onCancel={() => setConfirm(undefined)} onConfirm={() => { const c = confirm; setConfirm(undefined); if (c) void c.run(); }} />
       <TrustDialog {...flow.trustDialog} />
       <ErrorDialog text={error ?? flow.error} onClose={() => { setError(undefined); flow.clearError(); }} />
     </KeyboardAvoidingView>

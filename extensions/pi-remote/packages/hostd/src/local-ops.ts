@@ -4,7 +4,7 @@ import { readSession } from "./session-reader.ts";
 import { listProjects, listSessions } from "./sessions-index.ts";
 import { listDirs } from "./dirs.ts";
 import { getSettings, setSetting } from "./settings-service.ts";
-import { openSession, spawnPi } from "./spawner.ts";
+import { openSession, restartProcess, spawnPi } from "./spawner.ts";
 import { cancelTransfer, forgetTransfer, inboxDir, listTransfers, uploadBegin } from "./transfers.ts";
 
 type Args = Record<string, unknown>;
@@ -23,6 +23,7 @@ export async function runLocalOp(op: string, a: Args, deviceId?: string): Promis
     case "set_setting": return done(await setSetting(a.key as string, a.value));
     case "list_dirs": return done(await listDirs(String(a.path)));
     case "read_session": return done(readSession(a.sessionFile as string, a.beforeEntryId as string | undefined, (a.limit as number | undefined) ?? 200));
+    case "restart_process": return done(await restartProcess(a.processId as string, a.trust as Trust));
     case "list_transfers": return done({ transfers: listTransfers(), inboxDir: inboxDir() });
     case "upload_begin": return done({ transfer: uploadBegin(a as { name: string; size: number; mime?: string; processId?: string }, deviceId) });
     case "transfer_cancel": cancelTransfer(a.id as string, deviceId); return done({});

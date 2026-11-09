@@ -35,10 +35,22 @@ export function useOpenFlow() {
     finally { setBusy(undefined); }
   }), [withTrust]);
 
+  /** Quit a pi and open its session again (hostd does both, so a dropped phone connection cannot leave it half done). */
+  const restartProcess = useCallback((processId: string, cwd: string, replace = false) => withTrust(cwd, async (trust) => {
+    setBusy("Restarting pi on the computer…");
+    try {
+      const r = await call("restart_process", { processId, trust }, 120_000);
+      const to = { pathname: "/session/[processId]" as const, params: { processId: r.processId } };
+      if (replace) router.replace(to); else router.push(to);
+    }
+    catch (e) { setError(errText(e)); }
+    finally { setBusy(undefined); }
+  }), [withTrust]);
+
   const trustDialog = {
     cwd: pending?.cwd,
     onChoose: (t: Trust) => { const p = pending; setPending(undefined); if (p) void p.run(t); },
     onCancel: () => setPending(undefined),
   };
-  return { openSession, newProcess, trustDialog, busy, error, clearError: () => setError(undefined) };
+  return { openSession, newProcess, restartProcess, trustDialog, busy, error, clearError: () => setError(undefined) };
 }

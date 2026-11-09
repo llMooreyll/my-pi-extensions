@@ -3,15 +3,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ProcessInfo, ProjectItem, SessionListItem } from "@pi-remote/protocol";
-import { ConnStatus, ErrorDialog, TrustDialog } from "../ds/common";
+import { ConfirmDialog, ConnStatus, ErrorDialog, TrustDialog } from "../ds/common";
+import { canRestart, closeProcess, closeText, restartText } from "../lib/process";
 import { filesSupported, useTransfers } from "../state/transfers";
-import { Button, Field, Pad, Row, Spinner, StatusText, Txt } from "../ds/primitives";
+import { Button, Choice, Field, Pad, Row, Sheet, Spinner, StatusText, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { baseName, plainPreview, processTitle, relTime } from "../lib/format";
 import { openProcess } from "../lib/nav";
 import { useOpenFlow } from "../lib/open";
 import { useTestAction } from "../lib/test-hooks";
-import { call } from "../net/connection";
+import { call, errText } from "../net/connection";
 import { useStore } from "../state/store";
 
 interface Node { info: ProcessInfo; children: Node[] }
@@ -37,7 +38,23 @@ export function roleLine(p: ProcessInfo): string | undefined {
 
 const descendants = (n: Node): ProcessInfo[] => n.children.flatMap((c) => [c.info, ...descendants(c)]);
 
-function ProcRows({ node, depth, index }: { node: Node; depth: number; index: string }) {
+function ProcMenu(props: { info?: ProcessInfo; onClose: () => void; onRestart: (i: ProcessInfo) => void; onCloseProc: (i: ProcessInfo) => void }) {
+  const i = props.info;
+  const pick = (fn: () => void) => () => { props.onClose(); fn(); };
+  return (
+    <Sheet visible={!!i} a11y="proc-menu" kicker={i ? `${baseName(i.cwd)} · ${i.status === "idle" ? "idle" : i.status === "running" ? "working" : "needs you"}` : ""} title={i ? processTitle(i) : ""} onClose={props.onClose}>
+      {i ? (
+        <>
+          <Choice a11y="proc-menu-open" label="Open" sub="go to the conversation" strong onPress={pick(() => openProcess(i.processId))} />
+          {canRestart(i) ? <Choice a11y="proc-menu-restart" label="Restart pi" sub="quit and reopen this conversation with current extensions and tools" strong onPress={pick(() => props.onRestart(i))} /> : null}
+          <Choice a11y="proc-menu-quit" label="Close pi" sub="quit pi on the computer; the conversation stays on disk" strong onPress={pick(() => props.onCloseProc(i))} />
+        </>
+      ) : null}
+    </Sheet>
+  );
+}
+
+function ProcRows({ node, depth, index, onMenu }: { node: Node; depth: number; index: string; onMenu: (info: ProcessInfo) => void }) {
   const p = usePalette();
   const info = node.info;
   const desc = descendants(node);
@@ -46,7 +63,7 @@ function ProcRows({ node, depth, index }: { node: Node; depth: number; index: st
   const accent = info.status === "waiting_ui" ? p.pink : info.status === "running" ? p.blue : undefined;
   return (
     <>
-      <Row a11y={`proc-${info.processId}`} index={index} indexColor={accent} accent={accent} onPress={() => openProcess(info.processId)}
+      <Row a11y={`proc-${info.processId}`} index={index} indexColor={accent} accent={accent} onPress={() => openProcess(info.processId)} onLongPress={() => onMenu(info)}
         style={depth ? { paddingLeft: depth * 18 } : undefined}
         trailing={<StatusText status={info.status} count={info.pendingUiCount} a11y={`proc-status-${info.processId}`} />}>
         {role ? <Txt v="label" color={p.blue}>{depth ? "↳ " : ""}{role}</Txt> : null}
@@ -55,7 +72,7 @@ function ProcRows({ node, depth, index }: { node: Node; depth: number; index: st
         {info.lastText ? <Txt v="small" soft lines={2}>{plainPreview(info.lastText)}</Txt> : null}
         {subWaiting ? <Txt v="label" color={p.pink}>● {subWaiting} subtask{subWaiting > 1 ? "s" : ""} need{subWaiting > 1 ? "" : "s"} you</Txt> : null}
       </Row>
-      {depth < 3 ? node.children.map((c, i) => <ProcRows key={c.info.processId} node={c} depth={depth + 1} index={`${index}.${i + 1}`} />) : null}
+      {depth < 3 ? node.children.map((c, i) => <ProcRows key={c.info.processId} node={c} depth={depth + 1} index={`${index}.${i + 1}`} onMenu={onMenu} />) : null}
     </>
   );
 }
@@ -124,6 +141,10 @@ export default function Home() {
   const conn = useStore((s) => s.conn);
   const procsMap = useStore((s) => s.procs);
   const procs = useMemo(() => Object.values(procsMap), [procsMap]);
+  // Long-press on a running pi: open, restart or close it without entering the session.
+  const [menu, setMenu] = useState<ProcessInfo | undefined>();
+  const [ask, setAsk] = useState<{ title: string; body: string; label: string; danger?: boolean; run: () => Promise<void> } | undefined>();
+  const [menuError, setMenuError] = useState<string | undefined>();
   useStore((s) => s.features);
   const filesOn = filesSupported();
   const filesWaiting = useTransfers((s) => Object.values(s.items).filter((t) => t.dir === "to_phone" && t.state === "waiting" && !s.local[t.id] && !s.progress[t.id]?.running).length);
@@ -217,7 +238,8 @@ export default function Home() {
         <View>
           {procs.length === 0 ? (
             <Pad indent style={{ paddingVertical: 16 }}><Txt v="body" soft a11y="home-no-procs">Nothing is running. Reopen a session below or start a new one.</Txt></Pad>
-          ) : tree.map((n, i) => <ProcRows key={n.info.processId} node={n} depth={0} index={String(i + 1).padStart(2, "0")} />)}
+          ) : tree.map((n, i) => <ProcRows key={n.info.processId} node={n} depth={0} index={String(i + 1).padStart(2, "0")} onMenu={setMenu} />)}
+          {procs.length ? <Pad indent style={{ paddingTop: 8 }}><Txt v="small" soft>Hold a row to restart or close that pi.</Txt></Pad> : null}
           <View style={{ height: 8 }} />
         </View>
 
@@ -250,8 +272,12 @@ export default function Home() {
       <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, paddingBottom: insets.bottom, backgroundColor: p.ink }}>
         <Button kind="solid" a11y="home-new" label="Start a new session" arrow="+" onPress={() => router.push("/new")} disabled={conn !== "ready"} />
       </View>
+      <ProcMenu info={menu} onClose={() => setMenu(undefined)}
+        onRestart={(i) => setAsk({ ...restartText(i), label: "Restart pi", run: () => flow.restartProcess(i.processId, i.cwd) })}
+        onCloseProc={(i) => setAsk({ ...closeText(i), label: "Close pi", danger: true, run: () => closeProcess(i).catch((e) => setMenuError(errText(e))) })} />
+      <ConfirmDialog title={ask?.title} body={ask?.body} confirmLabel={ask?.label} danger={ask?.danger} onCancel={() => setAsk(undefined)} onConfirm={() => { const a = ask; setAsk(undefined); if (a) void a.run(); }} />
       <TrustDialog {...flow.trustDialog} />
-      <ErrorDialog text={flow.error} onClose={flow.clearError} />
+      <ErrorDialog text={flow.error ?? menuError} onClose={() => { flow.clearError(); setMenuError(undefined); }} />
     </View>
   );
 }

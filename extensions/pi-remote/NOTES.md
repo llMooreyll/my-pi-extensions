@@ -155,3 +155,28 @@
     - **dump**：logcat 单行约 4 KB，完整的 dump 会被截断；用 `piremote://test/dump?part=<key>` 只输出一部分。App 重启后的第一次深链接可能早于初始化，此时返回 `null`。
     - **新测试钩子**：`piremote://test/mkfile?name=&size=|text=`，生成文件并作为下一次"选择文件"的结果，代替系统选择器。
     - **Waydroid 环境**：没有能打开 txt/pdf 的应用，txt 会弹出 Browser/HTML Viewer，图片会打开相册。SAF 目录选择器可以用 uiautomator 按文字点击操作（Documents → USE THIS FOLDER → ALLOW）。
+68. **/reload 后 send_to_phone 报 `s.conn.call is not a function`**：
+    - **现象**：在 M9 之前启动的 pi 里执行 `/reload` 后，工具已经出现在工具列表中，但调用时报这个错。
+    - **原因**：
+      - pi 的 `/reload` 会清空扩展缓存，并用 `moduleCache:false` 重新导入代码（`dist/core/resource-loader.js:373`、`extensions/loader.js:481`），新代码确实加载了。
+      - 但 bridge 把与 hostd 的连接对象保存在 `globalThis` 上，以便 processId 和事件序号跨 reload 保持不变。这个对象是旧代码创建的实例，没有 `call()` 方法。
+    - **复现方式**：用 `pi -ne -e <旧版 bridge 副本>` 启动，把副本换成新代码后执行 `/reload`。
+    - **修复**（`host-conn.ts` 的 `ensureConnected`）：
+      - 发现 `s.conn` 不是当前代码的 `HostConn` 实例时，新建一个连接，接管旧连接里未发送的事件，用同一个 processId 打招呼。
+      - 收到 welcome 后，直接断开旧 socket，不发 `bye`。
+      - hostd 把这当作重连处理，手机只收到 `changed`，没有 `down`。
+    - **结论**：`globalThis` 上只应保存数据，不应保存带方法的对象。pi 文档（"Long-lived resources and shutdown"）的要求是：资源在 `session_start` 中创建，在 `session_shutdown` 中关闭。bridge 为了保持 processId 和 seq 连续，有意让连接跨 reload 保留，现在补上了"代码换了就换实例"这一步。
+69. **手机上关闭和重启 pi**：
+    - **原有情况**：关闭按钮藏在"About this pi"里，只对 hostd 启动的进程和子代理显示；`/quit` 被标成"只能在电脑上用"；`ctx.shutdown()` 要等当前任务结束才退出。
+    - **现在的入口**：
+      - 命令面板新增"This pi"一组，包含 Restart pi（只对主进程显示）和 Close pi。
+      - 首页进程行长按，弹出 Open / Restart / Close 菜单。
+      - 手机上可以用 `/quit`。
+    - **关闭**：所有进程都能关；正在运行的先 abort 再 shutdown。
+    - **重启**：
+      - 由 hostd 的新 op `restart_process` 完成，即使手机中途断线也不会做到一半。
+      - 退出之前先检查能否重开：会话文件是否存在、是否在 sessions 目录内、cwd 是否存在且在 home 下。检查不通过就报错，旧 pi 保持运行。
+      - 实测发现，pi 要等第一条消息才会写会话文件，没有消息的会话无法重开，现在会明确提示"先关闭"。
+      - 之前有一次测试，cwd 在 /tmp 下，pi 先退出了，重开时才被拒绝。这就是改为先检查后退出的原因。
+    - **实测**：dev-client 对运行中的 pi 重启用时约 3.5 秒，历史完整保留。Waydroid 上长按关闭、命令面板重启（含信任对话框）、`/quit`、命令面板关闭都通过。
+70. **Waydroid 安装卡住的真正原因**：Google Play 保护机制弹出"Send app for a security check?"等待点击（Finsky VerifyApps），安装就挂在那里。处理方式是在安装时用 `wd.mjs taptext "Don't send"` 点掉，不修改系统设置。第 67 条中提到的"adb install 偶尔卡住"也是这个原因。

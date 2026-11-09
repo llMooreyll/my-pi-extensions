@@ -36,6 +36,8 @@ export interface OpMap {
   /** 列出电脑上某个目录下的子目录，供新建会话时补全路径；path 可用 ~ */
   list_dirs: [{ path: string }, { path: string; home: string; dirs: string[] }];
   read_session: [{ sessionFile: string; beforeEntryId?: string; limit?: number }, { cwd: string; name?: string; messages: WireMessage[]; hasMoreBefore: boolean }];
+  /** Quit a pi (stopping its current run first), then open the same session file in a new pi. Main processes only. */
+  restart_process: [{ processId: string; trust: Trust }, { processId: string }];
   // ---- file transfer (7.7) ----
   list_transfers: [{}, { transfers: TransferInfo[]; inboxDir: string }];
   upload_begin: [{ name: string; size: number; mime?: string; processId?: string }, { transfer: TransferInfo }];
@@ -73,7 +75,7 @@ export type OpResult<K extends OpName> = OpMap[K][1];
 export const HOSTD_LOCAL_OPS: readonly OpName[] = [
   "list_processes", "list_sessions", "list_projects", "open_session", "new_process",
   "subscribe", "unsubscribe", "get_settings", "set_setting", "read_session", "list_dirs",
-  "list_transfers", "upload_begin", "transfer_cancel", "transfer_forget",
+  "list_transfers", "upload_begin", "transfer_cancel", "transfer_forget", "restart_process",
 ];
 
 /** hostd → bridge 请求超时（毫秒）。未列出的用 DEFAULT */

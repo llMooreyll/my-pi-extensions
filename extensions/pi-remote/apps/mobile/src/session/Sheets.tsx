@@ -3,6 +3,7 @@ import { Pressable, View } from "react-native";
 import type { ForkPoint, ModelSummary, ProcessInfo, SessionListItem, TreeNodeWire } from "@pi-remote/protocol";
 import { Button, Choice, Field, Sheet, Spinner, Toggle, Txt } from "../ds/primitives";
 import { F, usePalette } from "../ds/tokens";
+import { closeProcess, closeText } from "../lib/process";
 import { useTestAction } from "../lib/test-hooks";
 import { relTime } from "../lib/format";
 import { openProcess } from "../lib/nav";
@@ -240,7 +241,6 @@ export function InfoSheet({ info, onClose, renameFirst }: { info: ProcessInfo; o
   const [confirmKill, setConfirmKill] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const r = info.role;
-  const canShutdown = info.spawnedByHostd || r.kind !== "main";
   const u = info.contextUsage;
   const Line = ({ k, v }: { k: string; v?: string | number }) => (v === undefined || v === "" ? null : (
     <View style={{ flexDirection: "row", paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: p.faint }}>
@@ -275,17 +275,15 @@ export function InfoSheet({ info, onClose, renameFirst }: { info: ProcessInfo; o
         <Line k="pid" v={info.pid} />
         <Line k="pi" v={`${info.piVersion}${info.compat !== "ok" ? " · untested: dialogs stay on the computer" : ""}`} />
       </View>
-      {canShutdown ? (
-        <View style={{ marginTop: 18, gap: 10 }}>
+      <View style={{ marginTop: 18, gap: 10 }}>
           {confirmKill ? (
             <>
-              <Txt v="body">Quit this pi on the computer? Its session file is kept.</Txt>
-              <Button kind="danger" a11y="session-shutdown-confirm" label="Quit it" onPress={async () => { try { await call("shutdown", { processId: info.processId }); onClose(); } catch (e) { setError(errText(e)); } }} />
+              <Txt v="body">{closeText(info).body}</Txt>
+              <Button kind="danger" a11y="session-shutdown-confirm" label="Close pi" onPress={async () => { try { await closeProcess(info); onClose(); } catch (e) { setError(errText(e)); } }} />
               <Button kind="outline" a11y="session-shutdown-cancel" label="keep it running" onPress={() => setConfirmKill(false)} />
             </>
-          ) : <Button kind="danger" a11y="session-shutdown" label="Quit this pi on the computer" arrow="■" onPress={() => setConfirmKill(true)} />}
-        </View>
-      ) : null}
+          ) : <Button kind="danger" a11y="session-shutdown" label="Close this pi on the computer" arrow="■" onPress={() => setConfirmKill(true)} />}
+      </View>
     </Sheet>
   );
 }

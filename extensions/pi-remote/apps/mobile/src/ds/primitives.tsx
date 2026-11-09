@@ -55,11 +55,12 @@ export function Rule(props: { color?: string; weight?: number; style?: StyleProp
  * Rows are separated by hairlines; there are no boxes anywhere.
  */
 export function Row(props: {
-  children: ReactNode; a11y?: string; onPress?: () => void; index?: string; indexColor?: string; trailing?: ReactNode;
+  children: ReactNode; a11y?: string; onPress?: () => void; onLongPress?: () => void; index?: string; indexColor?: string; trailing?: ReactNode;
   disabled?: boolean; first?: boolean; accent?: string; style?: StyleProp<ViewStyle>; dense?: boolean; indexStyle?: StyleProp<TextStyle>;
 }) {
   const p = usePalette();
   useTestAction(props.a11y, props.onPress, !props.disabled);
+  useTestAction(props.a11y ? `${props.a11y}-hold` : undefined, props.onLongPress, !props.disabled);
   const content = (pressed: boolean) => (
     <View style={[{
       flexDirection: "row", alignItems: "baseline", paddingVertical: props.dense ? 10 : 15, paddingRight: MARGIN,
@@ -76,7 +77,7 @@ export function Row(props: {
   );
   if (!props.onPress) return <View accessibilityLabel={props.a11y}>{content(false)}</View>;
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={props.a11y} onPress={props.onPress} disabled={props.disabled}>
+    <Pressable accessibilityRole="button" accessibilityLabel={props.a11y} onPress={props.onPress} onLongPress={props.onLongPress} delayLongPress={400} disabled={props.disabled}>
       {({ pressed }) => content(pressed)}
     </Pressable>
   );

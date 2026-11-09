@@ -5,9 +5,9 @@ import { Sheet, Txt } from "../ds/primitives";
 import { F, GUTTER, usePalette } from "../ds/tokens";
 import { useTestAction } from "../lib/test-hooks";
 
-export type DeckAction = "model" | "thinking" | "outline" | "tree" | "fork" | "clone" | "new" | "resume" | "compact" | "rename" | "reload" | "copy" | "info" | "settings";
+export type DeckAction = "model" | "thinking" | "outline" | "tree" | "fork" | "clone" | "new" | "resume" | "compact" | "rename" | "reload" | "copy" | "info" | "settings" | "restart" | "quit";
 
-interface Entry { action: DeckAction; title: string; note: string; needsIdle?: boolean }
+interface Entry { action: DeckAction; title: string; note: string; needsIdle?: boolean; mainOnly?: boolean; danger?: boolean }
 
 const GROUPS: { title: string; entries: Entry[] }[] = [
   { title: "How pi thinks", entries: [
@@ -26,10 +26,14 @@ const GROUPS: { title: string; entries: Entry[] }[] = [
     { action: "resume", title: "Open another session", note: "switch this pi to an older one", needsIdle: true },
     { action: "rename", title: "Rename", note: "give this session a name" },
   ] },
+  { title: "This pi", entries: [
+    { action: "restart", title: "Restart pi", note: "quit and reopen this conversation with current extensions and tools", mainOnly: true },
+    { action: "quit", title: "Close pi", note: "quit pi on the computer; the conversation stays on disk", danger: true },
+  ] },
   { title: "Utilities", entries: [
     { action: "copy", title: "Copy the last answer", note: "to the clipboard" },
     { action: "reload", title: "Reload pi", note: "extensions, skills, prompts" },
-    { action: "info", title: "About this pi", note: "folder, file, pane, quit" },
+    { action: "info", title: "About this pi", note: "folder, file, pane" },
     { action: "settings", title: "Settings", note: "pi settings and connection" },
   ] },
 ];
@@ -42,7 +46,7 @@ function DeckRow({ e, n, disabled, onPress }: { e: Entry; n: string; disabled: b
       style={({ pressed }) => ({ flexDirection: "row", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: p.faint, backgroundColor: pressed ? p.tint : "transparent", opacity: disabled ? 0.35 : 1 })}>
       <Txt v="label" soft style={{ width: GUTTER, paddingTop: 6 }}>{n}</Txt>
       <View style={{ flex: 1 }}>
-        <Txt v="title" style={{ fontSize: 22, lineHeight: 26 }}>{e.title}</Txt>
+        <Txt v="title" color={e.danger ? p.danger : undefined} style={{ fontSize: 22, lineHeight: 26 }}>{e.title}</Txt>
         <Txt v="small" soft>{e.note}{disabled ? " — wait until pi is idle" : ""}</Txt>
       </View>
     </Pressable>
@@ -62,7 +66,7 @@ function ExtRow({ c, onPick }: { c: CommandInfo; onPick: () => void }) {
 }
 
 /** Every session command, written out, so nothing depends on knowing slash commands. */
-export function CommandsSheet(props: { visible: boolean; running: boolean; commands: CommandInfo[]; onAction: (a: DeckAction) => void; onInsert: (text: string) => void; onClose: () => void }) {
+export function CommandsSheet(props: { visible: boolean; running: boolean; canRestart: boolean; commands: CommandInfo[]; onAction: (a: DeckAction) => void; onInsert: (text: string) => void; onClose: () => void }) {
   let n = 0;
   const ext = props.commands.filter((c) => c.source === "extension");
   const other = props.commands.filter((c) => c.source !== "extension");
@@ -71,7 +75,7 @@ export function CommandsSheet(props: { visible: boolean; running: boolean; comma
       {GROUPS.map((g) => (
         <Fragment key={g.title}>
           <Txt v="em" style={{ marginTop: 22, marginBottom: 4 }}>{g.title}</Txt>
-          {g.entries.map((e) => <DeckRow key={e.action} e={e} n={String(++n).padStart(2, "0")} disabled={!!e.needsIdle && props.running} onPress={() => props.onAction(e.action)} />)}
+          {g.entries.filter((e) => !e.mainOnly || props.canRestart).map((e) => <DeckRow key={e.action} e={e} n={String(++n).padStart(2, "0")} disabled={!!e.needsIdle && props.running} onPress={() => props.onAction(e.action)} />)}
         </Fragment>
       ))}
       {ext.length ? <Txt v="em" style={{ marginTop: 22, marginBottom: 4 }}>From your extensions</Txt> : null}

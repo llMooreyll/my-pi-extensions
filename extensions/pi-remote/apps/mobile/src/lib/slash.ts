@@ -9,6 +9,7 @@ export type SlashAction =
   | { kind: "name"; name?: string }
   | { kind: "reload" }
   | { kind: "copy" }
+  | { kind: "close" }
   | { kind: "desktop_only"; command: string }
   | { kind: "prompt" };
 
@@ -28,9 +29,10 @@ export const BUILTIN_COMMANDS: BuiltinCommand[] = [
   { name: "reload", description: "Reload extensions and resources" },
   { name: "session", description: "Session info" },
   { name: "copy", description: "Copy the last answer" },
+  { name: "quit", description: "Close this pi on the computer" },
 ];
 
-const DESKTOP_ONLY = new Set(["login", "logout", "hotkeys", "share", "export", "import", "bug", "changelog", "scoped-models", "trust", "quit"]);
+const DESKTOP_ONLY = new Set(["login", "logout", "hotkeys", "share", "export", "import", "bug", "changelog", "scoped-models", "trust"]);
 
 /** Routes built-in slash commands to native UI; everything else is sent to pi as a prompt. */
 export function routeSlash(input: string): SlashAction {
@@ -53,6 +55,7 @@ export function routeSlash(input: string): SlashAction {
     case "name": return { kind: "name", ...(arg ? { name: arg } : {}) };
     case "reload": return { kind: "reload" };
     case "copy": return { kind: "copy" };
+    case "quit": return { kind: "close" };
     default:
       if (DESKTOP_ONLY.has(cmd)) return { kind: "desktop_only", command: cmd };
       return { kind: "prompt" };
