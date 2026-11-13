@@ -85,6 +85,16 @@ export function composeArgs(target: LaunchTarget, profile: Profile | null, env: 
 	return active ? companionArgs(args, env, profileFile()) : args;
 }
 
+/** Shell-style quoting, for display only; the profile file placeholder stays literal. */
+function quote(a: string): string {
+	return a === "<file>" || /^[\w@%+=:,./~*-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`;
+}
+
+/** `pi <args>` as shown in the command preview: same builder as a real launch, without writing a profile file. */
+export function previewCommand(target: LaunchTarget, profile: Profile | null, env: ProfileArgsEnv): string {
+	return `pi ${composeArgs(target, profile, env, () => "<file>").map(quote).join(" ")}`;
+}
+
 export function installProfileHooks(_app: App): void {
 	cleanupProfileFiles();
 	homeHooks.buildArgs = (a, target, rec) => {

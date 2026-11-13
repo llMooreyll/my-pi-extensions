@@ -13,7 +13,7 @@ import type { Surface } from "../../term/canvas.ts";
 import { strWidth, truncate } from "../../term/width.ts";
 import type { App, Modal, Page } from "../app.ts";
 import { ListView, MenuModal, PromptModal, section, selectRow, TextInput } from "../widgets.ts";
-import { argsEnv, composeArgs, resourcesFor } from "./profile-hooks.ts";
+import { argsEnv, composeArgs, previewCommand, resourcesFor } from "./profile-hooks.ts";
 
 // ── Checklist / chooser modal ───────────────────────────────────────────
 
@@ -144,9 +144,12 @@ function sourceTag(r: ResourceItem): string {
 	return r.source.replace("-", " ");
 }
 
-/** Shell-style quoting for the preview only. */
-function quote(a: string): string {
-	return /^[\w@%+=:,./~*-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`;
+/** Without options the editor launches pi; the options turn it into a pure editor that saves to config. */
+export interface EditorOptions {
+	/** Edit config.presets[name]; ctrl+s saves it, launching is hidden. */
+	editPreset?: string;
+	/** Edit the default of target.cwd ("project") or the global default; ctrl+s saves it. */
+	editDefault?: "project" | "global";
 }
 
 export class ProfileEditorPage implements Page {
@@ -161,14 +164,26 @@ export class ProfileEditorPage implements Page {
 	private readonly app: App;
 	private readonly target: LaunchTarget;
 	private readonly rec: SessionRecord | null;
+	private readonly opts: EditorOptions;
 
-	constructor(app: App, target: LaunchTarget, rec: SessionRecord | null) {
+	constructor(app: App, target: LaunchTarget, rec: SessionRecord | null, opts: EditorOptions = {}) {
 		this.app = app;
 		this.target = target;
 		this.rec = rec;
-		const r = resolveProfile(app.config, target, rec);
-		this.p = r.profile ? structuredClone(r.profile) : emptyProfile();
-		this.origin = { session: "session", project: "project default", global: "global default", none: "none" }[r.origin];
+		this.opts = opts;
+		const cfg = app.config;
+		if (opts.editPreset !== undefined) {
+			this.p = normalizeProfile(cfg.presets[opts.editPreset]) ?? emptyProfile();
+			this.origin = "preset";
+		} else if (opts.editDefault) {
+			const stored = opts.editDefault === "project" ? cfg.projectDefaults[target.cwd] : cfg.globalDefault;
+			this.p = normalizeProfile(stored) ?? emptyProfile();
+			this.origin = `${opts.editDefault} default`;
+		} else {
+			const r = resolveProfile(cfg, target, rec);
+			this.p = r.profile ? structuredClone(r.profile) : emptyProfile();
+			this.origin = { session: "session", project: "project default", global: "global default", none: "none" }[r.origin];
+		}
 		this.groups = this.buildGroups();
 	}
 
@@ -179,7 +194,12 @@ export class ProfileEditorPage implements Page {
 		});
 	}
 
+	private get editing(): boolean {
+		return this.opts.editPreset !== undefined || this.opts.editDefault !== undefined;
+	}
+
 	hints(): string {
+		if (this.editing) return "↑↓ move  ←→ column  space toggle  enter edit  ctrl+s save  p save as preset  l load preset  x reset  esc back";
 		return "↑↓ move  ←→ column  space toggle  enter edit  ctrl+s launch  d project default  g global default  p save preset  l load preset  x reset  esc back";
 	}
 
@@ -481,9 +501,21 @@ export class ProfileEditorPage implements Page {
 
 	// ── actions ─────────────────────────────────────────────────────────
 
+	/** ctrl+s: launch pi, or in an editing mode write the profile back to its config entry. */
 	private launch(): void {
+		if (this.editing) return this.saveEdited();
 		const args = composeArgs(this.target, this.p, argsEnv(this.target.cwd), () => writeProfileFile(this.p));
 		this.app.launch({ cwd: this.target.cwd, args });
+	}
+
+	private saveEdited(): void {
+		const o = this.opts;
+		if (o.editPreset !== undefined) {
+			this.app.config.presets[o.editPreset] = structuredClone(this.p);
+			this.app.saveConfig();
+			this.app.toast(`preset "${o.editPreset}" saved`);
+		} else this.saveDefault(o.editDefault!);
+		this.app.back();
 	}
 
 	private saved(): Profile | null {
@@ -546,7 +578,7 @@ export class ProfileEditorPage implements Page {
 			if (matchesKey(data, "enter")) return this.launch(), true;
 			if (matchesKey(data, "down")) return (this.focus = "groups"), true;
 		} else if (this.focus === "groups") {
-			if (matchesKey(data, "up") && this.groupList.selected === 0) return (this.focus = "header"), true;
+			if (matchesKey(data, "up") && this.groupList.selected === 0 && !this.editing) return (this.focus = "header"), true;
 			if (matchesKey(data, "right") || matchesKey(data, "enter")) {
 				this.fieldList.selected = 0;
 				this.fieldList.scroll = 0;
@@ -586,6 +618,9 @@ export class ProfileEditorPage implements Page {
 
 	private targetLine(): string {
 		const t = this.target;
+		if (this.opts.editPreset !== undefined) return `EDIT PRESET "${this.opts.editPreset}"`;
+		if (this.opts.editDefault === "global") return "EDIT GLOBAL DEFAULT";
+		if (this.opts.editDefault === "project") return `EDIT PROJECT DEFAULT ${tildify(t.cwd)}`;
 		const title = this.rec ? sessionTitle(this.rec) : "";
 		if (t.kind === "new") return `NEW SESSION in ${tildify(t.cwd)}`;
 		if (t.kind === "continue") return `CONTINUE LAST SESSION in ${tildify(t.cwd)}`;
@@ -593,9 +628,7 @@ export class ProfileEditorPage implements Page {
 	}
 
 	private preview(): string {
-		const env = argsEnv(this.target.cwd);
-		const args = composeArgs(this.target, this.p, env, () => "<file>");
-		return `pi ${args.map(quote).join(" ")}`;
+		return previewCommand(this.target, this.p, argsEnv(this.target.cwd));
 	}
 
 	draw(s: Surface, app: App): void {
