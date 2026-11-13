@@ -30,6 +30,10 @@ export interface ChecklistItem {
 export class ChecklistModal implements Modal {
 	readonly width = 92;
 	readonly height = 26;
+
+	captureText(): boolean {
+		return true;
+	}
 	private readonly filter = new TextInput();
 	private readonly list = new ListView();
 	private readonly checked: Set<string>;
@@ -201,8 +205,8 @@ export class ProfileEditorPage implements Page {
 	}
 
 	hints(): string {
-		if (this.editing) return "↑↓ move  ←→ column  space toggle  enter edit  ctrl+s save  p save as preset  l load preset  x reset  esc back";
-		return "↑↓ move  ←→ column  space toggle  enter edit  ctrl+s launch  d project default  g global default  p save preset  l load preset  x reset  esc back";
+		if (this.editing) return "hjkl/arrows move  space toggle  enter edit  ctrl+s save  p save as preset  L load preset  x reset  esc back";
+		return "hjkl/arrows move  space toggle  enter edit  ctrl+s launch  d project default  g global default  p save preset  L load preset  x reset  esc back";
 	}
 
 	captureText(): boolean {
@@ -580,7 +584,7 @@ export class ProfileEditorPage implements Page {
 		if (data === "d") return this.saveDefault("project"), true;
 		if (data === "g") return this.saveDefault("global"), true;
 		if (data === "p") return this.savePreset(), true;
-		if (data === "l") return this.loadPreset(), true;
+		if (data === "L") return this.loadPreset(), true;
 		if (data === "v") return this.app.modal(new FullCommandModal(previewArgs(this.target, this.p, argsEnv(this.target.cwd), this.keepEmpty()))), true;
 		if (data === "x") {
 			this.p = emptyProfile();

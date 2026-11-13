@@ -120,7 +120,7 @@ export interface Row {
  */
 export abstract class GridPage implements SubPage {
 	status = "";
-	hints = "up/down scroll panels  PgUp/PgDn page";
+	hints = "j/k scroll panels  PgUp/PgDn page";
 	protected scroll = 0;
 	private rowCount = 0;
 	private visible = 0;

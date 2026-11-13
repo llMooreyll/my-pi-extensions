@@ -321,7 +321,7 @@ export class WrappedPage implements Page {
 	}
 
 	hints(): string {
-		return `<- -> card ${this.card + 1}/${CARDS.length}  click left/right half  esc back`;
+		return `h/l card ${this.card + 1}/${CARDS.length}  click left/right half  esc back`;
 	}
 
 	private go(app: App, delta: number): void {
@@ -334,8 +334,8 @@ export class WrappedPage implements Page {
 	}
 
 	key(data: string, app: App): boolean {
-		if (matchesKey(data, "right") || data === "l" || data === " ") return this.go(app, 1), true;
-		if (matchesKey(data, "left") || data === "h") return this.go(app, -1), true;
+		if (matchesKey(data, "right") || data === " ") return this.go(app, 1), true;
+		if (matchesKey(data, "left")) return this.go(app, -1), true;
 		return false;
 	}
 

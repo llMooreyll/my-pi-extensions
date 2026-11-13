@@ -21,7 +21,7 @@ const stamp = (d: Date): string => {
 
 /** WRAPPED sub-tab: period chooser, Enter starts Pi Wrapped, h / H write the HTML report. */
 export class WrappedSubPage implements SubPage {
-	hints = "left/right period  enter start  h html report  H report and open";
+	hints = "h/l period  enter start  w html report  W report and open";
 	private period = 0;
 	private data: AnalyticsData | null = null;
 
@@ -64,15 +64,15 @@ export class WrappedSubPage implements SubPage {
 			s.hit(x, y + 2, label.length, 1, { onClick: () => (this.period = i) });
 			x += label.length + 2;
 		});
-		s.textIn(0, y + 4, s.w, "h  write an HTML report      H  write it and open it in the browser", pal.dim, "center");
+		s.textIn(0, y + 4, s.w, "w  write an HTML report      W  write it and open it in the browser", pal.dim, "center");
 	}
 
 	key(data: string, app: App): boolean {
 		if (matchesKey(data, "left")) return (this.period = (this.period + PERIODS.length - 1) % PERIODS.length), true;
 		if (matchesKey(data, "right")) return (this.period = (this.period + 1) % PERIODS.length), true;
 		if (matchesKey(data, "enter")) return this.start(app), true;
-		if (data === "h") return this.report(app, false), true;
-		if (data === "H") return this.report(app, true), true;
+		if (data === "w") return this.report(app, false), true;
+		if (data === "W") return this.report(app, true), true;
 		return false;
 	}
 }

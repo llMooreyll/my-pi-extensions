@@ -85,8 +85,8 @@ export class ListView {
 	/** Handle navigation keys; returns true when consumed. */
 	key(data: string, count: number): boolean {
 		const page = Math.max(1, Math.floor(this.lastHeight / this.itemHeight) - 1);
-		if (matchesKey(data, "up") || data === "k") this.selected--;
-		else if (matchesKey(data, "down") || data === "j") this.selected++;
+		if (matchesKey(data, "up")) this.selected--;
+		else if (matchesKey(data, "down")) this.selected++;
 		else if (matchesKey(data, "pageUp")) this.selected -= page;
 		else if (matchesKey(data, "pageDown")) this.selected += page;
 		else if (matchesKey(data, "home") || data === "g") this.selected = 0;
@@ -269,6 +269,10 @@ export class ConfirmModal implements Modal {
 export class PromptModal implements Modal {
 	readonly width: number;
 	readonly height = 7;
+
+	captureText(): boolean {
+		return true;
+	}
 	private readonly input: TextInput;
 	private readonly title: string;
 	private readonly onSubmit: (value: string) => void;

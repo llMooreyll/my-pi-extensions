@@ -33,7 +33,7 @@ const fileTag = (f: { edit: number; write: number; read: number }): string => `e
 
 /** The scrolling panels below the header. */
 class DetailGrid extends GridPage {
-	override hints = "up/down scroll panels  PgUp/PgDn page";
+	override hints = "j/k scroll panels  PgUp/PgDn page";
 	private readonly page: SessionDetailPage;
 
 	constructor(page: SessionDetailPage) {

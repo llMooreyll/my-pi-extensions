@@ -40,7 +40,7 @@ export class PresetsPage implements Page {
 	}
 
 	hints(): string {
-		return "↑↓ move  enter edit  n new  r rename  c duplicate  d delete  tab next tab  q quit";
+		return "j/k move  enter edit  n new  r rename  c duplicate  d delete  tab next tab  q quit";
 	}
 
 	// ── actions ─────────────────────────────────────────────────────────

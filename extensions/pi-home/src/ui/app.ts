@@ -37,7 +37,11 @@ export interface Modal {
 	draw(s: Surface, app: App): void;
 	key(data: string, app: App): void;
 	paste?(text: string, app: App): void;
+	/** True while letters are typed into a text field (disables h/j/k/l as arrows). */
+	captureText?(): boolean;
 }
+
+const VIM_ARROWS: Record<string, string> = { h: "\x1b[D", j: "\x1b[B", k: "\x1b[A", l: "\x1b[C" };
 
 export interface LaunchRequest {
 	cwd: string;
@@ -105,12 +109,16 @@ export class App {
 		const done = new Promise<number>((r) => {
 			this.resolveExit = r;
 		});
+		// Enter the alternate screen BEFORE terminal.start(): start() pushes kitty keyboard flags, and
+		// kitty keeps one flag stack per screen. Pushing on the alt screen means the pop at exit (also on
+		// the alt screen) leaves the shell's main-screen keyboard mode untouched.
+		this.terminal.write("\x1b[?1049h");
 		this.terminal.start(
 			(data) => this.onInput(data),
 			() => this.onResize(),
 		);
-		// Alternate screen, hide cursor, no autowrap, SGR mouse (press/release + wheel).
-		this.terminal.write("\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1006h\x1b[2J");
+		// Hide cursor, no autowrap, SGR mouse (press/release + wheel).
+		this.terminal.write("\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1006h\x1b[2J");
 		this.terminal.setTitle("pi-home");
 		this.canvas.resize(this.terminal.columns, this.terminal.rows);
 		if (this.motion && this.config.visual.bootAnimation) this.powerOn = { start: Date.now(), ms: 650 };
@@ -139,8 +147,9 @@ export class App {
 		this.index.onChange = () => {};
 		if (this.animTimer) clearInterval(this.animTimer);
 		if (this.blinkTimer) clearInterval(this.blinkTimer);
-		this.terminal.write("\x1b[0m\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[?1049l");
+		// stop() pops the kitty keyboard flags; it must run while still on the alt screen (see run()).
 		this.terminal.stop();
+		this.terminal.write("\x1b[0m\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[?1049l");
 	}
 
 	/** Restore the terminal, then rethrow-safe exit on fatal errors (never leave the alt screen). */
@@ -412,6 +421,8 @@ export class App {
 			return;
 		}
 		const m = this.modals[this.modals.length - 1];
+		// Vim-style movement everywhere: h j k l act as the arrow keys unless text is being typed.
+		if (!(m ? m.captureText?.() : this.page.captureText?.())) data = VIM_ARROWS[data] ?? data;
 		if (m) {
 			m.key(data, this);
 			return;

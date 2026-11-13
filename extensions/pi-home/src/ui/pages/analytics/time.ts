@@ -82,7 +82,7 @@ export class TimePage extends GridPage {
 		return false;
 	}
 
-	override hints = "arrows move day  enter drill down  m metric  PgUp/PgDn scroll";
+	override hints = "hjkl move day  enter drill down  m metric  PgUp/PgDn scroll";
 
 	private calendarPanel(app: App): Row {
 		const daily = allDaily(app);

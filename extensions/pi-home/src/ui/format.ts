@@ -39,17 +39,13 @@ export function fmtMinutes(min: number): string {
 	return `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).padStart(2, "0")}m`;
 }
 
-/** Relative time: "now", "5m ago", "3h ago", "yesterday", "4d ago", else YYYY-MM-DD. */
+/** Compact relative time, always one of "now", "5m ago", "3h ago", "12d ago". */
 export function fmtAgo(t: number, now = Date.now()): string {
-	const d = now - t;
+	const d = Math.max(0, now - t);
 	if (d < 60_000) return "now";
 	if (d < 3_600_000) return `${Math.floor(d / 60_000)}m ago`;
-	const today = new Date(now);
-	today.setHours(0, 0, 0, 0);
-	if (t >= today.getTime()) return `${Math.floor(d / 3_600_000)}h ago`;
-	if (t >= today.getTime() - 86_400_000) return "yesterday";
-	if (d < 7 * 86_400_000) return `${Math.ceil(d / 86_400_000)}d ago`;
-	return fmtDate(t);
+	if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h ago`;
+	return `${Math.floor(d / 86_400_000)}d ago`;
 }
 
 export function fmtDate(t: number): string {

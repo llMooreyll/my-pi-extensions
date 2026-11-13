@@ -21,11 +21,11 @@ const BUCKETS: { label: string; max: number }[] = [
 export class BehaviourPage extends GridPage {
 	private treeScroll = 0;
 	private treeRows = 0;
-	override hints = "j/k scroll subagent tree  up/down scroll panels";
+	override hints = "J/K scroll subagent tree  j/k scroll panels";
 
 	protected override pageKey(data: string): boolean {
-		if (data === "j") return (this.treeScroll = Math.min(Math.max(0, this.treeRows - 1), this.treeScroll + 1)), true;
-		if (data === "k") return (this.treeScroll = Math.max(0, this.treeScroll - 1)), true;
+		if (data === "J") return (this.treeScroll = Math.min(Math.max(0, this.treeRows - 1), this.treeScroll + 1)), true;
+		if (data === "K") return (this.treeScroll = Math.max(0, this.treeScroll - 1)), true;
 		return false;
 	}
 
@@ -136,7 +136,7 @@ export class BehaviourPage extends GridPage {
 				},
 				{
 					title: "SUBAGENT FAMILY",
-					right: "j/k",
+					right: "J/K",
 					weight: 1.4,
 					draw: (s, ctx) => {
 						this.treeRows = tree(s, root, ctx, { scroll: this.treeScroll });

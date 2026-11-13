@@ -39,7 +39,7 @@ export class ModelsPage extends GridPage {
 		return this.labels.get(m) ?? shortModel(m);
 	}
 	protected override ownsArrows = true;
-	override hints = "c calls/cost  up/down select model  enter drill down  PgUp/PgDn scroll";
+	override hints = "c calls/cost  j/k select model  enter drill down  PgUp/PgDn scroll";
 
 	protected override pageKey(data: string, app: App): boolean {
 		if (data === "c") {
@@ -170,7 +170,7 @@ export class ModelsPage extends GridPage {
 			panels: [
 				{
 					title: "MODELS",
-					right: "up/down",
+					right: "j/k",
 					w: 40,
 					draw: (s, ctx) => {
 						stats.slice(0, 6).forEach((m, i) => {

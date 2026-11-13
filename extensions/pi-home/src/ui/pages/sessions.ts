@@ -456,7 +456,8 @@ export class SessionsPage implements Page {
 		if (this.cleanupMode) this.cleanupReason = new Map(this.cleanupCandidates().map((c) => [c.rec.file, c.reason]));
 		const pal = app.pal;
 		const wide = s.w >= 120;
-		const listW = wide ? Math.floor(s.w * 0.6) : s.w;
+		// The list gets most of the width so titles stay readable; the detail panel keeps 36-52 columns.
+		const listW = wide ? s.w - Math.min(52, Math.max(36, Math.floor(s.w * 0.28))) : s.w;
 		this.drawFilterBar(s.sub(1, 0, s.w - 2, 2), app);
 		const listArea = s.sub(1, 2, listW - 2, s.h - 2);
 		this.drawList(listArea, app);
@@ -536,9 +537,9 @@ export class SessionsPage implements Page {
 				: this.fullText && !this.fullText.running
 					? `${this.fullText.counts.get(r.file) ?? 0} hits`
 					: "";
-			const right = `${extra ? `${extra}  ` : ""}${padEnd(basename(r.cwd), 16)}  ${padEnd(shortModel(mainModel(r)), 18)}  ${fmtTokens(totalTokens(r)).padStart(5)}  ${fmtCost(r.cost + r.warmCost).padStart(6)}  ${fmtAgo(r.lastActivity).padStart(10)}`;
+			const right = `${extra ? `${extra}  ` : ""}${padEnd(truncate(basename(r.cwd), 12), 12)} ${row.w >= 110 ? `${padEnd(truncate(shortModel(mainModel(r)), 14), 14)} ` : ""}${fmtTokens(totalTokens(r)).padStart(5)} ${fmtCost(r.cost + r.warmCost).padStart(6)} ${fmtAgo(r.lastActivity).padStart(8)}`;
 			const rw = strWidth(right);
-			row.text(6, 0, truncate(sessionTitle(r), Math.max(4, row.w - rw - 8)), base);
+			row.text(6, 0, truncate(sessionTitle(r), Math.max(4, row.w - rw - 7)), base);
 			row.textIn(0, 0, row.w, right, dim, "right");
 		});
 	}

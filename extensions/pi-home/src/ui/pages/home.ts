@@ -149,17 +149,17 @@ export class HomePage implements Page {
 
 	hints(): string {
 		return this.focus === "projects"
-			? "enter new session  c continue  e profile  o open path  p pin  → sessions  tab next tab  q quit"
-			: "enter resume  f fork  e profile  ← projects  q quit";
+			? "enter new session  c continue  e profile  o open path  p pin  l sessions  tab next tab  q quit"
+			: "j/k move  enter resume  f fork  e profile  h projects  q quit";
 	}
 
 	key(data: string): boolean {
 		this.refresh();
-		if (matchesKey(data, "right") || matchesKey(data, "l")) {
+		if (matchesKey(data, "right")) {
 			if (this.sessions.length) this.focus = "sessions";
 			return true;
 		}
-		if (matchesKey(data, "left") || matchesKey(data, "h")) {
+		if (matchesKey(data, "left")) {
 			this.focus = "projects";
 			return true;
 		}

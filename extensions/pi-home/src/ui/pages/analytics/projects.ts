@@ -19,7 +19,7 @@ export class ProjectsPage extends GridPage {
 	private lastData: AnalyticsData | null = null;
 	private lastProjects: Stat[] = [];
 	protected override ownsArrows = true;
-	override hints = "arrows select project  enter drill down  PgUp/PgDn scroll";
+	override hints = "hjkl select project  enter drill down  PgUp/PgDn scroll";
 
 	protected override pageKey(data: string, app: App): boolean {
 		const move = (d: number): boolean => {
