@@ -1,0 +1,28 @@
+{
+  "name": "pi-home",
+  "version": "0.1.0",
+  "description": "Console home for pi: project picker, per-session profiles, session manager and analytics in a CRT-style terminal UI",
+  "type": "module",
+  "private": true,
+  "keywords": ["pi-package", "pi"],
+  "author": "llMooreyll",
+  "license": "GPL-3.0-or-later",
+  "bin": { "pi-home": "src/main.ts" },
+  "pi": { "extensions": ["./extension/index.ts"] },
+  "scripts": {
+    "start": "node src/main.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "engines": { "node": ">=24" },
+  "dependencies": {
+    "@earendil-works/pi-tui": "1.5.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@types/node": "^24",
+    "typescript": "^5"
+  }
+}
