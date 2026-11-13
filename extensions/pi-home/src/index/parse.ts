@@ -485,6 +485,7 @@ export async function parseSessionFile(
 	rec.activeMinutes = Math.round(active / 60_000);
 	rec.lastActivity = times.length ? times[times.length - 1]! : rec.created || stat.mtimeMs;
 	if (!rec.created) rec.created = times[0] ?? stat.mtimeMs;
-	rec.isSubagent = (rec.name ?? "").startsWith("<subagent:");
+	// pi-interactive-subagents names one-shot subagents "<subagent:…>" and team members "<team:…>".
+	rec.isSubagent = /^<(subagent|team):/.test(rec.name ?? "");
 	return rec;
 }

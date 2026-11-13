@@ -3,7 +3,7 @@
  * the top level, L2 event columns in `ev`. Timestamps are epoch milliseconds.
  */
 
-export const INDEX_VERSION = 3;
+export const INDEX_VERSION = 4;
 
 export interface TokenTotals {
 	input: number;
