@@ -5,27 +5,21 @@ import { strWidth } from "../term/width.ts";
 import type { App } from "./app.ts";
 import { fmtDuration } from "./format.ts";
 
-/** Shader marker colours (VISUAL.md §6); must match shaders/crt.glsl. */
-export const MARKER_A = hex("#0a0b0c");
-export const MARKER_B = hex("#0c0b0a");
-export const MARKER_X = 2;
-export const MARKER_Y = 0;
-
 const TAB_LABELS: Record<string, string> = { home: "HOME", sessions: "SESSIONS", analytics: "ANALYTICS", presets: "PRESETS" };
 
-/** Paint the two marker cells last, after all post-processing, so their colours stay exact. */
+/** Shader marker colour (VISUAL.md §6); must match MARKER in shaders/crt.glsl. */
+export const MARKER = hex("#0a0b0c");
+
+/**
+ * Tier T3 only: paint the whole top row in the marker colour, after all post-processing so the
+ * colour stays exact. The shader enables the CRT effect while it sees this row.
+ */
 export function drawMarker(c: Canvas): void {
-	for (const [dx, col] of [
-		[0, MARKER_A],
-		[1, MARKER_B],
-	] as const) {
-		const x = MARKER_X + dx;
-		if (x >= c.w || MARKER_Y >= c.h) return;
-		const i = MARKER_Y * c.w + x;
-		c.ch[i] = " ";
-		c.fg[i] = col;
-		c.bg[i] = col;
-		c.at[i] = 0;
+	for (let x = 0; x < c.w; x++) {
+		c.ch[x] = " ";
+		c.fg[x] = MARKER;
+		c.bg[x] = MARKER;
+		c.at[x] = 0;
 	}
 }
 

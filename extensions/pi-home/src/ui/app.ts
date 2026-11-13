@@ -309,7 +309,8 @@ export class App {
 		}
 		if (pal.caps.tier >= 2) {
 			const v = this.config.visual;
-			if (v.vignette) vignette(c, 0.35);
+			// At T3 the shader adds its own vignette; doubling it hides the status lines.
+			if (v.vignette && pal.caps.tier === 2) vignette(c, 0.35);
 			if (v.scanlines) scanlines(c, 0.92);
 			if (v.flicker && this.motion) {
 				if (!this.flickerFrame && Math.random() < 1 / 400) this.flickerFrame = true;
