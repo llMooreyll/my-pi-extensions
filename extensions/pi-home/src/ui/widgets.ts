@@ -233,9 +233,13 @@ export class ConfirmModal implements Modal {
 	private readonly message: string;
 	private readonly onYes: () => void;
 
-	constructor(message: string, onYes: () => void) {
+	private readonly enterConfirms: boolean;
+
+	/** `enterConfirms` = false for destructive actions: only "y" confirms. */
+	constructor(message: string, onYes: () => void, enterConfirms = true) {
 		this.message = message;
 		this.onYes = onYes;
+		this.enterConfirms = enterConfirms;
 		this.width = Math.min(80, Math.max(40, strWidth(message) + 6));
 	}
 
@@ -255,7 +259,7 @@ export class ConfirmModal implements Modal {
 	}
 
 	key(data: string, app: App): void {
-		if (data === "y" || data === "Y" || matchesKey(data, "enter")) {
+		if (data === "y" || data === "Y" || (this.enterConfirms && matchesKey(data, "enter"))) {
 			app.closeModal();
 			this.onYes();
 		} else if (data === "n" || data === "N" || matchesKey(data, "escape")) app.closeModal();

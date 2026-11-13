@@ -84,10 +84,11 @@ export class Canvas {
 		return new Surface(this, 0, 0, this.w, this.h);
 	}
 
-	/** Topmost hit region containing the absolute cell (x, y). */
-	hitAt(x: number, y: number): HitRegion | undefined {
+	/** Topmost hit region at the absolute cell (x, y) that handles `kind`. */
+	hitAt(x: number, y: number, kind: "click" | "wheel"): HitRegion | undefined {
 		for (let i = this.hits.length - 1; i >= 0; i--) {
 			const r = this.hits[i]!;
+			if (kind === "click" ? !r.onClick : !r.onWheel) continue;
 			if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return r;
 		}
 		return undefined;

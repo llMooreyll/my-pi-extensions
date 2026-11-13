@@ -164,11 +164,7 @@ export class SessionsPage implements Page {
 
 	private openSelected(): void {
 		const r = this.current;
-		if (!r) return;
-		const l = this.live.get(r.file);
-		const go = (): void => launchTarget(this.app, { kind: "resume", cwd: r.cwd, sessionFile: r.file }, r);
-		if (l) this.app.modal(new ConfirmModal(`Session is open in pi (pid ${l.pid}). Open a second copy?`, go));
-		else go();
+		if (r) launchTarget(this.app, { kind: "resume", cwd: r.cwd, sessionFile: r.file }, r);
 	}
 
 	private runFullText(q: string): void {
@@ -189,6 +185,10 @@ export class SessionsPage implements Page {
 	private rename(): void {
 		const r = this.current;
 		if (!r) return;
+		if (this.live.has(r.file)) {
+			this.app.toast("session is open in pi — rename it there with /name", "error");
+			return;
+		}
 		this.app.modal(
 			new PromptModal("RENAME_SESSION", r.name ?? "", (name) => {
 				if (!name.trim()) return;
@@ -274,7 +274,7 @@ export class SessionsPage implements Page {
 					}
 					this.app.toast(`moved ${ok} file(s) to the trash`);
 				})();
-			}),
+			}, false),
 		);
 	}
 

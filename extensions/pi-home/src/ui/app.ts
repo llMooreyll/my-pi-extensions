@@ -126,14 +126,28 @@ export class App {
 		};
 		process.once("SIGTERM", onSignal);
 		process.once("SIGHUP", onSignal);
+		process.once("uncaughtException", (e) => this.fatal(e));
+		process.once("exit", () => this.restoreTerminal());
 		return done;
 	}
 
+	private restored = false;
+
 	private restoreTerminal(): void {
+		if (this.restored) return;
+		this.restored = true;
+		this.index.onChange = () => {};
 		if (this.animTimer) clearInterval(this.animTimer);
 		if (this.blinkTimer) clearInterval(this.blinkTimer);
 		this.terminal.write("\x1b[0m\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[?1049l");
 		this.terminal.stop();
+	}
+
+	/** Restore the terminal, then rethrow-safe exit on fatal errors (never leave the alt screen). */
+	private fatal(e: unknown): void {
+		this.restoreTerminal();
+		process.stderr.write(`pi-home: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}\n`);
+		process.exit(2);
 	}
 
 	/** Leave the UI and resolve run() with `code` (0 = launch requested, 1 = user quit). */
@@ -142,8 +156,14 @@ export class App {
 		this.exiting = true;
 		this.exitCode = code;
 		const finish = (): void => {
-			this.restoreTerminal();
-			void this.terminal.drainInput(300, 50).finally(() => this.resolveExit(this.exitCode));
+			// Swallow trailing key-release events while still in raw mode, then restore.
+			void this.terminal
+				.drainInput(300, 50)
+				.catch(() => {})
+				.finally(() => {
+					this.restoreTerminal();
+					this.resolveExit(this.exitCode);
+				});
 		};
 		if (this.motion) {
 			this.powerOff = { start: Date.now(), ms: 380, done: finish };
@@ -273,7 +293,12 @@ export class App {
 		this.renderQueued = true;
 		setImmediate(() => {
 			this.renderQueued = false;
-			this.render();
+			if (this.restored) return;
+			try {
+				this.render();
+			} catch (e) {
+				this.fatal(e);
+			}
 		});
 	}
 
@@ -343,11 +368,19 @@ export class App {
 
 	private onInput(data: string): void {
 		if (this.exiting) return;
+		try {
+			this.dispatchInput(data);
+		} catch (e) {
+			this.toast(`error: ${e instanceof Error ? e.message : String(e)}`, "error", 6000);
+		}
+	}
+
+	private dispatchInput(data: string): void {
 		if (isKeyRelease(data)) return;
 		const ev = parseInput(data);
 		if (ev.type === "mouse") {
 			if (ev.action !== "down" && ev.action !== "wheel") return;
-			const hit = this.canvas.hitAt(ev.x, ev.y);
+			const hit = this.canvas.hitAt(ev.x, ev.y, ev.action === "wheel" ? "wheel" : "click");
 			if (!hit) return;
 			const info: MouseInfo = {
 				x: ev.x - hit.x,

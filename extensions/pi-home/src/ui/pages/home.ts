@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { matchesKey } from "@earendil-works/pi-tui";
 import { DAY_MS, listProjects, mainModel, type Project, sessionTitle, startOfDay, totalTokens } from "../../index/query.ts";
 import type { SessionRecord } from "../../index/types.ts";
+import { liveSessions } from "../../index/actions.ts";
 import { type LaunchTarget, targetArgs } from "../../launch/args.ts";
 import { tildify } from "../../paths.ts";
 import type { Surface } from "../../term/canvas.ts";
@@ -10,7 +11,7 @@ import { truncate } from "../../term/width.ts";
 import type { App, Page } from "../app.ts";
 import { BIG_HEIGHT, bigTextScale, bigTextWidth, drawBigText } from "../bigtext.ts";
 import { fmtAgo, fmtCost, fmtTokens, shortModel } from "../format.ts";
-import { keyValues, ListView, PromptModal, progressBar, section, selectRow } from "../widgets.ts";
+import { ConfirmModal, keyValues, ListView, PromptModal, progressBar, section, selectRow } from "../widgets.ts";
 
 type Focus = "projects" | "sessions";
 
@@ -25,10 +26,18 @@ export const homeHooks: {
 	editProfile?: (app: App, target: LaunchTarget, rec: SessionRecord | null) => void;
 } = {};
 
-/** Open a target in pi through the zsh launch loop. */
+/**
+ * Open a target in pi through the zsh launch loop. Resuming a session that another pi process has
+ * open asks first: two writers on one session file create stray branches.
+ */
 export function launchTarget(app: App, target: LaunchTarget, rec: SessionRecord | null): void {
-	const args = homeHooks.buildArgs ? homeHooks.buildArgs(app, target, rec) : targetArgs(target);
-	app.launch({ cwd: target.cwd, args });
+	const go = (): void => {
+		const args = homeHooks.buildArgs ? homeHooks.buildArgs(app, target, rec) : targetArgs(target);
+		app.launch({ cwd: target.cwd, args });
+	};
+	const live = target.kind === "resume" && target.sessionFile ? liveSessions().get(target.sessionFile) : undefined;
+	if (live) app.modal(new ConfirmModal(`Session is open in pi (pid ${live.pid}). Open a second copy?`, go, false));
+	else go();
 }
 
 export class HomePage implements Page {
