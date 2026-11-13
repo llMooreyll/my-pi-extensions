@@ -19,7 +19,7 @@ import { fullTextSearch, snippets } from "../../index/search.ts";
 import type { SessionRecord } from "../../index/types.ts";
 import { homeDataDir, tildify } from "../../paths.ts";
 import type { Surface } from "../../term/canvas.ts";
-import { padEnd, strWidth, truncate } from "../../term/width.ts";
+import { padEnd, strWidth, truncate, wrapLines } from "../../term/width.ts";
 import type { App, Page } from "../app.ts";
 import { fmtAgo, fmtCost, fmtDateTime, fmtInt, fmtMinutes, fmtTokens, shortModel } from "../format.ts";
 import { navHandlers, openSession } from "../nav.ts";
@@ -38,6 +38,22 @@ const SORTS: { id: SortKey; label: string; value: (r: SessionRecord) => number }
 ];
 
 const BIG_FILE = 20 * 1024 * 1024;
+/**
+ * Lines for the title block in the detail panel, from the panel height only (never per session, so
+ * nothing jumps). Up to 5 lines, but never so many that CONTEXT_LEVEL or MODELS disappear where a
+ * one-line title would show them; at least 3 whenever the 11 fields still fit.
+ * Rows below the title: gap 1 + 11 fields + gap 1 = 13; CONTEXT_LEVEL needs y + 4 < h (6 rows),
+ * MODELS y + 2 < h (header + at least one row).
+ */
+function detailTitleLines(h: number): number {
+	const fieldsEnd = (t: number): number => 2 + t + 13;
+	const sections = (t: number): number => (fieldsEnd(t) + 4 < h ? (fieldsEnd(t) + 6 + 2 < h ? 2 : 1) : 0);
+	const keep = sections(1);
+	let t = 5;
+	while (t > 1 && (sections(t) < keep || fieldsEnd(t) - 1 > h)) t--;
+	const floor = Math.max(1, Math.min(3, h - 14));
+	return Math.max(t, floor);
+}
 
 /** Sessions tab: session manager (SESSIONS.md §4). */
 export class SessionsPage implements Page {
@@ -456,8 +472,8 @@ export class SessionsPage implements Page {
 		if (this.cleanupMode) this.cleanupReason = new Map(this.cleanupCandidates().map((c) => [c.rec.file, c.reason]));
 		const pal = app.pal;
 		const wide = s.w >= 120;
-		// The list gets most of the width so titles stay readable; the detail panel keeps 36-52 columns.
-		const listW = wide ? s.w - Math.min(52, Math.max(36, Math.floor(s.w * 0.28))) : s.w;
+		// The list gets most of the width; the detail panel keeps 50-56 columns so no field is cut.
+		const listW = wide ? s.w - Math.min(56, Math.max(50, Math.floor(s.w * 0.3))) : s.w;
 		this.drawFilterBar(s.sub(1, 0, s.w - 2, 2), app);
 		const listArea = s.sub(1, 2, listW - 2, s.h - 2);
 		this.drawList(listArea, app);
@@ -548,7 +564,10 @@ export class SessionsPage implements Page {
 		const pal = app.pal;
 		let y = section(s, 0, 0, s.w, "SESSION", pal);
 		const title = sessionTitle(r);
-		s.text(0, y++, truncate(title, s.w), pal.strong);
+		// Fixed-height title block so the fields below never jump between sessions.
+		const titleLines = detailTitleLines(s.h);
+		wrapLines(title, s.w, titleLines).forEach((line, i) => s.text(0, y + i, line, pal.strong));
+		y += titleLines;
 		const live = this.live.get(r.file);
 		y = keyValues(
 			s,
@@ -560,7 +579,7 @@ export class SessionsPage implements Page {
 				["LAST", `${fmtDateTime(r.lastActivity)} (${fmtAgo(r.lastActivity)})`],
 				["STATUS", live ? `OPEN in pi (pid ${live.pid})` : r.isSubagent ? "subagent" : "idle"],
 				["TURNS", `${r.userTurns} user · ${fmtInt(r.assistantMessages)} calls · ${fmtInt(r.toolCalls)} tools`],
-				["TOKENS", `${fmtTokens(totalTokens(r))}  (in ${fmtTokens(r.tokens.input)} · out ${fmtTokens(r.tokens.output)} · cache ${fmtTokens(r.tokens.cacheRead)})`],
+				["TOKENS", `${fmtTokens(totalTokens(r))} (in ${fmtTokens(r.tokens.input)} · out ${fmtTokens(r.tokens.output)} · cache ${fmtTokens(r.tokens.cacheRead)})`],
 				["COST", `${fmtCost(r.cost)}${r.warmCost ? ` + warm-up ${fmtCost(r.warmCost)}` : ""}`],
 				["ACTIVE", fmtMinutes(r.activeMinutes)],
 				["PEAK CTX", fmtTokens(r.maxContext)],
@@ -581,10 +600,10 @@ export class SessionsPage implements Page {
 			y += 4;
 		}
 		// Model share.
-		if (y + 3 < s.h) {
+		if (y + 2 < s.h) {
 			y = section(s, 0, y, s.w, "MODELS", pal);
 			const models = Object.entries(r.models).sort((a, b) => b[1].calls - a[1].calls);
-			for (const [m, st] of models.slice(0, Math.min(4, s.h - y - 1))) {
+			for (const [m, st] of models.slice(0, Math.min(4, s.h - y))) {
 				const share = st.calls / Math.max(1, r.assistantMessages);
 				const bw = Math.max(1, Math.round(share * 20));
 				s.text(0, y, "█".repeat(bw), { fg: pal.p70 });

@@ -50,6 +50,33 @@ export function truncate(s: string, width: number, ellipsis = "…"): string {
 	return out + ellipsis;
 }
 
+/**
+ * Wrap s into at most `maxLines` lines of `width` cells. Latin words break at the last space when
+ * one is near the line end; CJK text breaks anywhere. Overflow ends the last line with an ellipsis.
+ */
+export function wrapLines(s: string, width: number, maxLines: number): string[] {
+	if (width <= 0 || maxLines <= 0) return [];
+	const lines: string[] = [];
+	let rest = graphemes(s.replace(/\s+/g, " ").trim());
+	while (rest.length && lines.length < maxLines) {
+		let w = 0;
+		let end = 0;
+		while (end < rest.length && w + graphemeWidth(rest[end]!) <= width) w += graphemeWidth(rest[end++]!);
+		if (end < rest.length) {
+			const space = rest.lastIndexOf(" ", end);
+			if (space > end * 0.6) end = space;
+		}
+		if (lines.length === maxLines - 1 && end < rest.length) {
+			lines.push(truncate(rest.join(""), width));
+			return lines;
+		}
+		lines.push(rest.slice(0, end).join("").trimEnd());
+		rest = rest.slice(end);
+		while (rest[0] === " ") rest.shift();
+	}
+	return lines;
+}
+
 export function padEnd(s: string, width: number): string {
 	const t = truncate(s, width);
 	return t + " ".repeat(Math.max(0, width - strWidth(t)));
