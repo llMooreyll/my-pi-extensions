@@ -1,4 +1,4 @@
-import { type DayStats, modelStats, projectStats, toolStats } from "../../../index/aggregate.ts";
+import { type DayStats, modelLabels, modelStats, projectStats, toolStats } from "../../../index/aggregate.ts";
 import { dayKey, RANGES } from "../../../index/query.ts";
 import type { Surface } from "../../../term/canvas.ts";
 import type { App } from "../../app.ts";
@@ -145,6 +145,8 @@ export class OverviewPage extends GridPage {
 		const projects = cached(app, data, "projectStats", () => projectStats(data.records, data.range));
 		const models = cached(app, data, "modelStats", () => modelStats(data.records, data.range));
 		const tools = cached(app, data, "toolStats", () => toolStats(data.records, data.range));
+		const labels = modelLabels(models.map((m) => m.model));
+		const modelLabel = (m: string): string => labels.get(m) ?? shortModel(m);
 		const top5: Row = {
 			min: 7,
 			pref: 7,
@@ -165,9 +167,9 @@ export class OverviewPage extends GridPage {
 					right: "calls",
 					draw: (s, ctx) => {
 						const top = models.slice(0, 5);
-						hbars(s, top.map((m) => ({ label: shortModel(m.model), value: m.calls, valueLabel: fmtInt(m.calls) })), ctx, {
+						hbars(s, top.map((m) => ({ label: modelLabel(m.model), value: m.calls, valueLabel: fmtInt(m.calls) })), ctx, {
 							labelWidth: 18,
-							onClick: (i) => drill(app, data, { model: top[i]!.model }, `model ${shortModel(top[i]!.model)}`),
+							onClick: (i) => drill(app, data, { model: top[i]!.model }, `model ${modelLabel(top[i]!.model)}`),
 						});
 					},
 				},

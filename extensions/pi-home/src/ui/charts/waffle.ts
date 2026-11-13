@@ -15,8 +15,8 @@ function apportion(values: number[], n: number): number[] {
 }
 
 /**
- * Waffle chart at (x, y): `cols` x `rows` (default 10 x 10) cells, each a glyph plus one space,
- * filled row by row with largest-remainder rounding so the cells sum to cols*rows; legend with
+ * Waffle chart at (x, y): `cols` x `rows` (default 10 x 10) cells, each `▀▀` plus one space (3
+ * columns, roughly square; tier 0 repeats the density glyph twice), filled row by row with largest-remainder rounding so the cells sum to cols*rows; legend with
  * percentages to the right when it fits. Minimum: grid fits (x + cols*2 <= width, y + rows <=
  * height), else "…". Cells appear in order as progress grows; the rest show `·`.
  */
@@ -33,7 +33,7 @@ export function waffle(
 	const pal = ctx.pal;
 	const live = parts.filter((p) => p.value > 0);
 	if (live.length === 0) return noData(s, ctx);
-	if (tooSmall(s, ctx, x + cols * 2, y + rows)) return;
+	if (tooSmall(s, ctx, x + cols * 3, y + rows)) return;
 	const total = live.reduce((a, b) => a + b.value, 0);
 	const counts = apportion(
 		live.map((p) => p.value),
@@ -42,15 +42,15 @@ export function waffle(
 	const shown = Math.ceil(cols * rows * prog(ctx));
 	let idx = 0;
 	live.forEach((part, pi) => {
-		const g = seriesGlyph(ctx, pi, live.length);
+		const g = ctx.pal.caps.unicode && ctx.pal.caps.tier !== 0 ? "▀" : seriesGlyph(ctx, pi, live.length);
 		for (let k = 0; k < counts[pi]!; k++, idx++) {
-			const cx = x + (idx % cols) * 2;
+			const cx = x + (idx % cols) * 3;
 			const cy = y + Math.floor(idx / cols);
-			if (idx < shown) s.text(cx, cy, g, fgOf(part.color));
-			else s.text(cx, cy, "·", pal.faint);
+			if (idx < shown) s.text(cx, cy, g + g, fgOf(part.color));
+			else s.text(cx, cy, pal.caps.unicode ? "··" : "..", pal.faint);
 		}
 	});
-	const lx = x + cols * 2 + 2;
+	const lx = x + cols * 3 + 1;
 	if (lx + 8 > s.w) return;
 	live.slice(0, Math.max(0, s.h - y)).forEach((part, i) => {
 		const pct = `${Math.round((part.value / total) * 100)}%`;

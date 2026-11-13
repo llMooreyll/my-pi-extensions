@@ -2,6 +2,9 @@ import { dayKey, startOfDay } from "../../index/query.ts";
 import type { Surface } from "../../term/canvas.ts";
 import { type ChartCtx, fgOf, noData, tooSmall } from "./common.ts";
 
+/** Empty cell: faint dot (plus a space when 2 wide), no fill. */
+const emptyCell = (ctx: ChartCtx, cw: number): string => (ctx.pal.caps.unicode ? "·" : ".") + (cw === 2 ? " " : "");
+
 const ASCII_RAMP = ".:-=+*#@";
 
 function cellGlyph(ctx: ChartCtx, v: number): string {
@@ -13,7 +16,7 @@ function cellGlyph(ctx: ChartCtx, v: number): string {
 /**
  * Heat grid with rows x cols cells at (x, y). `value(r, c)` returns 0..1 or NaN for "no cell".
  * Each cell is `cellW` (default 2) glyphs wide, coloured by pal.ramp (density glyph in tier 0,
- * ASCII ramp without unicode). `cursor` is drawn with pal.sel. Minimum: the grid must fit
+ * ASCII ramp without unicode); values <= 0 draw a faint dot instead of a block. `cursor` is drawn with pal.sel. Minimum: the grid must fit
  * (x + cols*cellW <= width, y + rows <= height), else "…". `onClick(r, c)` is one hit region
  * over the grid.
  */
@@ -40,6 +43,7 @@ export function heatGrid(
 			if (Number.isNaN(v)) continue;
 			const cur = opts.cursor && opts.cursor.r === r && opts.cursor.c === c;
 			if (cur) s.text(x + c * cw, y + r, (pal.caps.unicode ? "▒" : "#").repeat(cw), pal.sel);
+			else if (v <= 0) s.text(x + c * cw, y + r, emptyCell(ctx, cw), pal.faint);
 			else s.text(x + c * cw, y + r, cellGlyph(ctx, v).repeat(cw), fgOf(pal.ramp(v)));
 		}
 	}
@@ -105,6 +109,7 @@ export function calendarHeat(
 			if (d.getTime() > end.getTime()) continue;
 			const v = Math.min(1, (days.get(key) ?? 0) / max);
 			if (key === opts.cursor) s.text(x, 1 + r, (unicode ? "▒" : "#").repeat(2), pal.sel);
+			else if (v <= 0) s.text(x, 1 + r, emptyCell(ctx, 2), pal.faint);
 			else s.text(x, 1 + r, glyph(v), fgOf(pal.ramp(v)));
 		}
 		keys.push(col);

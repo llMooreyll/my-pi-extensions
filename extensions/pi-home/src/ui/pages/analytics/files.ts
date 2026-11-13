@@ -44,7 +44,7 @@ export class FilesPage extends GridPage {
 						const parts = stats.languages.slice(0, 5).map((l, i) => ({ value: l.count, color: pal.series(i), label: l.ext }));
 						const rest = stats.languages.slice(5).reduce((a, l) => a + l.count, 0);
 						if (rest > 0) parts.push({ value: rest, color: pal.series(5), label: "other" });
-						waffle(s, 0, 0, parts, ctx, { cols: 10, rows: Math.min(10, s.h) });
+						waffle(s, 0, 0, parts, ctx, { cols: 6, rows: Math.min(8, s.h) });
 					},
 				},
 				{

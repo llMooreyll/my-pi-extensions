@@ -1,5 +1,5 @@
 import { matchesKey } from "@earendil-works/pi-tui";
-import { type ModelStats, modelStats, modelSwitches, modelWeekly, thinkingStats } from "../../../index/aggregate.ts";
+import { type ModelStats, modelLabels, modelStats, modelSwitches, modelWeekly, thinkingStats } from "../../../index/aggregate.ts";
 import type { SessionRecord } from "../../../index/types.ts";
 import type { RGB } from "../../../term/color.ts";
 import type { App } from "../../app.ts";
@@ -34,6 +34,10 @@ export class ModelsPage extends GridPage {
 	private byCost = false;
 	private selected = 0;
 	private top: string[] = [];
+	private labels = new Map<string, string>();
+	private label(m: string): string {
+		return this.labels.get(m) ?? shortModel(m);
+	}
 	protected override ownsArrows = true;
 	override hints = "c calls/cost  up/down select model  enter drill down  PgUp/PgDn scroll";
 
@@ -47,7 +51,7 @@ export class ModelsPage extends GridPage {
 		if (matchesKey(data, "down")) return (this.selected = Math.min(Math.max(0, n - 1), this.selected + 1)), true;
 		if (matchesKey(data, "enter") && this.top[this.selected]) {
 			const model = this.top[this.selected]!;
-			if (this.lastData) drill(app, this.lastData, { model }, `model ${shortModel(model)}`);
+			if (this.lastData) drill(app, this.lastData, { model }, `model ${this.label(model)}`);
 			return true;
 		}
 		return false;
@@ -62,6 +66,8 @@ export class ModelsPage extends GridPage {
 		const weekly = cached(app, data, "modelWeekly", () => modelWeekly(data.records, data.range));
 		const switches = cached(app, data, "modelSwitches", () => modelSwitches(data.records, data.range));
 		const thinking = cached(app, data, "thinkingStats", () => thinkingStats(data.records, data.range));
+		this.labels = modelLabels([...stats.map((m) => m.model), ...switches.flatMap((w) => [w.from, w.to])]);
+		const L = (m: string): string => this.label(m);
 		this.top = stats.slice(0, 6).map((m) => m.model);
 		this.selected = Math.min(this.selected, Math.max(0, this.top.length - 1));
 		const colorOf = (model: string): RGB => pal.series(Math.max(0, this.top.indexOf(model)) + (this.top.includes(model) ? 0 : 6));
@@ -69,7 +75,7 @@ export class ModelsPage extends GridPage {
 		// Share by calls or cost: top 5 plus "other".
 		const metric = (m: ModelStats): number => (this.byCost ? m.cost : m.calls);
 		const sorted = [...stats].sort((a, b) => metric(b) - metric(a));
-		const parts = sorted.slice(0, 5).map((m, i) => ({ value: metric(m), color: pal.series(i), label: shortModel(m.model) }));
+		const parts = sorted.slice(0, 5).map((m, i) => ({ value: metric(m), color: pal.series(i), label: L(m.model) }));
 		const rest = sorted.slice(5).reduce((a, m) => a + metric(m), 0);
 		if (rest > 0) parts.push({ value: rest, color: pal.series(5), label: "other" });
 
@@ -81,7 +87,7 @@ export class ModelsPage extends GridPage {
 			cols.push(row.slice(5).reduce((a, b) => a + b, 0) / total);
 			return cols;
 		});
-		const shareNames = [...shareModels.map(shortModel), "other"];
+		const shareNames = [...shareModels.map(L), "other"];
 
 		const share: Row = {
 			min: 12,
@@ -90,7 +96,7 @@ export class ModelsPage extends GridPage {
 				{
 					title: "SHARE",
 					right: this.byCost ? "cost (c)" : "calls (c)",
-					w: 46,
+					w: 62,
 					draw: (s, ctx) => waffle(s, 0, 0, parts, ctx, { cols: 10, rows: Math.min(10, s.h) }),
 				},
 				{
@@ -111,7 +117,7 @@ export class ModelsPage extends GridPage {
 				{
 					title: "TOKENS PER SECOND",
 					right: "top models",
-					draw: (s, ctx) => violin(s, stats.slice(0, 6).map((m) => ({ label: shortModel(m.model), values: m.tps, color: colorOf(m.model) })), ctx, { log: true }),
+					draw: (s, ctx) => violin(s, stats.slice(0, 6).map((m) => ({ label: L(m.model), values: m.tps, color: colorOf(m.model) })), ctx, { log: true }),
 				},
 				{
 					title: "LATENCY VS OUTPUT",
@@ -136,7 +142,7 @@ export class ModelsPage extends GridPage {
 				{
 					title: "MODEL SWITCHES",
 					weight: 1.5,
-					draw: (s, ctx) => flow(s, switches.map((w) => ({ from: shortModel(w.from), to: shortModel(w.to), value: w.value })), ctx),
+					draw: (s, ctx) => flow(s, switches.map((w) => ({ from: L(w.from), to: L(w.to), value: w.value })), ctx),
 				},
 				{
 					title: "FAILURE RATE",
@@ -145,9 +151,9 @@ export class ModelsPage extends GridPage {
 						const items = stats.filter((m) => m.calls > 0).slice(0, 8);
 						hbars(
 							s,
-							items.map((m) => ({ label: shortModel(m.model), value: failures(m) / m.calls, valueLabel: fmtPct(failures(m) / m.calls, 1) })),
+							items.map((m) => ({ label: L(m.model), value: failures(m) / m.calls, valueLabel: fmtPct(failures(m) / m.calls, 1) })),
 							ctx,
-							{ labelWidth: 14, max: Math.max(0.05, ...items.map((m) => failures(m) / m.calls)), onClick: (i) => drill(app, data, { model: items[i]!.model, onlyErrors: true }, `failures ${shortModel(items[i]!.model)}`) },
+							{ labelWidth: 14, max: Math.max(0.05, ...items.map((m) => failures(m) / m.calls)), onClick: (i) => drill(app, data, { model: items[i]!.model, onlyErrors: true }, `failures ${L(items[i]!.model)}`) },
 						);
 					},
 				},
@@ -168,7 +174,7 @@ export class ModelsPage extends GridPage {
 					w: 40,
 					draw: (s, ctx) => {
 						stats.slice(0, 6).forEach((m, i) => {
-							const line = `${i === this.selected ? ">" : " "} ${shortModel(m.model).padEnd(22).slice(0, 22)} ${fmtInt(m.calls).padStart(7)}  ${fmtCost(m.cost)}`;
+							const line = `${i === this.selected ? ">" : " "} ${L(m.model).padEnd(22).slice(0, 22)} ${fmtInt(m.calls).padStart(7)}  ${fmtCost(m.cost)}`;
 							s.text(0, i, line, i === this.selected ? ctx.pal.sel : ctx.pal.text);
 							s.hit(0, i, s.w, 1, { onClick: () => (this.selected = i) });
 						});
@@ -176,7 +182,7 @@ export class ModelsPage extends GridPage {
 				},
 				{
 					title: "PROFILE",
-					right: sel ? shortModel(sel.model) : undefined,
+					right: sel ? L(sel.model) : undefined,
 					draw: (s, ctx: ChartCtx) => {
 						if (!sel) return radar(s, [], ctx);
 						const failure = failures(sel) / Math.max(1, sel.calls);

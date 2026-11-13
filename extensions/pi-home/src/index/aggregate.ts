@@ -4,6 +4,7 @@
  * directly; callers pass records already filtered with filterSessions().
  */
 import { basename, dirname, extname } from "node:path";
+import { shortModel } from "../ui/format.ts";
 import type { TreeNode } from "../ui/charts/tree.ts";
 import { dayKey, sessionTitle, startOfDay } from "./query.ts";
 import type { SessionRecord } from "./types.ts";
@@ -700,6 +701,14 @@ export function subagentTree(records: SessionRecord[]): TreeNode[] {
 		.filter((r) => children.has(r.file) && !(r.parentSession && byFile.has(r.parentSession)))
 		.sort((a, b) => b.lastActivity - a.lastActivity)
 		.map((r) => build(r, new Set()));
+}
+
+/** Display labels for model ids: shortModel(), or the full provider/model when short names collide. */
+export function modelLabels(models: string[]): Map<string, string> {
+	const unique = [...new Set(models)];
+	const count = new Map<string, number>();
+	for (const m of unique) count.set(shortModel(m), (count.get(shortModel(m)) ?? 0) + 1);
+	return new Map(unique.map((m) => [m, count.get(shortModel(m))! > 1 ? m : shortModel(m)]));
 }
 
 // ---------------------------------------------------------------------------------------------

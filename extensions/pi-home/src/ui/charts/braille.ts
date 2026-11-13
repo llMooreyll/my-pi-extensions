@@ -119,7 +119,9 @@ function keepDot(ctx: ChartCtx, i: number, px: number, py: number): boolean {
  * `area` stipples the area under each line; `min`/`max` fix the value range (default 0..nice max
  * with a y axis, 0..data max without); `yAxis` draws three tick labels (`money` formats them);
  * `markers` put a `↓` one row above the point at `index` with its label to the right (the top
- * row is reserved for them). Series after the first are dashed in tier 0.
+ * row is reserved for them). `columns` places point i at the centre of column i of that many
+ * equal columns (to overlay vbars with the same number of columns); default spreads points edge
+ * to edge. Series after the first are dashed in tier 0.
  */
 export function lineChart(
 	s: Surface,
@@ -132,6 +134,7 @@ export function lineChart(
 		yAxis?: boolean;
 		money?: boolean;
 		markers?: { index: number; label: string }[];
+		columns?: number;
 	} = {},
 ): void {
 	if (tooSmall(s, ctx, 8, 3)) return;
@@ -163,7 +166,7 @@ export function lineChart(
 	const points: { px: number; py: number }[][] = [];
 	series.forEach((sr, si) => {
 		const n = sr.values.length;
-		const pts = sr.values.map((v, i) => ({ px: n <= 1 ? (cv.pw - 1) / 2 : (i * (cv.pw - 1)) / (n - 1), py: yOf(Number.isFinite(v) ? v : min) }));
+		const pts = sr.values.map((v, i) => ({ px: opts.columns ? ((i + 0.5) / opts.columns) * cv.pw - 0.5 : n <= 1 ? (cv.pw - 1) / 2 : (i * (cv.pw - 1)) / (n - 1), py: yOf(Number.isFinite(v) ? v : min) }));
 		points.push(pts);
 		if (opts.area) {
 			// Stipple below the polyline for every dot column, interpolating between samples.

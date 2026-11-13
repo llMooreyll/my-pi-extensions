@@ -103,7 +103,7 @@ export class ToolsPage extends GridPage {
 						const parts = git.slice(0, 5).map((g, i) => ({ value: g.count, color: pal.series(i), label: g.key }));
 						const rest = git.slice(5).reduce((a, g) => a + g.count, 0);
 						if (rest > 0) parts.push({ value: rest, color: pal.series(5), label: "other" });
-						waffle(s, 0, 0, parts, ctx, { cols: 8, rows: Math.min(6, s.h) });
+						waffle(s, 0, 0, parts, ctx, { cols: 6, rows: Math.min(6, s.h) });
 					},
 				},
 				{

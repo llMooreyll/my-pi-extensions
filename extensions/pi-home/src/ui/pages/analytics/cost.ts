@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { budget, costStats, dailySeries, modelStats } from "../../../index/aggregate.ts";
+import { budget, costStats, dailySeries, modelLabels, modelStats } from "../../../index/aggregate.ts";
 import type { SessionRecord } from "../../../index/types.ts";
 import type { Surface } from "../../../term/canvas.ts";
 import { strWidth } from "../../../term/width.ts";
@@ -89,7 +89,7 @@ export class CostPage extends GridPage {
 							xLabels: days.map((k) => String(Number(k.slice(8)))),
 							onClick: (i) => drillDay(app, days[i]!),
 						});
-						if (s.w > aw + 2 && s.h > 3) lineChart(s.sub(aw, 0, s.w - aw, s.h - 1), [{ values: moving, color: pal.series(1) }], ctx, { min: 0, max });
+						if (s.w > aw + 2 && s.h > 3) lineChart(s.sub(aw, 0, s.w - aw, s.h - 1), [{ values: moving, color: pal.series(1) }], ctx, { min: 0, max, columns: days.length });
 					},
 				},
 			],
@@ -141,6 +141,8 @@ export class CostPage extends GridPage {
 		};
 
 		const top = models.slice(0, 6);
+		const labels = modelLabels(models.map((m) => m.model));
+		const label = (m: string): string => labels.get(m) ?? shortModel(m);
 		const lower: Row = {
 			min: 8,
 			pref: 13,
@@ -159,7 +161,7 @@ export class CostPage extends GridPage {
 				{
 					title: "COST PER CALL",
 					right: "p5 / p25 / p50 / p75 / p95",
-					draw: (s, ctx) => boxplot(s, top.map((m) => ({ label: shortModel(m.model), values: m.costPerCall.filter((v) => v > 0) })), ctx, { log: true, money: true }),
+					draw: (s, ctx) => boxplot(s, top.map((m) => ({ label: label(m.model), values: m.costPerCall })), ctx, { log: true, money: true }),
 				},
 			],
 		};

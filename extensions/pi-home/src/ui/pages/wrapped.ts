@@ -1,5 +1,5 @@
 import { matchesKey } from "@earendil-works/pi-tui";
-import { costStats, dailySeries, type DayStats, fileStats, hourWeekday, longestRuns, modelStats, streaks, toolStats, topCounts } from "../../index/aggregate.ts";
+import { costStats, dailySeries, type DayStats, fileStats, hourWeekday, longestRuns, modelLabels, modelStats, streaks, toolStats, topCounts } from "../../index/aggregate.ts";
 import { defaultFilter, filterSessions } from "../../index/query.ts";
 import type { SessionRecord } from "../../index/types.ts";
 import { Canvas, type Surface } from "../../term/canvas.ts";
@@ -46,6 +46,7 @@ interface Data {
 	deleted: number;
 	run: ReturnType<typeof longestRuns>[number] | null;
 	words: { key: string; count: number }[];
+	label: (model: string) => string;
 	streak: ReturnType<typeof streaks>;
 }
 
@@ -54,6 +55,8 @@ function compute(app: App, period: WrappedPeriod): Data {
 	const records = filterSessions(app.index.records.values(), { ...defaultFilter(), from: range.from, to: range.to, includeSubagents: view.includeSubagents });
 	const daily = dailySeries(records, range);
 	const sessionIds = new Set<string>();
+	const models = modelStats(records, range);
+	const labels = modelLabels(models.map((m) => m.model));
 	const d: Omit<Data, "busiest"> = {
 		records,
 		empty: records.length === 0,
@@ -63,7 +66,7 @@ function compute(app: App, period: WrappedPeriod): Data {
 		tokens: 0,
 		cost: 0,
 		hours: 0,
-		models: modelStats(records, range),
+		models,
 		tools: toolStats(records, range),
 		badge: dayBadge(hourWeekday(records, range)),
 		hourly: new Array<number>(24).fill(0),
@@ -73,6 +76,7 @@ function compute(app: App, period: WrappedPeriod): Data {
 		deleted: 0,
 		run: longestRuns(records, 1)[0] ?? null,
 		words: topCounts(records, "words"),
+		label: (m) => labels.get(m) ?? shortModel(m),
 		streak: streaks(daily),
 	};
 	let best: { day: string; tokens: number; calls: number } | null = null;
@@ -172,7 +176,7 @@ const CARDS: Card[] = [
 	},
 	{
 		title: "FAVOURITES",
-		sentence: (d) => `Favourite model: ${shortModel(d.models[0]?.model ?? "none")}. Favourite tool: ${d.tools[0]?.tool ?? "none"}.`,
+		sentence: (d) => `Favourite model: ${d.label(d.models[0]?.model ?? "none")}. Favourite tool: ${d.tools[0]?.tool ?? "none"}.`,
 		draw: (s, ctx, d) => {
 			const pal = ctx.pal;
 			const half = Math.floor(s.w / 2);
@@ -185,7 +189,7 @@ const CARDS: Card[] = [
 				return parts;
 			};
 			s.text(0, 0, "MODELS", pal.title);
-			waffle(s.sub(0, 0, half, s.h), 0, 1, make(d.models.map((m) => ({ label: shortModel(m.model), value: m.calls }))), ctx, { cols, rows });
+			waffle(s.sub(0, 0, half, s.h), 0, 1, make(d.models.map((m) => ({ label: d.label(m.model), value: m.calls }))), ctx, { cols, rows });
 			s.text(half + 1, 0, "TOOLS", pal.title);
 			waffle(s.sub(half + 1, 0, s.w - half - 1, s.h), 0, 1, make(d.tools.map((t) => ({ label: t.tool, value: t.calls }))), ctx, { cols, rows });
 		},
@@ -276,7 +280,7 @@ const CARDS: Card[] = [
 				["TOKENS", fmtTokens(d.tokens)],
 				["COST", fmtCost(d.cost)],
 				["ACTIVE", fmtMinutes(d.hours * 60)],
-				["TOP MODEL", shortModel(d.models[0]?.model ?? "n/a")],
+				["TOP MODEL", d.label(d.models[0]?.model ?? "n/a")],
 				["TOP TOOL", d.tools[0]?.tool ?? "n/a"],
 				["LONGEST STREAK", `${d.streak.longest} days`],
 				["DAY TYPE", d.badge.name],

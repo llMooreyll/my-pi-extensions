@@ -13,7 +13,9 @@ function percentile(sorted: number[], q: number): number {
  * Horizontal box plots, one row per group: whiskers p5-p95 (`├─` ... `─┤`), box p25-p75
  * (`▐█▌`), median `┃`; the last row is an axis with the min / max labels. Minimum 16 columns x 2
  * rows. `log` uses log10 positions (values <= 0 ignored); `format` / `money` format the axis
- * labels. Groups beyond the height are dropped; groups without values keep an empty row.
+ * labels. Groups beyond the height are dropped; groups without values keep an empty row. A group
+ * whose values are all 0 shows "all $0" (or "all 0") in pal.dim instead of a box; with `log`, zeros
+ * are left out of the box and counted in the label ("name +12% at $0").
  */
 export function boxplot(
 	s: Surface,
@@ -23,18 +25,24 @@ export function boxplot(
 ): void {
 	if (tooSmall(s, ctx, 16, 2)) return;
 	const pal = ctx.pal;
+	const zeros = groups.map((g) => g.values.filter((v) => v === 0).length);
+	const allZero = groups.map((g, i) => g.values.length > 0 && zeros[i] === g.values.length);
+	const zero = opts.money ? "$0" : "0";
+	const labelOf = (g: { label: string; values: number[] }, i: number): string =>
+		opts.log && zeros[i]! > 0 && !allZero[i] ? `${g.label} +${Math.max(1, Math.round((zeros[i]! / g.values.length) * 100))}% at ${zero}` : g.label;
 	const prep = groups.map((g) => g.values.filter((v) => Number.isFinite(v) && (!opts.log || v > 0)).sort((a, b) => a - b));
-	if (prep.every((v) => v.length === 0)) return noData(s, ctx);
+	if (prep.every((v) => v.length === 0) && !allZero.some(Boolean)) return noData(s, ctx);
 	const shown = Math.min(groups.length, s.h - 1);
-	const lw = Math.min(Math.max(...groups.slice(0, shown).map((g) => strWidth(g.label))), Math.floor(s.w / 3));
+	const lw = Math.min(Math.max(...groups.slice(0, shown).map((g, i) => strWidth(labelOf(g, i)))), Math.floor(s.w * 0.45));
 	const pw = s.w - lw - 1;
 	if (pw < 6) {
 		s.text(0, 0, ellipsis(ctx), pal.dim);
 		return;
 	}
 	const tf = (v: number): number => (opts.log ? Math.log10(v) : v);
-	const lowest = Math.min(...prep.filter((v) => v.length).map((v) => percentile(v, 0.05)));
-	const highest = Math.max(...prep.filter((v) => v.length).map((v) => percentile(v, 0.95)));
+	const live = prep.filter((v) => v.length);
+	const lowest = live.length ? Math.min(...live.map((v) => percentile(v, 0.05))) : 0;
+	const highest = live.length ? Math.max(...live.map((v) => percentile(v, 0.95))) : 1;
 	const lo = tf(lowest);
 	const range = tf(highest) - lo || 1;
 	const col = (v: number): number => Math.max(0, Math.min(pw - 1, Math.round(((tf(v) - lo) / range) * (pw - 1))));
@@ -43,7 +51,11 @@ export function boxplot(
 	const p = prog(ctx);
 	const bx = lw + 1;
 	for (let g = 0; g < shown; g++) {
-		s.text(0, g, padCut(ctx, groups[g]!.label, lw), pal.text);
+		s.text(0, g, padCut(ctx, labelOf(groups[g]!, g), lw), pal.text);
+		if (allZero[g]) {
+			s.text(bx, g, cut(ctx, `all ${zero}`, pw), pal.dim);
+			continue;
+		}
 		const v = prep[g]!;
 		if (v.length === 0) continue;
 		const q = [0.05, 0.25, 0.5, 0.75, 0.95].map((k) => col(percentile(v, k)));

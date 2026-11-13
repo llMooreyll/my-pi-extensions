@@ -80,12 +80,12 @@ function pool(columns: number[][], n: number): { cols: number[][]; first: number
 	return { cols, first };
 }
 
-function drawXLabels(ctx: ChartCtx, s: Surface, y: number, x0: number, cw: number, first: number[], labels: string[], style: Style): void {
+function drawXLabels(ctx: ChartCtx, s: Surface, y: number, x0: number, slot: (g: number) => number, first: number[], labels: string[], style: Style): void {
 	let lastEnd = x0 - 1;
 	first.forEach((src, g) => {
 		const lab = labels[src];
 		if (!lab) return;
-		const x = x0 + g * cw;
+		const x = x0 + slot(g);
 		const t = cut(ctx, lab, Math.max(1, s.w - x));
 		if (x <= lastEnd || x >= s.w) return;
 		s.text(x, y, t, style);
@@ -128,8 +128,8 @@ export function vbars(
 		s.textIn(0, plotH - 1, aw - 1, ticks[2]!, pal.dim, "right");
 	}
 	const { cols, first } = pool(columns, pw);
-	const cw = Math.max(1, Math.floor(pw / cols.length));
-	const bw = cw >= 2 ? cw - 1 : 1;
+	// Columns share the whole width: slot g spans [slot(g), slot(g + 1)); the bar sits centred in it.
+	const slot = (g: number): number => Math.round((g * pw) / cols.length);
 	const H = plotH * 8;
 	const p = prog(ctx);
 	const nStack = colors.length;
@@ -170,12 +170,15 @@ export function vbars(
 				ch = LOWER[split]!;
 				style = { fg: colors[lo] ?? pal.p100, bg: colors[hi] ?? pal.p100 };
 			}
-			for (let k = 0; k < bw; k++) s.text(aw + g * cw + k, y, ch, style);
+			const sw = slot(g + 1) - slot(g);
+			const bw = sw >= 2 ? sw - 1 : 1;
+			const bx = aw + slot(g) + Math.floor((sw - bw) / 2);
+			for (let k = 0; k < bw; k++) s.text(bx + k, y, ch, style);
 		}
 	});
-	if (opts.xLabels) drawXLabels(ctx, s, s.h - 1, aw, cw, first, opts.xLabels, pal.dim);
+	if (opts.xLabels) drawXLabels(ctx, s, s.h - 1, aw, slot, first, opts.xLabels, pal.dim);
 	const onClick = opts.onClick;
-	if (onClick) cols.forEach((_, g) => s.hit(aw + g * cw, 0, cw, plotH, { onClick: () => onClick(first[g]!) }));
+	if (onClick) cols.forEach((_, g) => s.hit(aw + slot(g), 0, slot(g + 1) - slot(g), plotH, { onClick: () => onClick(first[g]!) }));
 }
 
 /**
@@ -202,8 +205,7 @@ export function mirrorBars(s: Surface, up: number[], down: number[], ctx: ChartC
 	const groups = Math.min(n, s.w);
 	const k = Math.ceil(n / groups);
 	const nGroups = Math.ceil(n / k);
-	const cw = Math.max(1, Math.floor(s.w / nGroups));
-	const bw = cw >= 2 ? cw - 1 : 1;
+	const slot = (g: number): number => Math.round((g * s.w) / nGroups);
 	const p = prog(ctx);
 	const poolMax = (arr: number[], g: number): number => {
 		let m = 0;
@@ -213,18 +215,21 @@ export function mirrorBars(s: Surface, up: number[], down: number[], ctx: ChartC
 	const first: number[] = [];
 	for (let g = 0; g < nGroups; g++) {
 		first.push(g * k);
+		const sw = slot(g + 1) - slot(g);
+		const bw = sw >= 2 ? sw - 1 : 1;
+		const bx = slot(g) + Math.floor((sw - bw) / 2);
 		const u8 = Math.round((poolMax(up, g) / maxV) * upH * 8 * p);
 		for (let r = 0; r * 8 < u8; r++) {
 			const fill = Math.min(8, u8 - r * 8);
 			const ch = uni ? LOWER[fill]! : "#";
-			for (let b = 0; b < bw; b++) s.text(g * cw + b, cy - 1 - r, ch, fgOf(pal.ok));
+			for (let b = 0; b < bw; b++) s.text(bx + b, cy - 1 - r, ch, fgOf(pal.ok));
 		}
 		const d2 = Math.round((poolMax(down, g) / maxV) * downH * 2 * p);
 		for (let r = 0; r * 2 < d2; r++) {
 			const half = d2 - r * 2 === 1;
 			const ch = !uni ? "=" : pal.caps.tier === 0 ? "▒" : half ? "▀" : "█";
-			for (let b = 0; b < bw; b++) s.text(g * cw + b, cy + 1 + r, ch, fgOf(pal.err));
+			for (let b = 0; b < bw; b++) s.text(bx + b, cy + 1 + r, ch, fgOf(pal.err));
 		}
 	}
-	if (opts.xLabels) drawXLabels(ctx, s, s.h - 1, 0, cw, first, opts.xLabels, pal.dim);
+	if (opts.xLabels) drawXLabels(ctx, s, s.h - 1, 0, slot, first, opts.xLabels, pal.dim);
 }
