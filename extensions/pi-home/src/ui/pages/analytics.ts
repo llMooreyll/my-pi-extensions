@@ -3,26 +3,16 @@ import type { Surface } from "../../term/canvas.ts";
 import { strWidth } from "../../term/width.ts";
 import type { App, Page } from "../app.ts";
 import { type AnalyticsData, cachedBy, restartAnimation, type SubPage, view } from "./analytics/layout.ts";
+import { BehaviourPage } from "./analytics/behaviour.ts";
 import { CostPage } from "./analytics/cost.ts";
+import { FilesPage } from "./analytics/files.ts";
 import { ModelsPage } from "./analytics/models.ts";
 import { OverviewPage } from "./analytics/overview.ts";
+import { ProjectsPage } from "./analytics/projects.ts";
 import { TimePage } from "./analytics/time.ts";
+import { ToolsPage } from "./analytics/tools.ts";
 
 export type { AnalyticsData } from "./analytics/layout.ts";
-
-/** Sub-page that is not built yet. */
-class PendingPage implements SubPage {
-	private readonly name: string;
-	constructor(name: string) {
-		this.name = name;
-	}
-	draw(s: Surface, app: App): void {
-		s.textIn(0, Math.floor(s.h / 2), s.w, `[ ${this.name} :: NOT_IMPLEMENTED ]`, app.pal.dim, "center");
-	}
-	key(): boolean {
-		return false;
-	}
-}
 
 /** WRAPPED entry card; Pi Wrapped itself is added in a later step. */
 class WrappedEntryPage implements SubPage {
@@ -41,10 +31,10 @@ export class AnalyticsPage implements Page {
 		{ name: "TIME", page: new TimePage() },
 		{ name: "COST", page: new CostPage() },
 		{ name: "MODELS", page: new ModelsPage() },
-		{ name: "TOOLS", page: new PendingPage("TOOLS") },
-		{ name: "FILES", page: new PendingPage("FILES") },
-		{ name: "PROJECTS", page: new PendingPage("PROJECTS") },
-		{ name: "BEHAVIOUR", page: new PendingPage("BEHAVIOUR") },
+		{ name: "TOOLS", page: new ToolsPage() },
+		{ name: "FILES", page: new FilesPage() },
+		{ name: "PROJECTS", page: new ProjectsPage() },
+		{ name: "BEHAVIOUR", page: new BehaviourPage() },
 		{ name: "WRAPPED", page: new WrappedEntryPage() },
 	];
 	private sub = 0;
