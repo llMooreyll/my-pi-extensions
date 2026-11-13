@@ -87,7 +87,7 @@ function compact(v: number): string {
 			return `${x >= 100 || Number.isInteger(x) ? Math.round(x) : x.toFixed(1)}${u}`;
 		}
 	}
-	return Number.isInteger(v) ? String(v) : v.toFixed(v < 10 ? 1 : 0);
+	return Number.isInteger(v) ? String(v) : v < 1 ? v.toFixed(2) : v.toFixed(v < 10 ? 1 : 0);
 }
 
 /** Compact axis label: 0, 950, 1.2K, 3M, $4.20 (when money=true). */

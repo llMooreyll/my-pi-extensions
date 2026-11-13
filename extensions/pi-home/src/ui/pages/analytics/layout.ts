@@ -3,6 +3,7 @@ import { dailySeries, type DayStats, memo } from "../../../index/aggregate.ts";
 import { dayKey, defaultFilter, filterSessions, type RangeId, type SessionFilter, startOfDay } from "../../../index/query.ts";
 import type { SessionRecord } from "../../../index/types.ts";
 import type { Surface } from "../../../term/canvas.ts";
+import { strWidth } from "../../../term/width.ts";
 import type { App } from "../../app.ts";
 import { drillDown } from "../../nav.ts";
 import type { ChartCtx } from "../../charts/index.ts";
@@ -123,6 +124,7 @@ export abstract class GridPage implements SubPage {
 	protected scroll = 0;
 	private rowCount = 0;
 	private visible = 0;
+	private maxScroll = 0;
 
 	protected abstract rows(app: App, data: AnalyticsData, width: number): Row[];
 
@@ -137,7 +139,14 @@ export abstract class GridPage implements SubPage {
 	draw(s: Surface, app: App, data: AnalyticsData): void {
 		const rows = this.rows(app, data, s.w);
 		this.rowCount = rows.length;
-		this.scroll = Math.max(0, Math.min(this.scroll, Math.max(0, rows.length - 1)));
+		// Last page must be full: the highest scroll at which every remaining row still fits.
+		let maxScroll = rows.length - 1;
+		for (let used = 0; maxScroll >= 0; maxScroll--) {
+			used += rows[maxScroll]!.min + (used > 0 ? 1 : 0);
+			if (used > s.h) break;
+		}
+		this.maxScroll = Math.max(0, Math.min(rows.length - 1, maxScroll + 1));
+		this.scroll = Math.max(0, Math.min(this.scroll, this.maxScroll));
 		const fit: number[] = [];
 		let used = 0;
 		for (let i = this.scroll; i < rows.length; i++) {
@@ -186,7 +195,8 @@ export abstract class GridPage implements SubPage {
 			const ps = s.sub(x, 0, w, s.h);
 			if (p.bare) p.draw(ps, ctx);
 			else {
-				section(ps, 0, 0, w, p.title, app.pal, p.right);
+				const fits = p.right !== undefined && strWidth(`[ ${p.title} ]`) + 2 + strWidth(p.right) <= w;
+				section(ps, 0, 0, w, p.title, app.pal, fits ? p.right : undefined);
 				p.draw(ps.sub(0, 2, w, s.h - 2), ctx);
 			}
 			x += w + gap;
@@ -197,7 +207,7 @@ export abstract class GridPage implements SubPage {
 		if (this.pageKey(data, app)) return true;
 		const page = Math.max(1, this.visible);
 		const set = (n: number): boolean => {
-			this.scroll = Math.max(0, Math.min(n, Math.max(0, this.rowCount - 1)));
+			this.scroll = Math.max(0, Math.min(n, this.maxScroll));
 			return true;
 		};
 		if (matchesKey(data, "pageDown")) return set(this.scroll + page);
@@ -217,4 +227,15 @@ export function drill(app: App, data: AnalyticsData, patch: Partial<SessionFilte
 /** drillDown() onto one local day ("YYYY-MM-DD"). */
 export function drillDay(app: App, day: string): void {
 	drillDown(app, { ...dayRange(day), includeSubagents: view.includeSubagents }, day);
+}
+
+/** Contiguous day keys covered by the range (from the range start, or the first active day for ALL) up to today. */
+export function rangeDayKeys(data: AnalyticsData, daily: Map<string, DayStats>): string[] {
+	const today = dayKey(Date.now());
+	let start = data.range.from > 0 ? dayKey(data.range.from) : [...daily.keys()].sort()[0];
+	if (start === undefined) return [];
+	if (start > today) start = today;
+	const out: string[] = [];
+	for (let k = start; k <= today && out.length < 4000; k = shiftDay(k, 1)) out.push(k);
+	return out;
 }

@@ -3,6 +3,8 @@ import type { Surface } from "../../term/canvas.ts";
 import { strWidth } from "../../term/width.ts";
 import type { App, Page } from "../app.ts";
 import { type AnalyticsData, cachedBy, restartAnimation, type SubPage, view } from "./analytics/layout.ts";
+import { CostPage } from "./analytics/cost.ts";
+import { ModelsPage } from "./analytics/models.ts";
 import { OverviewPage } from "./analytics/overview.ts";
 import { TimePage } from "./analytics/time.ts";
 
@@ -37,8 +39,8 @@ export class AnalyticsPage implements Page {
 	private readonly subs: { name: string; page: SubPage }[] = [
 		{ name: "OVERVIEW", page: new OverviewPage() },
 		{ name: "TIME", page: new TimePage() },
-		{ name: "COST", page: new PendingPage("COST") },
-		{ name: "MODELS", page: new PendingPage("MODELS") },
+		{ name: "COST", page: new CostPage() },
+		{ name: "MODELS", page: new ModelsPage() },
 		{ name: "TOOLS", page: new PendingPage("TOOLS") },
 		{ name: "FILES", page: new PendingPage("FILES") },
 		{ name: "PROJECTS", page: new PendingPage("PROJECTS") },
