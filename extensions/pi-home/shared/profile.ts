@@ -6,7 +6,7 @@
 export const PROFILE_VERSION = 1;
 export const PROFILE_ENTRY_TYPE = "pi-home/profile";
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface Profile {
 	version: 1;
@@ -99,7 +99,7 @@ const strOrNull = (v: unknown, fallback: string | null): string | null => (typeo
 const bool = (v: unknown, fallback: boolean): boolean => (typeof v === "boolean" ? v : fallback);
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
 	typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
-const THINKING: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const THINKING: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** Full Profile from untrusted input (a version-1 object); invalid fields fall back to defaults, unknown fields are dropped. */
 export function normalizeProfile(x: unknown): Profile | null {
