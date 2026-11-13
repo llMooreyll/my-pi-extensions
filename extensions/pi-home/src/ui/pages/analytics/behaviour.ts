@@ -44,7 +44,7 @@ export class BehaviourPage extends GridPage {
 
 		const gauge = (count: number, label: string, rate: number) => (s: Surface, ctx: ChartCtx): void => {
 			donut(s, user.messages > 0 ? [{ value: count, color: ctx.pal.series(0), label }, { value: Math.max(0, user.messages - count), color: ctx.pal.p25, label: "other" }] : [], ctx);
-			s.text(0, Math.max(0, s.h - 1), `${fmtInt(count)} messages, ${rate.toFixed(1)} per 100`, ctx.pal.dim);
+			s.text(0, Math.max(0, s.h - 1), `${fmtInt(count)} msg  ${rate.toFixed(1)}/100`, ctx.pal.dim);
 		};
 
 		const first: Row = {

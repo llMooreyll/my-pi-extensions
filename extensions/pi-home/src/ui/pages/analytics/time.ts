@@ -25,13 +25,13 @@ const BUCKETS: { label: string; max: number }[] = [
 	{ label: "4h+", max: Number.POSITIVE_INFINITY },
 ];
 
-interface Badge {
+export interface Badge {
 	name: string;
 	pct: number;
 }
 
 /** Day-type badge from the hour/weekday call distribution; first match in the listed order. */
-function dayBadge(grid: number[][]): Badge {
+export function dayBadge(grid: number[][]): Badge {
 	let total = 0;
 	let night = 0;
 	let early = 0;

@@ -11,18 +11,9 @@ import { OverviewPage } from "./analytics/overview.ts";
 import { ProjectsPage } from "./analytics/projects.ts";
 import { TimePage } from "./analytics/time.ts";
 import { ToolsPage } from "./analytics/tools.ts";
+import { WrappedSubPage } from "./analytics/wrapped.ts";
 
 export type { AnalyticsData } from "./analytics/layout.ts";
-
-/** WRAPPED entry card; Pi Wrapped itself is added in a later step. */
-class WrappedEntryPage implements SubPage {
-	draw(s: Surface, app: App): void {
-		s.textIn(0, Math.floor(s.h / 2), s.w, "Press enter to start Pi Wrapped", app.pal.strong, "center");
-	}
-	key(): boolean {
-		return false;
-	}
-}
 
 export class AnalyticsPage implements Page {
 	readonly title = "ANALYTICS";
@@ -35,7 +26,7 @@ export class AnalyticsPage implements Page {
 		{ name: "FILES", page: new FilesPage() },
 		{ name: "PROJECTS", page: new ProjectsPage() },
 		{ name: "BEHAVIOUR", page: new BehaviourPage() },
-		{ name: "WRAPPED", page: new WrappedEntryPage() },
+		{ name: "WRAPPED", page: new WrappedSubPage() },
 	];
 	private sub = 0;
 	private rangeId: RangeId = "30d";
