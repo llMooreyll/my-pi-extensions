@@ -3,11 +3,13 @@ import { AnalyticsPage } from "./analytics.ts";
 import { HomePage } from "./home.ts";
 import { PresetsPage } from "./presets.ts";
 import { installProfileHooks } from "./profile-hooks.ts";
+import { installSessionDetail } from "./session-detail.ts";
 import { SessionsPage } from "./sessions.ts";
 
 /** Tab pages in tab-bar order. Tasks replace placeholders with real pages here. */
 export function registerPages(app: App): { id: TabId; page: Page }[] {
 	installProfileHooks(app);
+	installSessionDetail(app);
 	return [
 		{ id: "home", page: new HomePage(app) },
 		{ id: "sessions", page: new SessionsPage(app) },
