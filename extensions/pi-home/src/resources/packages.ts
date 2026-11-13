@@ -3,7 +3,7 @@
  * Rules: docs/packages.md, docs/settings.md#resources, plus install roots and entry-point
  * discovery as implemented in pi's core/package-manager.js (read-only reference).
  */
-import { existsSync, globSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, globSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, matchesGlob as pathMatchesGlob, relative, resolve } from "node:path";
 import { agentDir } from "../paths.ts";
@@ -118,6 +118,19 @@ function safeReaddir(dir: string) {
 	}
 }
 
+/** True the first time a directory (by realpath) is seen; guards the recursive scanners against symlink cycles. */
+function firstVisit(dir: string, visited: Set<string>): boolean {
+	let real = dir;
+	try {
+		real = realpathSync(dir);
+	} catch {
+		// unreadable: let the caller's own error handling deal with it
+	}
+	if (visited.has(real)) return false;
+	visited.add(real);
+	return true;
+}
+
 /** Entry points declared by a directory: package.json `pi.extensions`, else index.ts/index.js. */
 export function resolveExtensionEntries(dir: string): string[] | null {
 	const pkg = readJson(join(dir, "package.json"));
@@ -129,8 +142,8 @@ export function resolveExtensionEntries(dir: string): string[] | null {
 }
 
 /** Extension entries under a conventional extensions directory. */
-export function collectExtensionEntries(dir: string): string[] {
-	if (!existsSync(dir)) return [];
+export function collectExtensionEntries(dir: string, visited = new Set<string>()): string[] {
+	if (!existsSync(dir) || !firstVisit(dir, visited)) return [];
 	const root = resolveExtensionEntries(dir);
 	if (root) return root;
 	const out: string[] = [];
@@ -148,8 +161,8 @@ export function collectExtensionEntries(dir: string): string[] {
  * Skill entries: a directory holding SKILL.md is one skill (no further descent); "pi" mode also
  * takes loose .md files directly in the root, "agents" mode takes .md files in sub-directories.
  */
-export function collectSkillEntries(dir: string, mode: "pi" | "agents", root = dir): string[] {
-	if (!existsSync(dir)) return [];
+export function collectSkillEntries(dir: string, mode: "pi" | "agents", root = dir, visited = new Set<string>()): string[] {
+	if (!existsSync(dir) || !firstVisit(dir, visited)) return [];
 	const entries = safeReaddir(dir);
 	const own = entries.find((e) => e.name === "SKILL.md" && statKind(join(dir, e.name), e).isFile);
 	if (own) return [join(dir, own.name)];
@@ -160,7 +173,7 @@ export function collectSkillEntries(dir: string, mode: "pi" | "agents", root = d
 		const { isDir, isFile } = statKind(full, e);
 		if (isFile && e.name.endsWith(".md") && ((mode === "pi" && dir === root) || (mode === "agents" && dir !== root))) {
 			out.push(full);
-		} else if (isDir) out.push(...collectSkillEntries(full, mode, root));
+		} else if (isDir) out.push(...collectSkillEntries(full, mode, root, visited));
 	}
 	return out;
 }

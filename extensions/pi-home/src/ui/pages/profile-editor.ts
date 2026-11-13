@@ -133,6 +133,8 @@ interface Group {
 type Focus = "header" | "groups" | "fields";
 
 const THINKING: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const RESERVED = ["__proto__", "constructor", "prototype"];
+const NAV_KEYS = ["up", "down", "pageUp", "pageDown", "home", "end"] as const;
 const splitList = (s: string): string[] =>
 	s
 		.split(",")
@@ -504,7 +506,7 @@ export class ProfileEditorPage implements Page {
 	/** ctrl+s: launch pi, or in an editing mode write the profile back to its config entry. */
 	private launch(): void {
 		if (this.editing) return this.saveEdited();
-		const args = composeArgs(this.target, this.p, argsEnv(this.target.cwd), () => writeProfileFile(this.p));
+		const args = composeArgs(this.target, this.p, argsEnv(this.target.cwd), () => writeProfileFile(this.p), this.keepEmpty());
 		this.app.launch({ cwd: this.target.cwd, args });
 	}
 
@@ -538,7 +540,8 @@ export class ProfileEditorPage implements Page {
 			new PromptModal("SAVE PRESET AS", "", (name) => {
 				const n = name.trim();
 				if (!n) return;
-				const exists = n in this.app.config.presets;
+				if (RESERVED.includes(n)) return this.app.toast(`"${n}" is a reserved name`, "error");
+				const exists = Object.hasOwn(this.app.config.presets, n);
 				this.app.config.presets[n] = structuredClone(this.p);
 				this.app.saveConfig();
 				this.app.toast(`preset "${n}" ${exists ? "overwritten" : "saved"}`);
@@ -574,6 +577,16 @@ export class ProfileEditorPage implements Page {
 
 	key(data: string): boolean {
 		if (matchesKey(data, "ctrl+s")) return this.launch(), true;
+		if (data === "d") return this.saveDefault("project"), true;
+		if (data === "g") return this.saveDefault("global"), true;
+		if (data === "p") return this.savePreset(), true;
+		if (data === "l") return this.loadPreset(), true;
+		if (data === "v") return this.app.modal(new FullCommandModal(previewArgs(this.target, this.p, argsEnv(this.target.cwd), this.keepEmpty()))), true;
+		if (data === "x") {
+			this.p = emptyProfile();
+			this.app.toast("profile reset to empty");
+			return true;
+		}
 		if (this.focus === "header") {
 			if (matchesKey(data, "enter")) return this.launch(), true;
 			if (matchesKey(data, "down")) return (this.focus = "groups"), true;
@@ -585,7 +598,7 @@ export class ProfileEditorPage implements Page {
 				this.focus = "fields";
 				return true;
 			}
-			if (this.groupList.key(data, this.groups.length)) {
+			if (NAV_KEYS.some((k) => matchesKey(data, k)) && this.groupList.key(data, this.groups.length)) {
 				this.fieldList.selected = 0;
 				this.fieldList.scroll = 0;
 				return true;
@@ -598,19 +611,9 @@ export class ProfileEditorPage implements Page {
 				const f = fields[this.fieldList.selected];
 				return f?.space ? (f.space(), true) : true;
 			}
-			if (["up", "down", "pageUp", "pageDown", "home", "end"].some((k) => matchesKey(data, k as "up"))) {
+			if (NAV_KEYS.some((k) => matchesKey(data, k))) {
 				return this.fieldList.key(data, fields.length), true;
 			}
-		}
-		if (data === "d") return this.saveDefault("project"), true;
-		if (data === "g") return this.saveDefault("global"), true;
-		if (data === "p") return this.savePreset(), true;
-		if (data === "l") return this.loadPreset(), true;
-		if (data === "v") return this.app.modal(new FullCommandModal(previewArgs(this.target, this.p, argsEnv(this.target.cwd)))), true;
-		if (data === "x") {
-			this.p = emptyProfile();
-			this.app.toast("profile reset to empty");
-			return true;
 		}
 		return false;
 	}
@@ -628,8 +631,13 @@ export class ProfileEditorPage implements Page {
 		return `${t.kind === "resume" ? "RESUME" : "FORK"} ${title}`;
 	}
 
+	/** Resume/fork of a session with a stored profile: an empty edit must still overwrite it. */
+	private keepEmpty(): boolean {
+		return (this.target.kind === "resume" || this.target.kind === "fork") && this.rec?.profile != null;
+	}
+
 	private preview(): string {
-		return previewCommand(this.target, this.p, argsEnv(this.target.cwd));
+		return previewCommand(this.target, this.p, argsEnv(this.target.cwd), this.keepEmpty());
 	}
 
 	draw(s: Surface, app: App): void {

@@ -83,8 +83,9 @@ export function companionArgs(args: string[], env: ProfileArgsEnv, profileFile: 
 }
 
 /** Full pi arguments for a target and profile; `profileFile` yields the path passed to --home-profile. */
-export function composeArgs(target: LaunchTarget, profile: Profile | null, env: ProfileArgsEnv, profileFile: () => string): string[] {
-	const active = profile && !isEmptyProfile(profile) ? profile : null;
+export function composeArgs(target: LaunchTarget, profile: Profile | null, env: ProfileArgsEnv, profileFile: () => string, keepEmpty = false): string[] {
+	// keepEmpty: an empty profile is still passed so the companion stores it over an older stored profile.
+	const active = profile && (keepEmpty || !isEmptyProfile(profile)) ? profile : null;
 	const args = launchArgs(target, active, env);
 	return active ? companionArgs(args, env, profileFile()) : args;
 }
@@ -121,14 +122,23 @@ function compactArgs(args: string[]): string[] {
 	return out;
 }
 
+const RESERVED_NAMES = ["__proto__", "constructor", "prototype"];
+
+/** Why `name` cannot be a preset name (reserved or already used), or null when it is free. */
+export function presetNameError(name: string, presets: Record<string, unknown>): string | null {
+	if (RESERVED_NAMES.includes(name)) return `"${name}" is a reserved name`;
+	if (Object.hasOwn(presets, name)) return `preset "${name}" already exists`;
+	return null;
+}
+
 /** Real arguments of the preview command (no tilde, no collapsing). */
-export function previewArgs(target: LaunchTarget, profile: Profile | null, env: ProfileArgsEnv): string[] {
-	return composeArgs(target, profile, env, () => "<file>");
+export function previewArgs(target: LaunchTarget, profile: Profile | null, env: ProfileArgsEnv, keepEmpty = false): string[] {
+	return composeArgs(target, profile, env, () => "<file>", keepEmpty);
 }
 
 /** `pi <args>` as shown in the command preview: same builder as a real launch, without writing a profile file. */
-export function previewCommand(target: LaunchTarget, profile: Profile | null, env: ProfileArgsEnv): string {
-	return `pi ${compactArgs(previewArgs(target, profile, env)).join(" ")}`;
+export function previewCommand(target: LaunchTarget, profile: Profile | null, env: ProfileArgsEnv, keepEmpty = false): string {
+	return `pi ${compactArgs(previewArgs(target, profile, env, keepEmpty)).join(" ")}`;
 }
 
 /** Scrollable list of the real arguments, one per line. */

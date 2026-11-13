@@ -146,7 +146,7 @@ export function normalizeProfile(x: unknown): Profile | null {
 			append: strList(sys.append, d.systemPrompt.append),
 		},
 		tools: {
-			allow: Array.isArray(tools.allow) ? strList(tools.allow, []) : null,
+			allow: Array.isArray(tools.allow) && tools.allow.length > 0 ? strList(tools.allow, []) : null,
 			add: strList(tools.add, d.tools.add),
 			remove: strList(tools.remove, d.tools.remove),
 			exclude: strList(tools.exclude, d.tools.exclude),

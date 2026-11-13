@@ -5,7 +5,7 @@ import type { Surface } from "../../term/canvas.ts";
 import { truncate } from "../../term/width.ts";
 import type { App, Page } from "../app.ts";
 import { ConfirmModal, ListView, MenuModal, PromptModal, section, selectRow } from "../widgets.ts";
-import { argsEnv, FullCommandModal, previewArgs, previewCommand } from "./profile-hooks.ts";
+import { argsEnv, FullCommandModal, presetNameError, previewArgs, previewCommand } from "./profile-hooks.ts";
 import { ProfileEditorPage } from "./profile-editor.ts";
 
 type Entry = { kind: "preset"; name: string } | { kind: "global" } | { kind: "projects" };
@@ -47,7 +47,7 @@ export class PresetsPage implements Page {
 
 	private uniqueName(base: string): string {
 		let name = base;
-		for (let i = 2; name in this.app.config.presets; i++) name = `${base}-${i}`;
+		for (let i = 2; Object.hasOwn(this.app.config.presets, name); i++) name = `${base}-${i}`;
 		return name;
 	}
 
@@ -56,7 +56,8 @@ export class PresetsPage implements Page {
 			new PromptModal("NEW PRESET NAME", "", (v) => {
 				const name = v.trim();
 				if (!name) return;
-				if (name in this.app.config.presets) return this.app.toast(`preset "${name}" already exists`, "error");
+				const bad = presetNameError(name, this.app.config.presets);
+				if (bad) return this.app.toast(bad, "error");
 				this.app.config.presets[name] = emptyProfile();
 				this.app.saveConfig();
 				this.list.selected = Object.keys(this.app.config.presets).indexOf(name);
@@ -93,7 +94,8 @@ export class PresetsPage implements Page {
 				const name = v.trim();
 				const presets = this.app.config.presets;
 				if (!name || name === e.name) return;
-				if (name in presets) return this.app.toast(`preset "${name}" already exists`, "error");
+				const bad = presetNameError(name, presets);
+				if (bad) return this.app.toast(bad, "error");
 				// Rebuild to keep the list order.
 				this.app.config.presets = Object.fromEntries(Object.entries(presets).map(([k, p]) => [k === e.name ? name : k, p]));
 				this.app.saveConfig();
@@ -108,7 +110,8 @@ export class PresetsPage implements Page {
 			new PromptModal("DUPLICATE PRESET AS", this.uniqueName(`${e.name}-copy`), (v) => {
 				const name = v.trim();
 				if (!name) return;
-				if (name in this.app.config.presets) return this.app.toast(`preset "${name}" already exists`, "error");
+				const bad = presetNameError(name, this.app.config.presets);
+				if (bad) return this.app.toast(bad, "error");
 				this.app.config.presets[name] = structuredClone(this.app.config.presets[e.name]!);
 				this.app.saveConfig();
 				this.list.selected = Object.keys(this.app.config.presets).indexOf(name);

@@ -64,7 +64,7 @@ export function profileArgs(p: Profile, target: LaunchTarget, env: ProfileArgsEn
 	if (p.tools.none) a.push("-nt");
 	else {
 		if (p.tools.noBuiltin) a.push("-nbt");
-		if (p.tools.allow) a.push("--tools", p.tools.allow.join(","));
+		if (p.tools.allow?.length) a.push("--tools", p.tools.allow.join(","));
 		else if (p.tools.add.length + p.tools.remove.length > 0) {
 			a.push("--tools", [...p.tools.add.map((t) => `+${t}`), ...p.tools.remove.map((t) => `-${t}`)].join(","));
 		}

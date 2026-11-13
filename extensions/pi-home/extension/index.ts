@@ -2,8 +2,8 @@
  * pi-home companion extension (PLAN.md §5): stores the launch profile in the session, applies the
  * runtime-only settings (context file pick/extra, skill hiding) and publishes live-session status.
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { agentDir } from "../shared/agent-dir.ts";
 import { describeProfile, normalizeProfile, PROFILE_ENTRY_TYPE } from "../shared/profile.ts";
@@ -12,7 +12,18 @@ import type { Profile } from "../shared/profile.ts";
 const startedAt = Date.now();
 const liveFile = (): string => join(agentDir(), "pi-home", "live", `${process.pid}.json`);
 
+/** True when `path` resolves to a file inside <agentDir>/pi-home/run/ (where the launcher writes profile files). */
+function inRunDir(path: string): boolean {
+	try {
+		return realpathSync(path).startsWith(realpathSync(join(agentDir(), "pi-home", "run")) + sep);
+	} catch {
+		return false;
+	}
+}
+
 function readProfileFile(path: string): Profile | null {
+	// Never read or delete a path the launcher did not write.
+	if (!inRunDir(path)) return null;
 	try {
 		return normalizeProfile(JSON.parse(readFileSync(path, "utf8")));
 	} catch {
@@ -29,7 +40,8 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerFlag("home-profile", { type: "string", description: "pi-home profile file" });
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", (event, ctx) => {
+		const reason = (event as { reason?: string }).reason;
 		const entries = ctx.sessionManager.getEntries();
 		let stored: Profile | null = null;
 		for (const e of entries) {
@@ -40,6 +52,16 @@ export default function (pi: ExtensionAPI): void {
 		if (fromFile) {
 			if (JSON.stringify(fromFile) !== JSON.stringify(stored)) pi.appendEntry(PROFILE_ENTRY_TYPE, fromFile);
 			active = fromFile;
+		} else if (reason === "reload") {
+			// Same session, same process: nothing changes.
+		} else if (reason === "new" || reason === "fork") {
+			// The process's CLI flags still apply, so the profile follows into the new session.
+			if (active && JSON.stringify(active) !== JSON.stringify(stored)) pi.appendEntry(PROFILE_ENTRY_TYPE, active);
+		} else if (reason === "resume") {
+			if (stored && JSON.stringify(stored) !== JSON.stringify(active)) {
+				ctx.ui.notify("pi-home: this session was set up with a different profile; CLI-level settings of the current process stay in effect", "warning");
+			}
+			active = stored;
 		} else active = stored;
 
 		try {
