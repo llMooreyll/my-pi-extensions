@@ -27,6 +27,12 @@ const FONT: Record<string, string[]> = {
 
 const glyphOf = (c: string): string[] => FONT[c] ?? FONT[" "]!;
 
+/** Width in columns of `text` rendered by bigNumber() with unicode on. */
+export function bigNumberWidth(text: string): number {
+	const chars = [...text.toUpperCase()];
+	return chars.reduce((a, c) => a + glyphOf(c)[0]!.length, 0) + Math.max(0, chars.length - 1);
+}
+
 /**
  * Big number in a 3x5 pixel font rendered with half blocks `█▀▄` (3 rows tall) at (x, y).
  * Supports `0-9 . , $ % K M B -` and space; other characters render blank. Returns the width in
@@ -40,7 +46,7 @@ export function bigNumber(s: Surface, x: number, y: number, text: string, ctx: C
 		return strWidth(text);
 	}
 	const chars = [...text.toUpperCase()];
-	const width = chars.reduce((a, c) => a + glyphOf(c)[0]!.length, 0) + Math.max(0, chars.length - 1);
+	const width = bigNumberWidth(text);
 	if (tooSmall(s, ctx, x + width, y + 3)) return width;
 	let cx = x;
 	for (const c of chars) {

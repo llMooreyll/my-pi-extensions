@@ -259,7 +259,7 @@ export function donut(s: Surface, slices: { value: number; color: RGB; label: st
 	const total = slices.reduce((a, b) => a + Math.max(0, b.value), 0);
 	if (!(total > 0)) return noData(s, ctx);
 	const pal = ctx.pal;
-	const hC = Math.min(s.h, 10, Math.floor((s.w - 12) / 2));
+	const hC = Math.min(s.h, 10, Math.floor((s.w - 14) / 2));
 	if (hC < 3) {
 		s.text(0, 0, ellipsis(ctx), pal.dim);
 		return;

@@ -1,6 +1,6 @@
 import type { App, Page, TabId } from "../app.ts";
+import { AnalyticsPage } from "./analytics.ts";
 import { HomePage } from "./home.ts";
-import { PlaceholderPage } from "./placeholder.ts";
 import { PresetsPage } from "./presets.ts";
 import { installProfileHooks } from "./profile-hooks.ts";
 import { SessionsPage } from "./sessions.ts";
@@ -11,7 +11,7 @@ export function registerPages(app: App): { id: TabId; page: Page }[] {
 	return [
 		{ id: "home", page: new HomePage(app) },
 		{ id: "sessions", page: new SessionsPage(app) },
-		{ id: "analytics", page: new PlaceholderPage("ANALYTICS") },
+		{ id: "analytics", page: new AnalyticsPage(app) },
 		{ id: "presets", page: new PresetsPage(app) },
 	];
 }
