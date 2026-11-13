@@ -2,9 +2,8 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { matchesKey } from "@earendil-works/pi-tui";
 import { DAY_MS, listProjects, mainModel, type Project, sessionTitle, startOfDay, totalTokens } from "../../index/query.ts";
-import type { Profile } from "../../../shared/profile.ts";
 import type { SessionRecord } from "../../index/types.ts";
-import { launchArgs, type LaunchTarget } from "../../launch/args.ts";
+import { type LaunchTarget, targetArgs } from "../../launch/args.ts";
 import { tildify } from "../../paths.ts";
 import type { Surface } from "../../term/canvas.ts";
 import { truncate } from "../../term/width.ts";
@@ -16,22 +15,19 @@ import { keyValues, ListView, PromptModal, progressBar, section, selectRow } fro
 type Focus = "projects" | "sessions";
 
 /**
- * Hook for opening the per-session profile editor (set by task B). When unset, `e` shows a toast.
- * Arguments: target to launch after editing, the session record if any.
+ * Hooks installed by the profile layer (docs/tasks/B-profile.md step B4). Without them pi-home
+ * launches plain pi with only the session-selection arguments.
  */
 export const homeHooks: {
+	/** Full pi argument list for a launch (session selection + profile flags + --home-profile). */
+	buildArgs?: (app: App, target: LaunchTarget, rec: SessionRecord | null) => string[];
+	/** Open the profile editor for a target. */
 	editProfile?: (app: App, target: LaunchTarget, rec: SessionRecord | null) => void;
-	/** Resolve the effective profile for a launch; null = plain pi. */
-	resolveProfile?: (app: App, target: LaunchTarget, rec: SessionRecord | null) => Profile | null;
-	/** Prepare extra launch args (e.g. write the profile file and add --home-profile). */
-	finalizeArgs?: (app: App, target: LaunchTarget, args: string[], rec: SessionRecord | null) => string[];
 } = {};
 
 /** Open a target in pi through the zsh launch loop. */
 export function launchTarget(app: App, target: LaunchTarget, rec: SessionRecord | null): void {
-	const profile = homeHooks.resolveProfile?.(app, target, rec) ?? null;
-	let args = launchArgs(target, profile);
-	if (homeHooks.finalizeArgs) args = homeHooks.finalizeArgs(app, target, args, rec);
+	const args = homeHooks.buildArgs ? homeHooks.buildArgs(app, target, rec) : targetArgs(target);
 	app.launch({ cwd: target.cwd, args });
 }
 
