@@ -13,7 +13,7 @@ import type { Surface } from "../../term/canvas.ts";
 import { strWidth, truncate } from "../../term/width.ts";
 import type { App, Modal, Page } from "../app.ts";
 import { ListView, MenuModal, PromptModal, section, selectRow, TextInput } from "../widgets.ts";
-import { argsEnv, composeArgs, previewCommand, resourcesFor } from "./profile-hooks.ts";
+import { argsEnv, composeArgs, FullCommandModal, previewArgs, previewCommand, resourcesFor } from "./profile-hooks.ts";
 
 // ── Checklist / chooser modal ───────────────────────────────────────────
 
@@ -606,6 +606,7 @@ export class ProfileEditorPage implements Page {
 		if (data === "g") return this.saveDefault("global"), true;
 		if (data === "p") return this.savePreset(), true;
 		if (data === "l") return this.loadPreset(), true;
+		if (data === "v") return this.app.modal(new FullCommandModal(previewArgs(this.target, this.p, argsEnv(this.target.cwd)))), true;
 		if (data === "x") {
 			this.p = emptyProfile();
 			this.app.toast("profile reset to empty");
@@ -641,8 +642,11 @@ export class ProfileEditorPage implements Page {
 		head.hit(0, 0, s.w, 1, { onClick: () => (this.focus = "header") });
 		s.hline(0, 1, s.w, pal.faint, pal.caps.unicode ? "─" : "-");
 
-		const previewH = 4;
 		const bodyY = 2;
+		// Preview: 4 rows minimum, up to 8 while the body keeps at least 14 rows.
+		const text = this.preview();
+		const wanted = Math.ceil(text.length / Math.max(1, s.w - 2)) + 1;
+		const previewH = Math.max(4, Math.min(8, wanted, s.h - bodyY - 1 - 14));
 		const bodyH = Math.max(1, s.h - bodyY - previewH - 1);
 		const leftW = Math.floor(s.w * 0.4);
 		const left = s.sub(0, bodyY, leftW, bodyH);
@@ -681,7 +685,6 @@ export class ProfileEditorPage implements Page {
 		const py = s.h - previewH;
 		s.hline(0, py - 1, s.w, pal.faint, pal.caps.unicode ? "─" : "-");
 		s.text(1, py, "[ COMMAND_PREVIEW ]", pal.title);
-		const text = this.preview();
 		const w = s.w - 2;
 		const lines = wrap(text, w, previewH - 1);
 		lines.forEach((l, i) => s.text(1, py + 1 + i, l, pal.text));

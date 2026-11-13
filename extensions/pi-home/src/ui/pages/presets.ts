@@ -5,7 +5,7 @@ import type { Surface } from "../../term/canvas.ts";
 import { truncate } from "../../term/width.ts";
 import type { App, Page } from "../app.ts";
 import { ConfirmModal, ListView, MenuModal, PromptModal, section, selectRow } from "../widgets.ts";
-import { argsEnv, previewCommand } from "./profile-hooks.ts";
+import { argsEnv, FullCommandModal, previewArgs, previewCommand } from "./profile-hooks.ts";
 import { ProfileEditorPage } from "./profile-editor.ts";
 
 type Entry = { kind: "preset"; name: string } | { kind: "global" } | { kind: "projects" };
@@ -128,12 +128,20 @@ export class PresetsPage implements Page {
 		);
 	}
 
+	private showFullCommand(): void {
+		const e = this.current;
+		if (!e || e.kind === "projects") return;
+		const profile = normalizeProfile(e.kind === "preset" ? this.app.config.presets[e.name] : this.app.config.globalDefault);
+		if (profile) this.app.modal(new FullCommandModal(previewArgs({ kind: "new", cwd: process.cwd() }, profile, argsEnv(process.cwd()))));
+	}
+
 	key(data: string): boolean {
 		const e = this.current;
 		if (data === "n") return this.newPreset(), true;
 		if (e && data === "r") return this.rename(e), true;
 		if (e && data === "c") return this.duplicate(e), true;
 		if (e && data === "d") return this.remove(e), true;
+		if (data === "v") return this.showFullCommand(), true;
 		if (matchesKey(data, "escape")) return false;
 		return this.list.key(data, this.entries().length);
 	}
