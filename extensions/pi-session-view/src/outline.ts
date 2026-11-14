@@ -51,6 +51,7 @@ export interface OutlineDeps {
 }
 
 export interface OutlineController {
+	/** False once disposed or once something else (e.g. a TUI mode switch) replaced the layout root. */
 	readonly mounted: boolean;
 	/** Shows or hides the rail; returns the new visibility. */
 	toggleVisible(): boolean;
@@ -60,13 +61,8 @@ export interface OutlineController {
 	dispose(): void;
 }
 
-const NOOP_CONTROLLER: OutlineController = {
-	mounted: false,
-	toggleVisible: () => false,
-	togglePanel: () => {},
-	refresh: () => {},
-	dispose: () => {},
-};
+/** Either a mounted outline or the reason it could not be mounted. */
+export type InstallResult = { controller: OutlineController } | { error: string };
 
 const EMPTY: Component = { render: () => [], invalidate: () => {} };
 
@@ -80,34 +76,43 @@ function isComponent(value: unknown): value is Component {
 }
 
 /**
- * Pi's fullscreen root is `VStack[transcript, dock]` (chat-viewport.ts). Its
- * entries are internal, so they are validated before reuse.
+ * Pi's fullscreen root is a VStack whose entries include the transcript
+ * ScrollView (chat-viewport.ts: `[transcript, dock]`). The entries are internal,
+ * so they are validated before reuse; only the transcript entry is replaced.
  */
-function readRootEntries(root: Component, transcript: Transcript | undefined): [StackEntry, StackEntry] | undefined {
-	if (!(root instanceof VStack) || !transcript) return undefined;
+function wrapTranscriptEntry(
+	root: Component,
+	transcript: Transcript,
+	wrap: (entry: StackEntry) => StackEntry,
+): StackEntry[] | undefined {
+	if (!(root instanceof VStack)) return undefined;
 	const entries = (root as unknown as { entries?: unknown }).entries;
-	if (!Array.isArray(entries) || entries.length !== 2) return undefined;
-	const [top, bottom] = entries as StackEntry[];
-	if (top?.component !== transcript.scrollView || !isComponent(bottom?.component)) return undefined;
-	return [top, bottom];
+	if (!Array.isArray(entries) || !entries.every((entry) => isComponent((entry as StackEntry | undefined)?.component))) {
+		return undefined;
+	}
+	const index = (entries as StackEntry[]).findIndex((entry) => entry.component === transcript.scrollView);
+	if (index === -1) return undefined;
+	return (entries as StackEntry[]).map((entry, entryIndex) => (entryIndex === index ? wrap(entry) : entry));
 }
 
 /**
- * Rebuilds Pi's fullscreen layout as `VStack[HStack[transcript, rail], dock]`:
- * the transcript and the rail share the upper area while the editor dock keeps
- * the full width. Pi exposes `setLayoutRoot()` but not the current root, so
- * this reads the internal `layoutRoot` field; when the shape is unexpected it
- * falls back to placing the rail beside the whole layout, and when the field is
- * missing it does nothing.
+ * Rebuilds Pi's fullscreen layout with the transcript entry replaced by
+ * `HStack[transcript, rail]`: the transcript and the rail share the upper area
+ * while the editor dock keeps the full width. Pi exposes `setLayoutRoot()` but
+ * not the current root, so this reads the internal `layoutRoot` field. When the
+ * layout is not recognised nothing is changed and the reason is returned,
+ * rather than squeezing the whole Pi view next to the rail.
  */
-export function installOutline(tui: TUI, deps: OutlineDeps): OutlineController {
-	if (!isViewportTUI(tui)) return NOOP_CONTROLLER;
-	const previousRoot = (tui as TUI & { layoutRoot?: unknown }).layoutRoot;
-	if (!isComponent(previousRoot)) return NOOP_CONTROLLER;
+export function installOutline(tui: TUI, deps: OutlineDeps): InstallResult {
+	if (!isViewportTUI(tui)) return { error: "the active renderer is not fullscreen" };
+	const host = tui as TUI & { layoutRoot?: unknown };
+	const previousRoot = host.layoutRoot;
+	if (!isComponent(previousRoot)) return { error: "Pi's fullscreen layout root is not accessible" };
+	const transcript = findTranscript(previousRoot);
+	if (!transcript) return { error: "the transcript view was not found in Pi's fullscreen layout" };
 
 	let railEnabled = true;
 	const railVisible = () => railEnabled && tui.terminal.columns >= MIN_RAIL_COLUMNS;
-	const transcript = findTranscript(previousRoot);
 	const navigator = new TurnNavigator(tui, deps, transcript, () =>
 		tui.terminal.columns - (railVisible() ? RAIL_WIDTH : 0),
 	);
@@ -121,13 +126,12 @@ export function installOutline(tui: TUI, deps: OutlineDeps): OutlineController {
 	]);
 	const railEntry: StackEntry = { component: railColumn, basis: RAIL_WIDTH, grow: 0, shrink: 0, visible: railVisible };
 
-	const rootEntries = readRootEntries(previousRoot, transcript);
-	const root = rootEntries
-		? new VStack([
-				{ ...rootEntries[0], component: new HStack([{ component: rootEntries[0].component, basis: 0, grow: 1, shrink: 1, minSize: 1 }, railEntry]) },
-				rootEntries[1],
-			])
-		: new HStack([{ component: previousRoot, basis: 0, grow: 1, shrink: 1, minSize: 1 }, railEntry]);
+	const rootEntries = wrapTranscriptEntry(previousRoot, transcript, (entry) => ({
+		...entry,
+		component: new HStack([{ component: entry.component, basis: 0, grow: 1, shrink: 1, minSize: 1 }, railEntry]),
+	}));
+	if (!rootEntries) return { error: "Pi's fullscreen layout has an unexpected shape" };
+	const root = new VStack(rootEntries);
 
 	let cardHandle: OverlayHandle | undefined;
 	const closeCard = () => {
@@ -168,14 +172,16 @@ export function installOutline(tui: TUI, deps: OutlineDeps): OutlineController {
 
 	try {
 		tui.setLayoutRoot(root);
-	} catch {
-		return NOOP_CONTROLLER;
+	} catch (error) {
+		return { error: `setLayoutRoot failed: ${error instanceof Error ? error.message : String(error)}` };
 	}
 	tui.requestRender();
 
 	let disposed = false;
-	return {
-		mounted: true,
+	const controller: OutlineController = {
+		get mounted(): boolean {
+			return !disposed && host.layoutRoot === root;
+		},
 		toggleVisible(): boolean {
 			railEnabled = !railEnabled;
 			tui.requestRender();
@@ -198,11 +204,12 @@ export function installOutline(tui: TUI, deps: OutlineDeps): OutlineController {
 			if (disposed) return;
 			disposed = true;
 			closeCard();
-			const host = tui as TUI & { layoutRoot?: unknown };
-			if (host.layoutRoot === root) tui.setLayoutRoot(previousRoot);
+			// After a TUI mode switch Pi has already installed its own root; leave it alone.
+			if (isViewportTUI(tui) && host.layoutRoot === root) tui.setLayoutRoot(previousRoot);
 			tui.requestRender();
 		},
 	};
+	return { controller };
 }
 
 /** Maps turns to transcript rows and scrolls the transcript. */

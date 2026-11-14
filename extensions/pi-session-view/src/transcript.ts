@@ -61,10 +61,14 @@ function isPromptComponent(component: Component): boolean {
 	return component instanceof UserMessageComponent || component instanceof SkillInvocationMessageComponent;
 }
 
+/**
+ * The chat Container holds the message components. Pi's document is
+ * `[header, loadedResources, chat]`, so before any prompt is rendered (new or
+ * fully compacted session) the last Container child is taken.
+ */
 function findChat(document: Container): Container | undefined {
-	return document.children.find(
-		(child): child is Container => child instanceof Container && child.children.some(isPromptComponent),
-	);
+	const containers = document.children.filter((child): child is Container => child instanceof Container);
+	return containers.find((child) => child.children.some(isPromptComponent)) ?? containers.at(-1);
 }
 
 /** Rows from the top of an assistant message to its first text block, skipping thinking. */
