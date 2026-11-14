@@ -18,3 +18,4 @@ __pycache__/
 *.iml
 out/
 .gradle/
+.playwright-mcp/
