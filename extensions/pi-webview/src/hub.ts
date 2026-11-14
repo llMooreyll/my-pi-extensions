@@ -20,6 +20,12 @@ export interface Pin {
 }
 
 export type ThreadStatus = "running" | "done" | "aborted";
+export type ThreadPhase = "waiting" | "thinking" | "toolcall" | "tool" | "answering";
+
+export interface ThreadStep {
+  label: string;
+  state: "running" | "done" | "error";
+}
 
 /** One user message and the assistant output that followed it. */
 export interface Thread {
@@ -35,9 +41,16 @@ export interface Thread {
   /** The assistant text currently streaming. */
   live: string;
   status: ThreadStatus;
+  /** Current live execution phase while running. */
+  phase?: ThreadPhase;
+  /** Live thinking excerpt while the model is reasoning. */
+  thinking?: string;
   /** Tool currently running, shown as progress. */
   activity?: string;
+  /** Compact list of tool steps executed in the active run. */
+  steps?: ThreadStep[];
   at: number;
+  renderedText?: string;
   html?: string;
   dirty: boolean;
 }

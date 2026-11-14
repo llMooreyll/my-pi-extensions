@@ -62,9 +62,12 @@
         <nav class="tabs"><button data-tab="wire">Wire</button><button data-tab="pins">Pins <b class="count"></b></button></nav>
         <button class="x" title="Close">✕</button>
       </header>
-      <div class="filters" data-of="wire"><button data-filter="all">All</button><button data-filter="refs">From browser</button><button data-filter="doc">This document</button></div>
+      <div class="filters" data-of="wire"><button data-filter="all">All</button><button data-filter="refs">From browser</button><button data-filter="doc">This document</button><button class="rail-toggle" type="button" title="Toggle turn directory">▤</button></div>
       <div class="filters" data-of="pins"><span class="note">Pins go out with your next message, from here or from pi.</span><button class="clear">Clear all</button></div>
-      <div class="scroll" data-of="wire"></div>
+      <div class="wire-wrap" data-of="wire">
+        <div class="scroll wire-scroll"></div>
+        <nav class="turn-rail" aria-label="Turns"></nav>
+      </div>
       <div class="scroll" data-of="pins"></div>
       <footer class="composer">
         <div class="attach" hidden></div>
@@ -475,8 +478,37 @@
     }
   }
 
+  const drawerStates = new Map(); // key → { mode: "follow" | "fixed", left: number, top: number, width?: number, height?: number }
+
+  function drawerState(key) {
+    let st = drawerStates.get(key);
+    if (!st) {
+      st = { mode: "follow", left: 0, top: 0 };
+      drawerStates.set(key, st);
+    }
+    return st;
+  }
+
+  function applyDrawerChrome(d, g, st) {
+    d.classList.toggle("fixed", st.mode === "fixed");
+    const modeBtn = d.querySelector(":scope > header .mode");
+    if (modeBtn) modeBtn.textContent = st.mode === "fixed" ? "▣ Fixed" : "⚓ Follow";
+    const railOpen = st.railOpen !== undefined ? st.railOpen : g.threads.length >= 2;
+    const railBtn = d.querySelector(":scope > header .rail-toggle");
+    if (railBtn) railBtn.classList.toggle("on", railOpen);
+    const rail = d.querySelector(".turn-rail");
+    if (rail) rail.hidden = !railOpen || !g.threads.length;
+    if (st.width) d.style.width = `${Math.min(st.width, Math.max(300, innerWidth - 24))}px`;
+    if (st.height) {
+      d.style.height = `${Math.min(st.height, Math.max(160, innerHeight - 24))}px`;
+      d.style.maxHeight = "none";
+    }
+  }
+
   function syncDrawer(d, g) {
     d._group = g;
+    const st = drawerState(g.key);
+    applyDrawerChrome(d, g, st);
     const title = d.querySelector(":scope > header span");
     if (title) title.textContent = adapter?.label?.(g.anchor) || "";
     const list = d.querySelector(".list");
@@ -493,6 +525,7 @@
     for (const p of g.pending) nodes.push(pendingEl(p));
     list.replaceChildren(...nodes);
     if (follow) list.scrollTop = list.scrollHeight;
+    renderTurnRail(d.querySelector(".turn-rail"), list, g.threads);
     const ta = d.querySelector("footer.follow textarea");
     if (ta) {
       const last = g.threads[g.threads.length - 1];
@@ -540,13 +573,76 @@
     d._group = g;
     const head = document.createElement("header");
     const label = document.createElement("span");
+    const railBtn = document.createElement("button");
+    railBtn.className = "rail-toggle";
+    railBtn.type = "button";
+    railBtn.textContent = "▤";
+    railBtn.title = "Toggle turn directory";
+    railBtn.addEventListener("click", () => {
+      const cur = d._group;
+      const st = drawerState(cur.key);
+      const isOpen = st.railOpen !== undefined ? st.railOpen : cur.threads.length >= 2;
+      st.railOpen = !isOpen;
+      applyDrawerChrome(d, cur, st);
+    });
+    const modeBtn = document.createElement("button");
+    modeBtn.className = "mode";
+    modeBtn.type = "button";
+    modeBtn.title = "Follow the anchor when the page scrolls, or stay fixed on screen";
+    modeBtn.addEventListener("click", () => {
+      const st = drawerState(d._group.key);
+      if (st.mode === "follow") {
+        const r = d.getBoundingClientRect();
+        st.mode = "fixed";
+        st.left = r.left;
+        st.top = r.top;
+      } else {
+        st.mode = "follow";
+      }
+      applyDrawerChrome(d, d._group, st);
+      schedule();
+    });
     const close = document.createElement("button");
+    close.className = "close";
+    close.type = "button";
     close.textContent = "✕";
     close.title = "Collapse";
-    close.addEventListener("click", () => toggleDrawer(g.key));
-    head.append(label, close);
+    close.addEventListener("click", () => toggleDrawer(d._group.key));
+    head.append(label, railBtn, modeBtn, close);
+
+    // Drag by header: automatically switches to Fixed mode and moves freely.
+    head.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || e.target.closest("button")) return;
+      e.preventDefault();
+      const st = drawerState(d._group.key);
+      const rect = d.getBoundingClientRect();
+      if (st.mode === "follow") {
+        st.mode = "fixed";
+        st.left = rect.left;
+        st.top = rect.top;
+        applyDrawerChrome(d, d._group, st);
+      }
+      const start = { x: e.clientX, y: e.clientY, left: st.left, top: st.top };
+      const move = (ev) => {
+        st.left = Math.min(Math.max(0, start.left + ev.clientX - start.x), Math.max(0, innerWidth - 80));
+        st.top = Math.min(Math.max(0, start.top + ev.clientY - start.y), Math.max(0, innerHeight - 40));
+        d.style.left = `${st.left}px`;
+        d.style.top = `${st.top}px`;
+      };
+      const up = () => removeEventListener("pointermove", move);
+      addEventListener("pointermove", move);
+      addEventListener("pointerup", up, { once: true });
+    });
+
+    const body = document.createElement("div");
+    body.className = "drawer-body";
     const list = document.createElement("div");
     list.className = "list";
+    const rail = document.createElement("nav");
+    rail.className = "turn-rail";
+    rail.setAttribute("aria-label", "Turns");
+    bindTurnRailScroll(list, rail);
+    body.append(list, rail);
     const foot = document.createElement("footer");
     foot.className = "follow";
     foot.innerHTML = `<textarea rows="1" placeholder="Follow up…"></textarea><button class="mic" type="button" title="Voice input">🎙</button><button class="ask" type="button">Ask →</button>`;
@@ -565,9 +661,126 @@
         toggleDrawer(d._group.key);
       }
     });
-    d.append(head, list, foot);
+
+    const resizer = document.createElement("div");
+    resizer.className = "resizer";
+    resizer.title = "Drag to resize";
+    resizer.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const st = drawerState(d._group.key);
+      const rect = d.getBoundingClientRect();
+      const start = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+      const move = (ev) => {
+        const w = Math.min(Math.max(300, start.w + ev.clientX - start.x), Math.max(300, innerWidth - 24));
+        const h = Math.min(Math.max(160, start.h + ev.clientY - start.y), Math.max(160, innerHeight - 24));
+        st.width = w;
+        st.height = h;
+        d.style.width = `${w}px`;
+        d.style.height = `${h}px`;
+        d.style.maxHeight = "none";
+      };
+      const up = () => removeEventListener("pointermove", move);
+      addEventListener("pointermove", move);
+      addEventListener("pointerup", up, { once: true });
+    });
+
+    d.append(head, body, foot, resizer);
     syncDrawer(d, g);
     return d;
+  }
+
+  // ── turn directory rail (shared by Wire panel and Drawers) ──
+  function syncActiveTurn(scrollEl, railEl) {
+    if (!scrollEl || !railEl || railEl.hidden) return;
+    const cards = [...scrollEl.querySelectorAll("article.th[data-thread]")];
+    if (!cards.length) return;
+    const box = scrollEl.getBoundingClientRect();
+    let activeId = cards[0].dataset.thread;
+    if (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 12) {
+      activeId = cards[cards.length - 1].dataset.thread;
+    } else {
+      for (const c of cards) {
+        if (c.getBoundingClientRect().bottom > box.top + 24) {
+          activeId = c.dataset.thread;
+          break;
+        }
+      }
+    }
+    for (const item of railEl.querySelectorAll(".turn-item")) {
+      const on = item.dataset.threadId === activeId;
+      item.classList.toggle("on", on);
+      if (on) item.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function bindTurnRailScroll(scrollEl, railEl) {
+    let ticking = false;
+    scrollEl.addEventListener(
+      "scroll",
+      () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => {
+          ticking = false;
+          syncActiveTurn(scrollEl, railEl);
+        });
+      },
+      { passive: true },
+    );
+  }
+
+  function renderTurnRail(railEl, scrollEl, list) {
+    if (!railEl) return;
+    if (!list.length) {
+      railEl.replaceChildren();
+      return;
+    }
+    const head = document.createElement("div");
+    head.className = "rail-head";
+    head.textContent = `TURNS · ${list.length}`;
+    const ol = document.createElement("ol");
+    for (const t of list) {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "turn-item";
+      btn.dataset.threadId = t.id;
+      const meta = document.createElement("span");
+      meta.className = "t-meta";
+      const num = document.createElement("span");
+      num.textContent = t.seq ? `#${t.seq}` : "•";
+      meta.appendChild(num);
+      if (t.replyToSeq) {
+        const rep = document.createElement("span");
+        rep.className = "t-rep";
+        rep.textContent = `↳#${t.replyToSeq}`;
+        meta.appendChild(rep);
+      }
+      const dot = document.createElement("span");
+      dot.className = "t-dot";
+      dot.dataset.status = t.status;
+      meta.appendChild(dot);
+      const q = document.createElement("span");
+      q.className = "t-q";
+      q.textContent = norm(t.question) || (t.refs?.length ? "(references)" : "(empty)");
+      btn.title = `${t.seq ? `#${t.seq} ` : ""}${q.textContent}`;
+      btn.append(meta, q);
+      btn.addEventListener("click", () => {
+        const target = scrollEl.querySelector(`article.th[data-thread="${t.id}"]`);
+        if (!target) return;
+        target.scrollIntoView({ block: "start", behavior: "smooth" });
+        target.classList.remove("pv-jump");
+        void target.offsetWidth;
+        target.classList.add("pv-jump");
+        for (const item of railEl.querySelectorAll(".turn-item")) item.classList.toggle("on", item === btn);
+      });
+      li.appendChild(btn);
+      ol.appendChild(li);
+    }
+    railEl.replaceChildren(head, ol);
+    requestAnimationFrame(() => syncActiveTurn(scrollEl, railEl));
   }
 
   function toggleDrawer(key) {
@@ -579,13 +792,15 @@
 
   // ── thread rendering, shared by drawers and the Wire tab ──
   const STATUS = { running: "Answering", done: "Done", aborted: "Stopped" };
+  const PHASE_LABEL = { waiting: "Waiting", thinking: "Thinking", toolcall: "Calling tool", tool: "Running tool", answering: "Answering" };
+  const STEP_ICON = { running: "⚙", done: "✓", error: "✕" };
   const time = (at) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   function threadEl(t, withRefs) {
     const el = document.createElement("article");
     el.className = "th";
     el.dataset.thread = t.id;
-    el.innerHTML = `<header><span class="num"></span><span class="st"></span><span class="reply-ref" hidden></span><time></time></header><ul class="refs"></ul><p class="q"></p><div class="a md"></div><div class="act"></div>`;
+    el.innerHTML = `<header><span class="num"></span><span class="st"></span><span class="reply-ref" hidden></span><time></time></header><ul class="refs"></ul><p class="q"></p><div class="a md"></div><div class="progress" hidden><ul class="steps" hidden></ul><div class="act" hidden></div><pre class="think-live" hidden></pre></div>`;
     if (withRefs) {
       const ul = el.querySelector(".refs");
       for (const r of t.refs) {
@@ -604,9 +819,12 @@
 
   function fillThread(el, t) {
     el.dataset.status = t.status;
+    if (t.status === "running" && t.phase) el.dataset.phase = t.phase;
+    else delete el.dataset.phase;
+
     const num = el.querySelector(".num");
     if (num) num.textContent = t.seq ? `#${t.seq}` : "";
-    el.querySelector(".st").textContent = STATUS[t.status] || t.status;
+    el.querySelector(".st").textContent = t.status === "running" ? PHASE_LABEL[t.phase] || "Working" : STATUS[t.status] || t.status;
     const ref = el.querySelector(".reply-ref");
     if (ref) {
       ref.textContent = t.replyToSeq ? `↳ #${t.replyToSeq}` : "";
@@ -622,9 +840,50 @@
       a.dataset.html = t.html || "";
     }
     a.classList.toggle("empty", !t.html);
+
+    const progress = el.querySelector(".progress");
+    const stepsEl = el.querySelector(".steps");
     const act = el.querySelector(".act");
-    act.textContent = t.activity ? `⚙ ${t.activity}` : t.status === "running" && !t.html ? "Thinking…" : "";
-    act.hidden = !act.textContent;
+    const thinkEl = el.querySelector(".think-live");
+    const running = t.status === "running";
+
+    const steps = running ? t.steps || [] : [];
+    stepsEl.hidden = !steps.length;
+    if (steps.length) {
+      stepsEl.replaceChildren(
+        ...steps.map((s) => {
+          const li = document.createElement("li");
+          li.dataset.state = s.state;
+          li.textContent = `${STEP_ICON[s.state] || "·"} ${s.label}`;
+          return li;
+        }),
+      );
+    } else {
+      stepsEl.replaceChildren();
+    }
+
+    const phase = t.phase || "waiting";
+    const hasRunningStep = steps.some((s) => s.state === "running");
+    let actText = "";
+    if (running) {
+      if (phase === "toolcall") actText = `⚒ ${t.activity || "Preparing tool call…"}`;
+      else if (phase === "tool" && !hasRunningStep) actText = `⚙ ${t.activity || "Running tool…"}`;
+      else if (phase === "thinking") actText = "◈ Thinking…";
+      else if (phase === "waiting") actText = "◌ Waiting for model…";
+    }
+    act.textContent = actText;
+    act.hidden = !actText;
+
+    const showThink = running && phase === "thinking" && !!t.thinking;
+    thinkEl.hidden = !showThink;
+    if (showThink) {
+      thinkEl.textContent = t.thinking;
+      thinkEl.scrollTop = thinkEl.scrollHeight;
+    } else {
+      thinkEl.textContent = "";
+    }
+
+    progress.hidden = stepsEl.hidden && act.hidden && thinkEl.hidden;
   }
 
   function pendingEl(p) {
@@ -640,6 +899,8 @@
   // ── panel ──
   let panelTab = "wire";
   let wireFilter = localStorage.getItem("pv-wire-filter") || "all";
+  let wireRailOpen = localStorage.getItem("pv-wire-rail") !== "0";
+  bindTurnRailScroll($(".wire-scroll"), $(".wire-wrap .turn-rail"));
 
   function openPanel(tabName = panelTab, focusPin = null) {
     panelTab = tabName;
@@ -647,8 +908,9 @@
     $(".d-wire").classList.remove("unread");
     renderPanel();
     if (tabName === "wire") {
-      const s = $('.scroll[data-of="wire"]');
+      const s = $(".wire-scroll");
       s.scrollTop = s.scrollHeight;
+      syncActiveTurn(s, $(".wire-wrap .turn-rail"));
     }
     if (focusPin) {
       const card = root.querySelector(`.pin[data-pin="${focusPin}"]`);
@@ -666,6 +928,7 @@
     for (const b of root.querySelectorAll(".tabs button")) b.classList.toggle("on", b.dataset.tab === panelTab);
     for (const el of root.querySelectorAll(".panel [data-of]")) el.hidden = el.dataset.of !== panelTab;
     for (const b of root.querySelectorAll("[data-filter]")) b.classList.toggle("on", b.dataset.filter === wireFilter);
+    $(".filters[data-of=\"wire\"] .rail-toggle")?.classList.toggle("on", wireRailOpen);
     const attach = $(".attach");
     attach.hidden = !pins.length;
     attach.textContent = `◆ ${pins.length} pin${pins.length > 1 ? "s" : ""} will be attached`;
@@ -682,7 +945,8 @@
   }
 
   function renderWire() {
-    const scroll = $('.scroll[data-of="wire"]');
+    const scroll = $(".wire-scroll");
+    const rail = $(".wire-wrap .turn-rail");
     const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
     const list = threads.filter(wireVisible);
     scroll.replaceChildren(...list.map((t) => threadEl(t, true)));
@@ -693,6 +957,8 @@
       scroll.appendChild(empty);
     }
     if (atBottom) scroll.scrollTop = scroll.scrollHeight;
+    rail.hidden = !wireRailOpen || !list.length;
+    renderTurnRail(rail, scroll, list);
   }
 
   function renderPins() {
@@ -766,6 +1032,11 @@
       renderPanel();
     }),
   );
+  $('.filters[data-of="wire"] .rail-toggle').addEventListener("click", () => {
+    wireRailOpen = !wireRailOpen;
+    localStorage.setItem("pv-wire-rail", wireRailOpen ? "1" : "0");
+    renderPanel();
+  });
   $(".panel .x").addEventListener("click", closePanel);
   $(".panel .clear").addEventListener("click", () => api("/pins", { method: "DELETE" }).catch((e) => toast(e.message, true)));
   $(".d-wire").addEventListener("click", () => (panel.hidden ? openPanel("wire") : closePanel()));
@@ -819,7 +1090,7 @@
       // A status change alters the marker chips; streaming text only patches the open views.
       if (prev.status !== t.status) render();
       else {
-        const wire = $('.scroll[data-of="wire"]');
+        const wire = $(".wire-scroll");
         const follow = wire.scrollHeight - wire.scrollTop - wire.clientHeight < 40;
         const drawerFollows = new Map();
         for (const el of root.querySelectorAll(`[data-thread="${t.id}"]`)) {
@@ -833,6 +1104,9 @@
         for (const [dList, stick] of drawerFollows) {
           if (stick) dList.scrollTop = dList.scrollHeight;
         }
+        const wireDot = root.querySelector(`.wire-wrap .turn-item[data-thread-id="${t.id}"] .t-dot`);
+        if (wireDot) wireDot.dataset.status = t.status;
+        for (const dot of root.querySelectorAll(`.drawer .turn-item[data-thread-id="${t.id}"] .t-dot`)) dot.dataset.status = t.status;
         schedule();
       }
     } else {
@@ -934,11 +1208,31 @@
       Object.assign(b.style, { left: `${g.body.left - 3}px`, top: `${g.body.top - 3}px`, width: `${g.body.width + 6}px`, height: `${g.body.height + 6}px` });
     }
     for (const d of root.querySelectorAll(".drawer")) {
+      const st = drawerState(d.dataset.key);
+      if (st.mode === "fixed") {
+        d.hidden = false;
+        if (st.width) d.style.width = `${Math.min(st.width, Math.max(300, innerWidth - 24))}px`;
+        if (st.height) {
+          d.style.height = `${Math.min(st.height, Math.max(160, innerHeight - 24))}px`;
+          d.style.maxHeight = "none";
+        }
+        st.left = Math.min(Math.max(0, st.left), Math.max(0, innerWidth - 80));
+        st.top = Math.min(Math.max(0, st.top), Math.max(0, innerHeight - 40));
+        d.style.left = `${st.left}px`;
+        d.style.top = `${st.top}px`;
+        continue;
+      }
       const g = geomOf(d.dataset.key);
       d.hidden = !g?.body;
       if (d.hidden) continue;
       const frame = adapter?.drawerFrame?.();
-      if (frame) d.style.width = `${frame.width}px`;
+      if (st.width) d.style.width = `${Math.min(st.width, Math.max(300, innerWidth - 24))}px`;
+      else if (frame) d.style.width = `${frame.width}px`;
+      else d.style.width = "";
+      if (st.height) {
+        d.style.height = `${Math.min(st.height, Math.max(160, innerHeight - 24))}px`;
+        d.style.maxHeight = "none";
+      }
       const w = d.offsetWidth;
       const top = g.body.bottom + 10;
       // The drawer hangs below its anchor; hide it only once the drawer itself leaves the view.

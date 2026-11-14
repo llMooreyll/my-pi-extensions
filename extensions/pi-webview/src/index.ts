@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type Anchor, buildBlock, buildFollowUpBlock, composeMessage, foldContexts, imageData, parseAsk, type Ref, textOf, withoutImage } from "./context.ts";
+import { type Anchor, buildBlock, buildFollowUpBlock, composeMessage, foldContexts, imageData, parseAsk, type Ref, textOf, thinkingOf, toolCallNameOf, withoutImage } from "./context.ts";
 import { CACHE_DIR, type Doc, displayPath, expandPath, kindOf, pruneCache } from "./docs.ts";
 import { baseUrl, broadcast, ensureServer, type Hub, hub, type Pin, statusPayload, stopServer } from "./hub.ts";
 import { createRouter, ensureDoc, HttpError, refreshRendition } from "./routes.ts";
@@ -357,7 +357,10 @@ export default function piWebview(pi: ExtensionAPI): void {
     const t = h.activeThread;
     if (t) {
       t.status = event.aborted ? "aborted" : "done";
+      t.phase = undefined;
+      t.thinking = undefined;
       t.activity = undefined;
+      t.steps = undefined;
       publishThread(h, t, true);
       h.activeThread = undefined;
     }
@@ -366,11 +369,24 @@ export default function piWebview(pi: ExtensionAPI): void {
 
   // Every user message opens a thread; the assistant output after it streams into that thread.
   pi.on("message_start", async (event) => {
+    if (event.message.role === "assistant") {
+      const t = h.activeThread;
+      if (t) {
+        t.phase = "waiting";
+        t.thinking = undefined;
+        t.activity = undefined;
+        publishThread(h, t, true);
+      }
+      return;
+    }
     if (event.message.role !== "user") return;
     const prev = h.activeThread;
     if (prev?.status === "running") {
       prev.status = "done";
+      prev.phase = undefined;
+      prev.thinking = undefined;
       prev.activity = undefined;
+      prev.steps = undefined;
       publishThread(h, prev, true);
     }
     h.activeThread = startThread(h, textOf(event.message.content), h.cwd ?? process.cwd());
@@ -380,7 +396,25 @@ export default function piWebview(pi: ExtensionAPI): void {
   pi.on("message_update", async (event) => {
     const t = h.activeThread;
     if (!t || event.message.role !== "assistant") return;
-    t.live = textOf(event.message.content);
+    const ev = event.assistantMessageEvent as { type?: string; toolName?: string } | undefined;
+    const content = event.message.content;
+    t.live = textOf(content);
+    const think = thinkingOf(content);
+    if (think) t.thinking = think.slice(-600);
+
+    if (ev?.type === "thinking_start" || ev?.type === "thinking_delta") {
+      t.phase = "thinking";
+      t.activity = undefined;
+    } else if (ev?.type === "toolcall_start" || ev?.type === "toolcall_delta" || ev?.type === "toolcall_end") {
+      t.phase = "toolcall";
+      const name = ev.toolName || toolCallNameOf(content);
+      t.activity = name ? `Preparing ${name}` : "Preparing tool call";
+    } else if (ev?.type === "text_start" || ev?.type === "text_delta" || t.live.trim()) {
+      t.phase = "answering";
+      t.activity = undefined;
+    } else if (think) {
+      t.phase = "thinking";
+    }
     publishThread(h, t);
   });
 
@@ -390,21 +424,33 @@ export default function piWebview(pi: ExtensionAPI): void {
     const text = textOf(event.message.content);
     if (text.trim()) t.parts.push(text);
     t.live = "";
+    t.thinking = undefined;
+    if (t.phase !== "tool" && t.phase !== "toolcall") t.phase = "waiting";
     publishThread(h, t);
   });
 
   pi.on("tool_execution_start", async (event) => {
     const t = h.activeThread;
     if (!t) return;
-    t.activity = describeTool(event.toolName, event.args);
-    publishThread(h, t);
+    const label = describeTool(event.toolName, event.args);
+    t.phase = "tool";
+    t.thinking = undefined;
+    t.activity = label;
+    t.steps ??= [];
+    t.steps.push({ label, state: "running" });
+    if (t.steps.length > 8) t.steps.splice(0, t.steps.length - 8);
+    publishThread(h, t, true);
   });
 
-  pi.on("tool_execution_end", async () => {
+  pi.on("tool_execution_end", async (event) => {
     const t = h.activeThread;
     if (!t) return;
+    const label = describeTool(event.toolName, event.args);
+    const step = [...(t.steps ?? [])].reverse().find((s) => s.state === "running" && s.label === label) ?? t.steps?.at(-1);
+    if (step && step.state === "running") step.state = event.isError ? "error" : "done";
     t.activity = undefined;
-    publishThread(h, t);
+    t.phase = "waiting";
+    publishThread(h, t, true);
   });
 
   // Pins made in the browser travel with the next plain message typed in pi.

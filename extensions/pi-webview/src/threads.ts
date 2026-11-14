@@ -22,10 +22,12 @@ function replyText(t: Thread): string {
 }
 
 export async function threadPayload(t: Thread) {
-  if (t.dirty || t.html === undefined) {
-    t.dirty = false;
-    t.html = await renderReply(replyText(t));
+  const reply = replyText(t);
+  if (t.html === undefined || (t.dirty && t.renderedText !== reply)) {
+    t.renderedText = reply;
+    t.html = await renderReply(reply);
   }
+  t.dirty = false;
   return {
     id: t.id,
     seq: t.seq,
@@ -34,7 +36,10 @@ export async function threadPayload(t: Thread) {
     question: t.question,
     html: t.html,
     status: t.status,
-    activity: t.activity,
+    ...(t.status === "running" && t.phase ? { phase: t.phase } : {}),
+    ...(t.status === "running" && t.thinking ? { thinking: t.thinking } : {}),
+    ...(t.activity ? { activity: t.activity } : {}),
+    ...(t.status === "running" && t.steps?.length ? { steps: t.steps } : {}),
     at: t.at,
   };
 }
@@ -74,6 +79,7 @@ export function startThread(h: Hub, text: string, cwd: string, at = Date.now()):
     parts: [],
     live: "",
     status: "running",
+    phase: "waiting",
     at,
     dirty: true,
   };
