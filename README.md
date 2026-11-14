@@ -12,7 +12,7 @@ Pi Coding Agent 扩展合集仓库。包含自建扩展与基于上游修改的�
 | [pi-interactive-subagents](extensions/pi-interactive-subagents) | 终端复用器非阻塞子代理与协同团队 | HazAT/pi-interactive-subagents | 有序模型回退链、基于 Git worktree 隔离分支的团队模式（team_* 工具）、agent_before_settle 退出时序修复 | [README](extensions/pi-interactive-subagents/README.md) |
 | [statusline-pi](extensions/statusline-pi) | 底部状态栏（费用、速度、Git、上下文区间） | luongnv89/pi-extensions | 异步非阻塞 GitHub PR 查询、边框样式编辑、实时 TPS 速度统计、统一上下文区间比例计算 | [README](extensions/statusline-pi/README.md) |
 | [pi-language-tutor](extensions/pi-language-tutor) | 语言学习与 Prompt 写作检查 | mackt/pi-language-tutor | 新增 /dismiss 命令临时隐藏面板、写作对比忽略大小写差异 | [README](extensions/pi-language-tutor/README.md) |
-| [pi-voice](extensions/pi-voice) | 本地语音识别（ASR）与系统级语音转写服务 | earendil-works/pi-voice | 基线导入（计划对外提供同进程系统 ASR 服务） | [README](extensions/pi-voice/README.md) |
+| [pi-voice](extensions/pi-voice) | 本地语音识别（ASR）与系统级语音转写服务 | earendil-works/pi-voice | 通过 `Symbol.for("pi.asr.v1")` 与 `pi.events` 对外提供同进程 ASR 服务，新增音频字节流解码 | [README](extensions/pi-voice/README.md) |
 
 ## 安装与配置
 

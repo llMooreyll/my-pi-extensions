@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export const FILE_SAMPLE_RATE = 16_000;
 
@@ -161,4 +164,53 @@ export async function decodeFileAudio(
       resolve({ pcm, seconds: pcm.length / FILE_SAMPLE_RATE });
     });
   });
+}
+
+function extensionForMime(mimeType?: string): string {
+  const base = mimeType?.split(";")[0]?.trim().toLowerCase();
+  switch (base) {
+    case "audio/webm":
+    case "video/webm":
+      return ".webm";
+    case "audio/ogg":
+    case "application/ogg":
+      return ".ogg";
+    case "audio/wav":
+    case "audio/x-wav":
+    case "audio/wave":
+      return ".wav";
+    case "audio/mp4":
+    case "audio/m4a":
+    case "audio/x-m4a":
+    case "video/mp4":
+      return ".m4a";
+    case "audio/mpeg":
+    case "audio/mp3":
+      return ".mp3";
+    case "audio/flac":
+      return ".flac";
+    case "audio/aac":
+      return ".aac";
+    default:
+      return ".bin";
+  }
+}
+
+/** Decode an in-memory encoded audio buffer (webm/ogg/wav/m4a/mp3...) to 16 kHz mono float32 PCM. */
+export async function decodeAudioBuffer(
+  audio: Uint8Array,
+  options?: { mimeType?: string; signal?: AbortSignal },
+): Promise<DecodedFileAudio> {
+  options?.signal?.throwIfAborted();
+  if (audio.byteLength === 0) {
+    throw new Error("Audio buffer is empty");
+  }
+  const dir = await mkdtemp(join(tmpdir(), "pi-voice-buf-"));
+  const tempPath = join(dir, `input${extensionForMime(options?.mimeType)}`);
+  try {
+    await writeFile(tempPath, audio, { mode: 0o600 });
+    return await decodeFileAudio(tempPath, options?.signal);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }

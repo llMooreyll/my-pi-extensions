@@ -4,6 +4,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
+import { createPiAsrService, PI_ASR_SYMBOL } from "./asr-service.js";
 import { registerFileTranscriptionTool } from "./file-transcription.js";
 import {
   claimLegacyGitNotice,
@@ -62,7 +63,17 @@ export default function piVoice(pi: ExtensionAPI): void {
         "info",
       );
     }
+
+    pi.events.emit("pi-asr:ready", asrService);
   });
+
+  const asrService = createPiAsrService({
+    getSettings: async () => (await loadRuntime()).requireConfiguredSettingsForTool(),
+    getService: async () => (await loadRuntime()).service,
+    isLoaded: () => runtimePromise !== undefined,
+  });
+  const globalRegistry = globalThis as unknown as Record<symbol, unknown>;
+  globalRegistry[PI_ASR_SYMBOL] = asrService;
 
   const fileTranscription = registerFileTranscriptionTool(pi, {
     getSettings: async () => (await loadRuntime()).requireConfiguredSettingsForTool(),
@@ -126,7 +137,14 @@ export default function piVoice(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     shuttingDown = true;
-    await fileTranscription.shutdown().catch(() => undefined);
+    if (globalRegistry[PI_ASR_SYMBOL] === asrService) {
+      delete globalRegistry[PI_ASR_SYMBOL];
+    }
+    pi.events.emit("pi-asr:shutdown", { version: 1 });
+    await Promise.all([
+      asrService.shutdown().catch(() => undefined),
+      fileTranscription.shutdown().catch(() => undefined),
+    ]);
     const loading = runtimePromise;
     if (!loading) return;
     const runtime = await loading.catch(() => undefined);

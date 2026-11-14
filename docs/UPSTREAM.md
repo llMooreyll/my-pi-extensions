@@ -20,4 +20,4 @@
 ## pi-voice
 - 上游：https://github.com/earendil-works/pi-voice
 - 基线：npm 包 `@earendil-works/pi-voice@0.2.0`（完整源码、词表与 Silero VAD 模型基线导入）
-- 本地改动：待补充（系统级 ASR 服务暴露）。
+- 本地改动：新增 `src/asr-service.ts` 与 `file-audio.ts` 字节流解码，通过 `Symbol.for("pi.asr.v1")` 与 `pi.events` 对外暴露同进程系统级 ASR 服务。
