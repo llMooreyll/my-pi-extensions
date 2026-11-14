@@ -3,7 +3,7 @@ import { type FSWatcher, watch } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Ref } from "./context.ts";
+import type { Anchor, Ref } from "./context.ts";
 import { type Doc, removeOfficeProfile } from "./docs.ts";
 
 /**
@@ -16,6 +16,20 @@ export interface Pin {
   note: string;
   /** Region screenshot on disk; read and attached at send time for vision models. */
   imagePath?: string;
+  at: number;
+}
+
+export interface Star {
+  id: string;
+  docId: string;
+  anchorKey: string;
+  anchor: Anchor;
+  label: string;
+  threadSeq: number;
+  question: string;
+  scope: "turn" | "excerpt";
+  excerpt: string;
+  html: string;
   at: number;
 }
 
@@ -74,6 +88,7 @@ export interface Hub {
   watchers: Map<string, FSWatcher>;
   heartbeat?: ReturnType<typeof setInterval>;
   pinned: Pin[];
+  stars: Star[];
   threads: Thread[];
   nextSeq: number;
   activeThread?: Thread;
@@ -98,6 +113,7 @@ export function hub(): Hub {
     clients: new Set(),
     watchers: new Map(),
     pinned: [],
+    stars: [],
     threads: [],
     nextSeq: 1,
     knownPaths: new Map(),
@@ -110,6 +126,8 @@ export function hub(): Hub {
   h.nextSeq ??= h.threads.length + 1;
   h.knownPaths ??= new Map();
   h.pinned = h.pinned.filter((p) => p && typeof p === "object" && "ref" in p);
+  h.stars ??= [];
+  h.stars = h.stars.filter((s) => s && typeof s === "object" && typeof s.id === "string");
   return h;
 }
 

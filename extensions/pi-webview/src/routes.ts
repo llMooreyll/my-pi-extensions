@@ -58,7 +58,13 @@ export interface RouteDeps {
   editPin(id: string, body: unknown): unknown;
   /** Without an id, removes every pin. */
   deletePin(id: string | undefined): unknown;
-  /** Pins and threads for a freshly connected page. */
+  /** POST /stars: add or toggle a starred reply / excerpt. */
+  createStar(body: unknown): unknown;
+  /** DELETE /stars/:id */
+  deleteStar(id: string | undefined): unknown;
+  /** GET / POST /export/:docId: package a document and its annotations into a standalone single-file HTML. */
+  exportDoc(doc: Doc, body?: unknown): Promise<{ filename: string; html: string }>;
+  /** Pins, stars and threads for a freshly connected page. */
   snapshot(): Promise<Record<string, unknown>>;
   /** Check whether system-wide Pi ASR service is available and configured. */
   asrStatus(): Promise<unknown>;
@@ -307,6 +313,32 @@ async function handle(h: Hub, deps: RouteDeps, req: IncomingMessage, res: Server
       if (method === "PATCH" && id) return sendJson(res, 200, deps.editPin(id, await readJson(req, 1024 * 1024)));
       if (method === "DELETE") return sendJson(res, 200, deps.deletePin(id));
       throw new HttpError(405, "PATCH /pins/:id or DELETE /pins[/:id]");
+
+    case "stars":
+      if (method === "POST" && !id) return sendJson(res, 200, deps.createStar(await readJson(req, 2 * 1024 * 1024)));
+      if (method === "DELETE") return sendJson(res, 200, deps.deleteStar(id));
+      throw new HttpError(405, "POST /stars or DELETE /stars/:id");
+
+    case "export": {
+      const doc = docOr404(h, id);
+      if (method === "GET") {
+        const result = await deps.exportDoc(doc);
+        if (req.headers.accept?.includes("application/json")) {
+          return sendJson(res, 200, result);
+        }
+        res.writeHead(200, {
+          "content-type": MIME[".html"]!,
+          "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`,
+          "cache-control": "no-store",
+        });
+        return void res.end(result.html);
+      }
+      if (method === "POST") {
+        const payload = await readJson(req, 128 * 1024 * 1024);
+        return sendJson(res, 200, await deps.exportDoc(doc, payload));
+      }
+      throw new HttpError(405, "GET or POST /export/:docId");
+    }
 
     case "asr": {
       if (id === "status" && !rest.length) {

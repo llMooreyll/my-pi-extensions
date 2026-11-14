@@ -9,12 +9,22 @@
 (() => {
   if (window.PiView) return;
   const script = document.currentScript;
+  const snapshotEl = document.getElementById("pv-snapshot");
+  const exportMode = script.dataset.export === "1" || !!snapshotEl;
+  let snapshot = null;
+  if (exportMode && snapshotEl) {
+    try {
+      snapshot = JSON.parse(snapshotEl.textContent || "{}");
+    } catch {
+      snapshot = {};
+    }
+  }
   const cfg = {
-    base: script.dataset.base,
-    doc: script.dataset.doc,
-    kind: script.dataset.kind,
-    unit: script.dataset.unit || "page",
-    file: script.dataset.file || "",
+    base: script.dataset.base || "",
+    doc: script.dataset.doc || snapshot?.doc?.id || "",
+    kind: script.dataset.kind || snapshot?.doc?.kind || "html",
+    unit: script.dataset.unit || snapshot?.doc?.unit || "page",
+    file: script.dataset.file || snapshot?.doc?.file || "",
   };
   const viewer = cfg.kind !== "html";
   const scrollKey = `pv-scroll:${cfg.doc}`;
@@ -41,6 +51,7 @@
   let adapter = null;
   let status = { online: false, busy: false, session: "", pinned: 0 };
   let pins = [];
+  let stars = [];
   let threads = [];
   const pending = new Map(); // anchor key → { anchor, question, at }: asked, thread not seen yet
   const openDrawers = new Set();
@@ -48,20 +59,25 @@
   let groups = [];
   let current = null; // the open slip: { anchor, range, rectFn, onClose }
   let pendingSel = null;
+  let pendingStarSel = null;
   let es = null;
   let ended = false;
 
   // ── shadow UI ──
   const host = document.createElement("pv-overlay");
+  if (exportMode) host.dataset.readonly = "1";
   const root = host.attachShadow({ mode: "open" });
+  const uiCssTag = exportMode
+    ? `<style>${document.getElementById("pv-katex-css")?.textContent || ""}\n${document.getElementById("pv-ui-css")?.textContent || ""}</style>`
+    : `<link rel="stylesheet" href="${cfg.base}/vendor/katex/dist/katex.min.css"><link rel="stylesheet" href="${cfg.base}/assets/ui.css">`;
   root.innerHTML = `
-    <link rel="stylesheet" href="${cfg.base}/vendor/katex/dist/katex.min.css">
-    <link rel="stylesheet" href="${cfg.base}/assets/ui.css">
+    ${uiCssTag}
     <div class="layer boxes"></div>
     <div class="layer marquee"></div>
     <div class="layer markers"></div>
     <div class="layer drawers"></div>
     <div class="tab" hidden><button class="t-ask">Ask <kbd>Enter</kbd></button><button class="t-pin">Pin</button></div>
+    <div class="star-pop" hidden><button type="button">★ 收藏此段</button></div>
     <section class="slip" hidden role="dialog" aria-label="Ask pi">
       <header><span class="no"></span><span class="loc"></span><button class="mode" title="Follow the selection when the page scrolls, or stay fixed on screen"></button></header>
       <div class="quote"></div>
@@ -73,7 +89,7 @@
         <nav class="tabs"><button data-tab="wire">Wire</button><button data-tab="pins">Pins <b class="count"></b></button></nav>
         <button class="x" title="Close">✕</button>
       </header>
-      <div class="filters" data-of="wire"><button data-filter="all">All</button><button data-filter="refs">From browser</button><button data-filter="doc">This document</button><button class="rail-toggle" type="button" title="Toggle turn directory">▤</button></div>
+      <div class="filters" data-of="wire"><button data-filter="all">All</button><button data-filter="refs">From browser</button><button data-filter="doc">This document</button><button data-filter="starred">★ <b class="star-count"></b></button><button class="rail-toggle" type="button" title="Toggle turn directory">▤</button></div>
       <div class="filters" data-of="pins"><span class="note">Pins go out with your next message, from here or from pi.</span><button class="clear">Clear all</button></div>
       <div class="wire-wrap" data-of="wire">
         <div class="scroll wire-scroll"></div>
@@ -87,9 +103,18 @@
         <button class="send">Send →</button>
       </footer>
     </aside>
+    <div class="export-pop" hidden>
+      <span class="ep-title">Export PDF as single-file HTML</span>
+      <div class="ep-actions">
+        <button class="ep-all primary" type="button"></button>
+        <button class="ep-ann" type="button"></button>
+        <button class="ep-cancel" type="button">✕</button>
+      </div>
+    </div>
     <div class="dock offline">
-      <span class="state"><i></i><b>offline</b></span><span class="session"></span>
+      <span class="state"><i></i><b>${exportMode ? "exported" : "offline"}</b></span><span class="session"></span>
       <button class="d-pins" hidden title="Pinned references"></button>
+      <button class="d-export" title="Export annotated single-file HTML">⤓</button>
       <button class="d-wire" title="Conversation">✦</button>
     </div>
     <div class="outline" hidden><span></span></div>
@@ -408,6 +433,7 @@
   /** Forget cached locations (after a re-render) and redraw. */
   function relocate() {
     locCache.clear();
+    renderMarkers();
     paint();
     schedule();
   }
@@ -586,11 +612,12 @@
     const map = new Map();
     const group = (anchor) => {
       const key = keyOf(anchor);
-      if (!map.has(key)) map.set(key, { key, anchor, threads: [], pins: [], pending: [] });
+      if (!map.has(key)) map.set(key, { key, anchor, threads: [], pins: [], stars: [], pending: [] });
       return map.get(key);
     };
     for (const t of threads) for (const r of t.refs) if (r.docId === cfg.doc) group(r.anchor).threads.push(t);
     for (const p of pins) if (p.docId === cfg.doc) group(p.anchor).pins.push(p);
+    for (const s of stars) if (s.docId === cfg.doc && s.anchor) group(s.anchor).stars.push(s);
     for (const [key, list] of pending) {
       const count = map.get(key)?.threads.length || 0;
       const remaining = list.filter((p) => count <= p.baseCount);
@@ -650,10 +677,26 @@
         b.addEventListener("click", () => openPanel("pins", g.pins[0].id));
         m.appendChild(b);
       }
+      if (g.stars.length) {
+        const b = document.createElement("button");
+        b.className = `chip starred${openDrawers.has(g.key) ? " open" : ""}`;
+        b.textContent = g.stars.length > 1 ? `★ ${g.stars.length}` : "★";
+        b.title = `${g.stars.length} starred insight${g.stars.length > 1 ? "s" : ""} — click to view`;
+        b.addEventListener("click", () => {
+          if (!openDrawers.has(g.key)) openDrawers.add(g.key);
+          renderMarkers();
+          schedule();
+          const dr = drawers.querySelector(`.drawer[data-key="${CSS.escape(g.key)}"]`);
+          const firstStar = g.stars[0];
+          const target = dr?.querySelector(`article.th[data-seq="${firstStar.threadSeq}"]`) || dr?.querySelector(".star-digest");
+          target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+        m.appendChild(b);
+      }
       markers.appendChild(m);
       const loc = locOf(g.anchor);
       if (loc?.box) {
-        const kindCls = g.pins.length ? " pinned" : " asked";
+        const kindCls = `${g.pins.length ? " pinned" : " asked"}${g.stars.length ? " starred" : ""}`;
         const box = document.createElement("div");
         box.className = `box${kindCls}`;
         box.dataset.key = g.key;
@@ -669,7 +712,7 @@
           }
         }
       }
-      if (openDrawers.has(g.key) && asked) {
+      if (openDrawers.has(g.key) && (asked || g.stars.length)) {
         activeKeys.add(g.key);
         const existing = existingDrawers.get(g.key);
         if (existing) syncDrawer(existing, g);
@@ -720,14 +763,48 @@
     const list = d.querySelector(".list");
     const follow = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
     const existingTh = new Map([...list.querySelectorAll("article.th[data-thread]")].map((el) => [el.dataset.thread, el]));
-    const nodes = g.threads.map((t) => {
+    const nodes = [];
+    if (g.stars.length) {
+      const digest = document.createElement("div");
+      digest.className = "star-digest";
+      const head = document.createElement("div");
+      head.className = "sd-head";
+      head.textContent = `★ Starred (${g.stars.length})`;
+      digest.appendChild(head);
+      for (const s of g.stars) {
+        const item = document.createElement("div");
+        item.className = "sd-item";
+        const bodyEl = document.createElement("div");
+        bodyEl.className = "sd-body";
+        const meta = document.createElement("span");
+        meta.className = "sd-meta";
+        meta.textContent = `#${s.threadSeq}${s.scope === "turn" ? " · Full reply" : ""}`;
+        const txt = document.createElement("span");
+        txt.textContent = norm(s.excerpt || s.question).slice(0, 220) || "(starred reply)";
+        bodyEl.append(meta, txt);
+        item.appendChild(bodyEl);
+        if (!exportMode) {
+          const del = document.createElement("button");
+          del.className = "sd-del";
+          del.type = "button";
+          del.textContent = "✕";
+          del.title = "Remove star";
+          del.addEventListener("click", () => api(`/stars/${s.id}`, { method: "DELETE" }).catch((e) => toast(e.message, true)));
+          item.appendChild(del);
+        }
+        digest.appendChild(item);
+      }
+      nodes.push(digest);
+    }
+    for (const t of g.threads) {
       const el = existingTh.get(t.id);
       if (el) {
         fillThread(el, t);
-        return el;
+        nodes.push(el);
+      } else {
+        nodes.push(threadEl(t, false));
       }
-      return threadEl(t, false);
-    });
+    }
     for (const p of g.pending) nodes.push(pendingEl(p));
     list.replaceChildren(...nodes);
     if (follow) list.scrollTop = list.scrollHeight;
@@ -1002,11 +1079,89 @@
   const STEP_ICON = { running: "⚙", done: "✓", error: "✕" };
   const time = (at) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+  function fallbackAnchorForDoc() {
+    if (cfg.kind === "md") return { kind: "md", text: "", lines: [1, 1], headings: [] };
+    if (cfg.kind === "pdf" || cfg.kind === "office") return { kind: "pdf", text: "", page: 1, context: "" };
+    return { kind: "html", text: "", selector: "body", hint: { classes: [] } };
+  }
+
+  function starTargetOf(t) {
+    const docRef = t.refs?.find((r) => r.docId === cfg.doc);
+    const anchor = docRef ? docRef.anchor : fallbackAnchorForDoc();
+    return { anchor, anchorKey: keyOf(anchor), label: docRef?.label || cfg.file };
+  }
+
+  function applyStarMarks(aEl, t) {
+    const excerpts = stars.filter((s) => s.threadSeq === t.seq && s.scope === "excerpt" && s.excerpt);
+    const sig = excerpts.map((s) => s.id).join(",");
+    if (aEl.dataset.starSig === sig && aEl.dataset.html === (t.html || "")) return;
+    if (aEl.dataset.html !== (t.html || "")) {
+      aEl.innerHTML = t.html || "";
+      aEl.dataset.html = t.html || "";
+    } else if (aEl.dataset.starSig) {
+      aEl.innerHTML = t.html || "";
+    }
+    aEl.dataset.starSig = sig;
+    for (const s of excerpts) {
+      const range = findText(aEl, s.excerpt);
+      if (!range) continue;
+      // Wrap matched text node slices safely without disturbing element nesting.
+      const walker = document.createTreeWalker(range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement?.closest(SKIP_TEXT) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+      });
+      const slices = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (!range.intersectsNode(n)) continue;
+        const start = n === range.startContainer ? range.startOffset : 0;
+        const end = n === range.endContainer ? range.endOffset : n.nodeValue.length;
+        if (end > start && n.nodeValue.slice(start, end).trim()) slices.push({ node: n, start, end });
+      }
+      for (const { node, start, end } of slices) {
+        const sub = document.createRange();
+        sub.setStart(node, start);
+        sub.setEnd(node, end);
+        const mark = document.createElement("mark");
+        mark.className = "pv-star-mark";
+        mark.dataset.starId = s.id;
+        try {
+          sub.surroundContents(mark);
+        } catch {
+          // Skip split edges that cross inline bounds.
+        }
+      }
+    }
+  }
+
   function threadEl(t, withRefs) {
     const el = document.createElement("article");
     el.className = "th";
     el.dataset.thread = t.id;
-    el.innerHTML = `<header><span class="num"></span><span class="st"></span><span class="reply-ref" hidden></span><time></time></header><ul class="refs"></ul><p class="q"></p><div class="a md"></div><div class="progress" hidden><ul class="steps" hidden></ul><div class="act" hidden></div><pre class="think-live" hidden></pre></div>`;
+    el.dataset.seq = String(t.seq || "");
+    el._thread = t;
+    el.innerHTML = `<header><span class="num"></span><span class="st"></span><span class="reply-ref" hidden></span><button class="star-btn" type="button" title="Star this reply (★)">☆</button><time></time></header><ul class="refs"></ul><p class="q"></p><div class="a md"></div><div class="progress" hidden><ul class="steps" hidden></ul><div class="act" hidden></div><pre class="think-live" hidden></pre></div>`;
+    el.querySelector(".star-btn").addEventListener("click", () => {
+      const cur = el._thread;
+      if (!cur || exportMode) return;
+      const { anchor, anchorKey, label } = starTargetOf(cur);
+      const plain = norm(el.querySelector(".a")?.textContent || "");
+      api("/stars", {
+        method: "POST",
+        body: JSON.stringify({
+          docId: cfg.doc,
+          anchorKey,
+          anchor,
+          label,
+          threadSeq: cur.seq,
+          question: cur.question,
+          scope: "turn",
+          excerpt: plain.slice(0, 360),
+          html: cur.html || "",
+          toggle: true,
+        }),
+      })
+        .then((r) => toast(r.starred ? "★ Starred reply" : "☆ Removed star"))
+        .catch((e) => toast(String(e.message || e), true));
+    });
     if (withRefs) {
       const ul = el.querySelector(".refs");
       for (const r of t.refs) {
@@ -1024,6 +1179,8 @@
   }
 
   function fillThread(el, t) {
+    el._thread = t;
+    el.dataset.seq = String(t.seq || "");
     el.dataset.status = t.status;
     if (t.status === "running" && t.phase) el.dataset.phase = t.phase;
     else delete el.dataset.phase;
@@ -1036,15 +1193,19 @@
       ref.textContent = t.replyToSeq ? `↳ #${t.replyToSeq}` : "";
       ref.hidden = !t.replyToSeq;
     }
+    const starBtn = el.querySelector(".star-btn");
+    if (starBtn) {
+      const isStarred = stars.some((s) => s.docId === cfg.doc && s.threadSeq === t.seq && s.scope === "turn");
+      starBtn.classList.toggle("on", isStarred);
+      starBtn.textContent = isStarred ? "★" : "☆";
+      starBtn.hidden = t.status === "running" || !t.seq;
+    }
     el.querySelector("time").textContent = time(t.at);
     const q = el.querySelector(".q");
     q.textContent = t.question || (t.refs.length ? "(references only)" : "");
     q.hidden = !q.textContent;
     const a = el.querySelector(".a");
-    if (a.dataset.html !== t.html) {
-      a.innerHTML = t.html || "";
-      a.dataset.html = t.html || "";
-    }
+    applyStarMarks(a, t);
     a.classList.toggle("empty", !t.html);
 
     const progress = el.querySelector(".progress");
@@ -1131,6 +1292,9 @@
 
   function renderPanel() {
     $(".count").textContent = pins.length ? String(pins.length) : "";
+    const docStarCount = stars.filter((s) => s.docId === cfg.doc).length;
+    const sc = $(".star-count");
+    if (sc) sc.textContent = docStarCount ? String(docStarCount) : "";
     for (const b of root.querySelectorAll(".tabs button")) b.classList.toggle("on", b.dataset.tab === panelTab);
     for (const el of root.querySelectorAll(".panel [data-of]")) el.hidden = el.dataset.of !== panelTab;
     for (const b of root.querySelectorAll("[data-filter]")) b.classList.toggle("on", b.dataset.filter === wireFilter);
@@ -1150,9 +1314,38 @@
     return true;
   }
 
+  function starCard(s) {
+    const card = document.createElement("article");
+    card.className = "star-card";
+    card.innerHTML = `<header><span class="s-badge">★ #${s.threadSeq}</span><button class="loc" type="button"></button><button class="del" type="button" title="Remove star">✕</button></header><p class="q"></p><div class="excerpt md"></div>`;
+    const locBtn = card.querySelector(".loc");
+    locBtn.textContent = s.label || cfg.file;
+    locBtn.addEventListener("click", () => reveal({ docId: s.docId, anchor: s.anchor }));
+    const q = card.querySelector(".q");
+    q.textContent = s.question || "";
+    q.hidden = !s.question;
+    const ex = card.querySelector(".excerpt");
+    if (s.html) ex.innerHTML = s.html;
+    else ex.textContent = s.excerpt;
+    card.querySelector(".del").addEventListener("click", () => api(`/stars/${s.id}`, { method: "DELETE" }).catch((e) => toast(e.message, true)));
+    return card;
+  }
+
   function renderWire() {
     const scroll = $(".wire-scroll");
     const rail = $(".wire-wrap .turn-rail");
+    if (wireFilter === "starred") {
+      const docStars = stars.filter((s) => s.docId === cfg.doc);
+      scroll.replaceChildren(...docStars.map(starCard));
+      if (!docStars.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "No starred replies yet. Click ☆ on a reply or select text inside an answer to bookmark.";
+        scroll.appendChild(empty);
+      }
+      rail.hidden = true;
+      return;
+    }
     const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
     const list = threads.filter(wireVisible);
     scroll.replaceChildren(...list.map((t) => threadEl(t, true)));
@@ -1327,7 +1520,177 @@
     if (!shown) $(".d-wire").classList.add("unread");
   }
 
+  function setStars(list) {
+    stars = Array.isArray(list) ? list : [];
+    render();
+  }
+
+  // ── reply-text selection → ★ 收藏此段 ──
+  const starPop = $(".star-pop");
+
+  function hideStarPop() {
+    starPop.hidden = true;
+    pendingStarSel = null;
+  }
+
+  function getShadowSelectionRange() {
+    const rs = typeof root.getSelection === "function" ? root.getSelection() : null;
+    if (rs && rs.rangeCount && !rs.isCollapsed) return rs.getRangeAt(0);
+    const ds = document.getSelection();
+    if (!ds) return null;
+    if (typeof ds.getComposedRanges === "function") {
+      try {
+        const cr = ds.getComposedRanges({ shadowRoots: [root] })[0];
+        if (cr && !cr.collapsed && root.contains(cr.startContainer)) {
+          const r = document.createRange();
+          r.setStart(cr.startContainer, cr.startOffset);
+          r.setEnd(cr.endContainer, cr.endOffset);
+          return r;
+        }
+      } catch {
+        // Ignore if unsupported.
+      }
+    }
+    if (ds.rangeCount && !ds.isCollapsed && root.contains(ds.anchorNode)) return ds.getRangeAt(0);
+    return null;
+  }
+
+  function checkReplySelection() {
+    if (exportMode) return hideStarPop();
+    const range = getShadowSelectionRange();
+    if (!range) return hideStarPop();
+    const node = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+    const aEl = node?.closest?.("article.th .a");
+    if (!aEl || !root.contains(aEl)) return hideStarPop();
+    const thEl = aEl.closest("article.th");
+    const t = thEl?._thread;
+    const text = norm(rangeText(range));
+    if (!t || !t.seq || !text) return hideStarPop();
+    const rects = range.getClientRects();
+    const r = rects[rects.length - 1] || range.getBoundingClientRect();
+    pendingStarSel = { range: range.cloneRange(), thread: t, text };
+    starPop.hidden = false;
+    const w = starPop.offsetWidth || 110;
+    starPop.style.left = `${Math.min(Math.max(8, r.right - 16), innerWidth - w - 12)}px`;
+    starPop.style.top = `${Math.min(r.bottom + 8, innerHeight - 44)}px`;
+  }
+
+  root.addEventListener("mouseup", () => setTimeout(checkReplySelection, 0));
+  root.addEventListener("keyup", (e) => {
+    if (e.shiftKey || e.key === "Shift") setTimeout(checkReplySelection, 0);
+  });
+  root.addEventListener("mousedown", (e) => {
+    if (!e.target?.closest?.(".star-pop")) hideStarPop();
+  });
+
+  starPop.querySelector("button").addEventListener("click", () => {
+    if (!pendingStarSel) return;
+    const { range, thread, text } = pendingStarSel;
+    const box = document.createElement("div");
+    box.appendChild(range.cloneContents());
+    const { anchor, anchorKey, label } = starTargetOf(thread);
+    hideStarPop();
+    (typeof root.getSelection === "function" ? root.getSelection() : document.getSelection())?.removeAllRanges?.();
+    api("/stars", {
+      method: "POST",
+      body: JSON.stringify({
+        docId: cfg.doc,
+        anchorKey,
+        anchor,
+        label,
+        threadSeq: thread.seq,
+        question: thread.question,
+        scope: "excerpt",
+        excerpt: text.slice(0, 1200),
+        html: box.innerHTML.slice(0, 16000),
+      }),
+    })
+      .then(() => toast("★ Starred excerpt"))
+      .catch((e) => toast(String(e.message || e), true));
+  });
+
+  // ── single-file HTML export ──
+  const exportBtn = $(".d-export");
+  const exportPop = $(".export-pop");
+
+  function triggerDownload(filename, html) {
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  async function runExport(body = null) {
+    if (exportBtn.classList.contains("busy")) return;
+    exportBtn.classList.add("busy");
+    exportPop.hidden = true;
+    try {
+      const res = body
+        ? await api(`/export/${cfg.doc}`, { method: "POST", body: JSON.stringify(body) })
+        : await api(`/export/${cfg.doc}`);
+      if (!res || typeof res.html !== "string" || !res.html.length) {
+        throw new Error("Export returned empty HTML payload");
+      }
+      triggerDownload(res.filename || `${cfg.file || "document"}.annotated.html`, res.html);
+      toast(`⤓ Exported ${res.filename || "HTML"}`);
+    } catch (e) {
+      toast(String(e.message || e), true);
+    } finally {
+      exportBtn.classList.remove("busy");
+    }
+  }
+
+  exportBtn.addEventListener("click", async () => {
+    if (exportMode || exportBtn.classList.contains("busy")) return;
+    if (!adapter?.prepareExport) return void runExport();
+    const annotatedPages = new Set();
+    for (const g of groups) {
+      if (g.anchor?.page) annotatedPages.add(g.anchor.page);
+    }
+    const info = adapter.exportInfo?.(annotatedPages);
+    if (info && info.total > 12 && info.annotated.length > 0 && info.annotated.length < info.total) {
+      exportPop.hidden = false;
+      const allBtn = exportPop.querySelector(".ep-all");
+      const annBtn = exportPop.querySelector(".ep-ann");
+      allBtn.textContent = `All ${info.total} pages`;
+      annBtn.textContent = `Annotated (${info.annotated.length})`;
+      allBtn.onclick = async () => {
+        exportPop.hidden = true;
+        toast(`Rendering ${info.total} pages…`);
+        const pages = await adapter.prepareExport(null);
+        await runExport({ pages });
+      };
+      annBtn.onclick = async () => {
+        exportPop.hidden = true;
+        toast(`Rendering ${info.annotated.length} pages…`);
+        const pages = await adapter.prepareExport(info.annotated);
+        await runExport({ pages });
+      };
+      exportPop.querySelector(".ep-cancel").onclick = () => (exportPop.hidden = true);
+      return;
+    }
+    if (info?.total) toast(`Rendering ${info.total} page${info.total > 1 ? "s" : ""}…`);
+    const pages = await adapter.prepareExport(null);
+    await runExport({ pages });
+  });
+
   function connect() {
+    if (exportMode) {
+      dock.classList.remove("offline");
+      $(".state b").textContent = "exported";
+      $(".session").textContent = cfg.file;
+      $(".session").hidden = !cfg.file;
+      threads = snapshot?.threads || [];
+      stars = snapshot?.stars || [];
+      pins = [];
+      render();
+      return;
+    }
     es?.close();
     es = new EventSource(`${cfg.base}/events?doc=${encodeURIComponent(cfg.doc)}`);
     const on = (name, fn) => es.addEventListener(name, (e) => fn(e.data ? JSON.parse(e.data) : {}));
@@ -1335,10 +1698,12 @@
       pending.clear();
       setStatus({ ...s, online: true });
       threads = s.threads || [];
+      stars = s.stars || [];
       setPins(s.pins || []);
     });
     on("status", (s) => setStatus({ ...s, online: true }));
     on("pins", setPins);
+    on("stars", setStars);
     on("threads", (list) => {
       pending.clear();
       threads = list;
@@ -1490,7 +1855,7 @@
   }
 
   function checkSelection() {
-    if (!slip.hidden) return;
+    if (exportMode || !slip.hidden) return;
     const sel = document.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount || !sel.toString().trim()) return hideTab();
     const range = sel.getRangeAt(0);
@@ -1766,7 +2131,7 @@
   document.addEventListener(
     "pointerdown",
     (e) => {
-      if (e.button !== 0 || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+      if (exportMode || e.button !== 0 || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
       if (fromUs(e) || !adapter?.marquee) return;
       if (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='']")) return;
 
@@ -1860,9 +2225,11 @@
 
   window.PiView = {
     cfg,
+    exportMode,
     register(a) {
       adapter = a;
-      relocate();
+      locCache.clear();
+      render();
     },
     openSlip,
     toast,

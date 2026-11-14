@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { parseBlocks, parseFollowUpSeq, type Ref, stripBlocks, textOf, withoutImage } from "./context.ts";
-import { broadcast, type Hub, type Pin, type Thread } from "./hub.ts";
+import { broadcast, type Hub, type Pin, type Star, type Thread } from "./hub.ts";
 import { renderReply } from "./render.ts";
 
 const MAX_THREADS = 150;
@@ -15,6 +15,22 @@ export function refPayload(r: Ref) {
 
 export function pinPayload(p: Pin) {
   return { id: p.id, ...refPayload(p.ref), note: p.note, hasImage: !!p.imagePath, at: p.at };
+}
+
+export function starPayload(s: Star) {
+  return {
+    id: s.id,
+    docId: s.docId,
+    anchorKey: s.anchorKey,
+    anchor: withoutImage(s.anchor),
+    label: s.label,
+    threadSeq: s.threadSeq,
+    question: s.question,
+    scope: s.scope,
+    excerpt: s.excerpt,
+    html: s.html,
+    at: s.at,
+  };
 }
 
 function replyText(t: Thread): string {

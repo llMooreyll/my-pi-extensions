@@ -4,7 +4,7 @@
   all: initial;
   position: fixed; inset: 0; z-index: 2147483646; pointer-events: none;
   --paper: #efeadd; --paper-2: #e4dfd0; --ink: #141311; --ink-2: #3b3833; --mute: #8b8577; --rule: #14131126;
-  --signal: #ff4a1c; --blue: #2335ff; --acid: #c8f031;
+  --signal: #ff4a1c; --blue: #2335ff; --acid: #c8f031; --gold: #f0b000;
   --serif: "Newsreader", "Noto Serif CJK SC", "Source Han Serif SC", Georgia, serif;
   --display: "Fraunces", "Noto Serif CJK SC", Georgia, serif;
   --mono: "JetBrains Mono", "Noto Sans Mono CJK SC", ui-monospace, monospace;
@@ -12,7 +12,7 @@
 }
 :host([data-theme="carbon"]) {
   --paper: #161613; --paper-2: #21211d; --ink: #ebe5d6; --ink-2: #c4bdad; --mute: #8a857a; --rule: #ebe5d626;
-  --signal: #ff5a2a; --blue: #8e9aff;
+  --signal: #ff5a2a; --blue: #8e9aff; --gold: #ffd43b;
 }
 
 [hidden] { display: none !important; }
@@ -103,12 +103,15 @@ button.mic.transcribing { background: var(--ink); color: var(--paper); opacity: 
 .chip.asked.open { background: var(--ink); color: var(--signal); }
 .chip.asked.live { animation: live 1s steps(2, jump-none) infinite; }
 .chip.pinned { background: var(--blue); color: #fff; animation: breathe 2.4s ease-in-out infinite; }
+.chip.starred { background: var(--gold); color: #141311; }
+.chip.starred.open { background: #141311; color: var(--gold); border-color: var(--gold); }
 @keyframes live { 50% { background: var(--paper); } }
 @keyframes breathe { 50% { box-shadow: 2px 2px 0 var(--ink), 0 0 0 4px color-mix(in srgb, var(--blue) 25%, transparent); } }
 
 .box { position: fixed; pointer-events: none; }
 .box.asked { outline: 2px solid var(--signal); background: color-mix(in srgb, var(--signal) 6%, transparent); }
 .box.pinned { outline: 2px dashed var(--blue); background: color-mix(in srgb, var(--blue) 7%, transparent); }
+.box.starred { box-shadow: 0 0 0 2px var(--gold); }
 .box.sub.asked { outline: 1px dotted color-mix(in srgb, var(--signal) 70%, transparent); background: color-mix(in srgb, var(--signal) 4%, transparent); }
 .box.sub.pinned { outline: 1px dotted color-mix(in srgb, var(--blue) 70%, transparent); background: color-mix(in srgb, var(--blue) 4%, transparent); }
 
@@ -197,6 +200,46 @@ button.mic.transcribing { background: var(--ink); color: var(--paper); opacity: 
 .th[data-status="pending"] .st { color: var(--blue); }
 .th[data-status="aborted"] .st { text-decoration: line-through; }
 .th time { margin-left: auto; letter-spacing: .06em; }
+.th .star-btn {
+  padding: 2px 6px; font-size: 12px; line-height: 1; color: var(--ink-2); border: 1px solid var(--rule);
+  transition: color .12s, background .12s, border-color .12s;
+}
+.th .star-btn:hover { color: #141311; border-color: var(--ink); background: var(--gold); }
+.th .star-btn.on { color: #141311; background: var(--gold); border-color: var(--ink); }
+mark.pv-star-mark {
+  background: color-mix(in srgb, var(--gold) 28%, transparent); color: inherit;
+  border-bottom: 2px solid var(--gold); padding: 0 1px;
+}
+
+.star-digest {
+  padding: 10px 14px; background: color-mix(in srgb, var(--gold) 12%, var(--paper));
+  border-bottom: 1.5px solid var(--ink); display: flex; flex-direction: column; gap: 6px;
+}
+.star-digest .sd-head { font: 800 9.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink); }
+.star-digest .sd-item {
+  display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px;
+  background: var(--paper); border: 1px solid var(--rule); border-left: 3px solid var(--gold);
+}
+.star-digest .sd-body { flex: 1; min-width: 0; font: 500 12.5px/1.45 var(--serif); color: var(--ink); overflow-wrap: anywhere; }
+.star-digest .sd-meta { font: 800 9.5px/1 var(--mono); color: var(--mute); margin-right: 6px; }
+.star-digest .sd-del, .star-card .del { padding: 2px 6px; font-size: 10px; color: var(--mute); border: 1px solid transparent; }
+.star-digest .sd-del:hover, .star-card .del:hover { color: #000; background: var(--signal); border-color: var(--ink); }
+
+.star-card { padding: 12px 14px 14px; border-bottom: 1.5px solid var(--rule); }
+.star-card > header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.star-card .s-badge { padding: 2px 6px 1px; background: var(--gold); color: #000; border: 1px solid var(--ink); font: 800 9.5px/1.2 var(--mono); }
+.star-card .loc { flex: 1; min-width: 0; text-align: left; font: 600 10.5px/1.3 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.star-card .loc:hover { text-decoration: underline; text-decoration-color: var(--gold); }
+.star-card .q { margin: 0 0 6px; font: 600 13px/1.4 var(--serif); color: var(--mute); }
+.star-card .excerpt { padding: 6px 10px; border-left: 3px solid var(--gold); background: var(--paper-2); font: 14px/1.55 var(--serif); color: var(--ink); overflow-wrap: anywhere; }
+
+.star-pop {
+  position: fixed; pointer-events: auto; z-index: 4; display: flex;
+  background: var(--gold); color: #141311; border: 1.5px solid var(--ink); box-shadow: 4px 4px 0 var(--ink);
+  font: 800 10.5px/1 var(--mono); letter-spacing: .08em; animation: pop .18s cubic-bezier(.2, 1.6, .4, 1) both;
+}
+.star-pop button { padding: 8px 11px 7px; color: #141311; }
+.star-pop button:hover { background: #141311; color: var(--gold); }
 .th .refs { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
 .th .refs:empty { display: none; }
 .th .refs button { padding: 3px 6px 2px; font: 600 10px/1.3 var(--mono); background: var(--paper-2); border: 1px solid var(--rule); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -354,6 +397,31 @@ button.mic.transcribing { background: var(--ink); color: var(--paper); opacity: 
 .dock .d-pins { background: var(--blue); color: #fff; font-size: 10px; letter-spacing: .06em; }
 .dock .d-wire { position: relative; }
 .dock .d-wire.unread::after { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; background: var(--signal); border: 1.5px solid var(--ink); }
+.dock .d-export.busy { opacity: .6; cursor: progress; }
+
+.export-pop {
+  position: fixed; right: 18px; bottom: 64px; pointer-events: auto; display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px; background: var(--paper); border: 2px solid var(--ink); box-shadow: 6px 6px 0 var(--ink);
+  font: 700 10.5px/1.35 var(--mono);
+}
+.export-pop .ep-title { font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute); }
+.export-pop .ep-actions { display: flex; gap: 6px; }
+.export-pop button { padding: 6px 10px; border: 1.5px solid var(--ink); background: var(--paper-2); font: 800 10px/1 var(--mono); }
+.export-pop button:hover { background: var(--ink); color: var(--paper); }
+.export-pop button.primary { background: var(--ink); color: var(--paper); }
+.export-pop button.primary:hover { background: var(--signal); color: #000; }
+
+:host([data-readonly="1"]) .slip,
+:host([data-readonly="1"]) .tab,
+:host([data-readonly="1"]) .composer,
+:host([data-readonly="1"]) footer.follow,
+:host([data-readonly="1"]) .star-btn,
+:host([data-readonly="1"]) .star-pop,
+:host([data-readonly="1"]) .sd-del,
+:host([data-readonly="1"]) .star-card .del,
+:host([data-readonly="1"]) .d-pins,
+:host([data-readonly="1"]) .d-export,
+:host([data-readonly="1"]) .tabs button[data-tab="pins"] { display: none !important; }
 
 /* ───────── picker outline, toasts ───────── */
 

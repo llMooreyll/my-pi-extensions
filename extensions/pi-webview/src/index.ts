@@ -7,12 +7,14 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { type Anchor, buildBlock, buildFollowUpBlock, composeMessage, foldContexts, imageData, parseAsk, type Ref, textOf, thinkingOf, toolCallNameOf, withoutImage } from "./context.ts";
 import { CACHE_DIR, type Doc, displayPath, expandPath, kindOf, pruneCache } from "./docs.ts";
-import { baseUrl, broadcast, ensureServer, type Hub, hub, type Pin, statusPayload, stopServer } from "./hub.ts";
+import { exportDocumentHtml } from "./export.ts";
+import { baseUrl, broadcast, ensureServer, type Hub, hub, type Pin, type Star, statusPayload, stopServer } from "./hub.ts";
 import { createRouter, ensureDoc, HttpError, refreshRendition } from "./routes.ts";
-import { describeTool, newId, pinPayload, publishThread, rebuildThreads, snapshotThreads, startThread } from "./threads.ts";
+import { describeTool, newId, pinPayload, publishThread, rebuildThreads, snapshotThreads, starPayload, startThread } from "./threads.ts";
 
 const WIDGET = "pi-webview";
 const PINS_ENTRY = "pi-webview-pins";
+const STARS_ENTRY = "pi-webview-stars";
 const PI_ASR_SYMBOL = Symbol.for("pi.asr.v1");
 
 interface PiAsrService {
@@ -129,12 +131,46 @@ function restorePins(h: Hub, ctx: ExtensionContext): void {
   pinsDirty = false;
 }
 
-/** Pins and threads follow the active branch: rebuild both after /resume, /fork or /tree. */
+let starsDirty = false;
+let starsTimer: ReturnType<typeof setTimeout> | undefined;
+
+function publishStars(h: Hub): void {
+  broadcast(h, "stars", h.stars.map(starPayload));
+  saveStars(h);
+}
+
+function saveStars(h: Hub): void {
+  starsDirty = true;
+  clearTimeout(starsTimer);
+  starsTimer = setTimeout(() => flushStars(h), 300);
+}
+
+function flushStars(h: Hub, force = false): void {
+  clearTimeout(starsTimer);
+  const binding = h.binding;
+  if (!starsDirty || !binding) return;
+  if (!force && !binding.ctx.isIdle()) return;
+  starsDirty = false;
+  binding.pi.appendEntry(STARS_ENTRY, { stars: h.stars });
+}
+
+function restoreStars(h: Hub, ctx: ExtensionContext): void {
+  let saved: unknown = [];
+  for (const entry of ctx.sessionManager.getBranch()) {
+    if (entry.type === "custom" && entry.customType === STARS_ENTRY) saved = (entry.data as { stars?: unknown } | undefined)?.stars ?? [];
+  }
+  h.stars = Array.isArray(saved) ? saved.filter((s): s is Star => !!s && typeof s.id === "string" && !!s.anchor) : [];
+  starsDirty = false;
+}
+
+/** Pins, stars and threads follow the active branch: rebuild all after /resume, /fork or /tree. */
 async function loadSessionState(h: Hub, ctx: ExtensionContext): Promise<void> {
   restorePins(h, ctx);
+  restoreStars(h, ctx);
   rebuildThreads(h, ctx.sessionManager.getBranch(), ctx.cwd);
   refreshWidget(h);
   broadcast(h, "pins", h.pinned.map(pinPayload));
+  broadcast(h, "stars", h.stars.map(starPayload));
   broadcast(h, "status", statusPayload(h));
   if (h.clients.size) broadcast(h, "threads", await snapshotThreads(h));
 }
@@ -247,6 +283,63 @@ function deletePin(h: Hub, id: string | undefined) {
   return { ok: true, pinned: h.pinned.length };
 }
 
+function createStar(h: Hub, payload: unknown) {
+  if (!payload || typeof payload !== "object") throw new HttpError(400, "Invalid star payload");
+  const b = payload as Record<string, unknown>;
+  const docId = typeof b.docId === "string" ? b.docId.slice(0, 40) : "";
+  const anchorKey = typeof b.anchorKey === "string" ? b.anchorKey.slice(0, 800) : "";
+  const threadSeq = typeof b.threadSeq === "number" && Number.isInteger(b.threadSeq) && b.threadSeq > 0 ? b.threadSeq : 0;
+  const scope = b.scope === "turn" || b.scope === "excerpt" ? b.scope : undefined;
+  const toggle = b.toggle === true;
+  if (!docId || !anchorKey || !threadSeq || !scope) throw new HttpError(400, "Missing docId, anchorKey, threadSeq or scope");
+
+  if (scope === "turn" && toggle) {
+    const existing = h.stars.find((s) => s.docId === docId && s.anchorKey === anchorKey && s.threadSeq === threadSeq && s.scope === "turn");
+    if (existing) {
+      h.stars = h.stars.filter((s) => s.id !== existing.id);
+      publishStars(h);
+      return { starred: false, removedId: existing.id };
+    }
+  }
+
+  let anchor: Anchor;
+  let label = typeof b.label === "string" ? b.label.slice(0, 240) : "";
+  try {
+    const parsed = parseAsk({ doc: docId, mode: "pin", question: "", anchor: b.anchor });
+    anchor = withoutImage(parsed.anchor);
+    const doc = h.docs.get(docId);
+    if (!label && doc) label = buildBlock(doc, anchor, { cwd: h.cwd }).label;
+  } catch (e) {
+    throw new HttpError(400, e instanceof Error ? e.message : String(e));
+  }
+
+  const excerpt = typeof b.excerpt === "string" ? b.excerpt.slice(0, 4000) : "";
+  const html = typeof b.html === "string" ? b.html.slice(0, 32000) : "";
+  const question = typeof b.question === "string" ? b.question.slice(0, 1000) : "";
+  const star: Star = {
+    id: newId(),
+    docId,
+    anchorKey,
+    anchor,
+    label,
+    threadSeq,
+    question,
+    scope,
+    excerpt,
+    html,
+    at: Date.now(),
+  };
+  h.stars.push(star);
+  publishStars(h);
+  return { starred: true, star: starPayload(star) };
+}
+
+function deleteStar(h: Hub, id: string | undefined) {
+  h.stars = id ? h.stars.filter((s) => s.id !== id) : [];
+  publishStars(h);
+  return { ok: true, count: h.stars.length };
+}
+
 /** Parse "/view path[:N] [--new]". A trailing :N is a line (md/html) or page (pdf/office). */
 function parseViewArgs(raw: string, cwd: string): { path: string; target?: Target; fresh: boolean } {
   let text = raw.trim();
@@ -286,7 +379,10 @@ function installHandlers(h: Hub): void {
     say: (body) => deliverSay(h, body),
     editPin: (id, body) => editPin(h, id, body),
     deletePin: (id) => deletePin(h, id),
-    snapshot: async () => ({ pins: h.pinned.map(pinPayload), threads: await snapshotThreads(h) }),
+    createStar: (body) => createStar(h, body),
+    deleteStar: (id) => deleteStar(h, id),
+    exportDoc: (doc, body) => exportDocumentHtml(h, doc, (body as { pages?: unknown } | undefined)?.pages),
+    snapshot: async () => ({ pins: h.pinned.map(pinPayload), stars: h.stars.map(starPayload), threads: await snapshotThreads(h) }),
     asrStatus: () => queryAsrStatus(),
     asrTranscribe: (body, mime, signal) => transcribeWithAsr(body, mime, signal),
   });
@@ -340,8 +436,9 @@ export default function piWebview(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (event) => {
-    // Save unsaved pin edits into the session being left; session_start restores the next one.
+    // Save unsaved pin/star edits into the session being left; session_start restores the next one.
     flushPins(h, true);
+    flushStars(h, true);
     h.binding = undefined;
     if (event.reason === "quit") stopServer(h);
   });
@@ -354,6 +451,7 @@ export default function piWebview(pi: ExtensionAPI): void {
   pi.on("agent_settled", async (event) => {
     h.busy = false;
     flushPins(h);
+    flushStars(h);
     const t = h.activeThread;
     if (t) {
       t.status = event.aborted ? "aborted" : "done";
@@ -501,8 +599,39 @@ export default function piWebview(pi: ExtensionAPI): void {
       if (!h.server) return ctx.ui.notify("pi-webview is not running", "info");
       const tabs = h.clients.size;
       flushPins(h, true);
+      flushStars(h, true);
       stopServer(h);
       ctx.ui.notify(`Stopped pi-webview (${tabs} tab${tabs === 1 ? "" : "s"} disconnected)`, "info");
+    },
+  });
+
+  pi.registerCommand("view-export", {
+    description: "Export an annotated md/html document to a standalone single-file HTML. Usage: /view-export [file] [--out dest.html]",
+    handler: async (args, ctx) => {
+      try {
+        const outMatch = /(?:^|\s)--out\s+(['"]?)(\S+)\1/.exec(args);
+        const outArg = outMatch?.[2];
+        const fileArg = args.replace(outMatch?.[0] ?? "", "").trim().replace(/^(['"])(.*)\1$/, "$2");
+        let doc: Doc | undefined;
+        if (fileArg) {
+          const path = expandPath(fileArg, ctx.cwd);
+          if (!exists(path)) throw new Error(`File not found: ${path}`);
+          doc = ensureDoc(h, path);
+        } else {
+          const docs = [...h.docs.values()];
+          doc = docs.at(-1);
+          if (!doc) throw new Error("No open document. Pass a file path: /view-export <file>");
+        }
+        if (doc.kind === "pdf" || doc.kind === "office") {
+          throw new Error("PDF/Office documents require rendered pages from the browser; click the ⤓ Export button in the browser dock.");
+        }
+        const { filename, html } = await exportDocumentHtml(h, doc);
+        const dest = outArg ? expandPath(outArg, ctx.cwd) : join(doc.dir, filename);
+        await writeFile(dest, html, "utf8");
+        ctx.ui.notify(`Exported annotated HTML to ${displayPath(dest, ctx.cwd)}`, "info");
+      } catch (e) {
+        ctx.ui.notify(e instanceof Error ? e.message : String(e), "error");
+      }
     },
   });
 

@@ -5,11 +5,12 @@
   let picking = false;
 
   const ours = (e) => e.composedPath().some((n) => n.localName === "pv-overlay");
-  const pickBtn = PV.addTool("◎", "Pick an element to ask about (or Alt+click)", () => setPick(!picking));
+  const pickBtn = PV.exportMode ? null : PV.addTool("◎", "Pick an element to ask about (or Alt+click)", () => setPick(!picking));
 
   function setPick(on) {
+    if (PV.exportMode) return;
     picking = on;
-    pickBtn.classList.toggle("on", on);
+    pickBtn?.classList.toggle("on", on);
     document.documentElement.style.cursor = on ? "crosshair" : "";
     if (!on) PV.outline(null);
   }
@@ -110,52 +111,54 @@
     return parts.length > 2 ? `… > ${parts.slice(-2).join(" > ")}` : selector;
   }
 
-  document.addEventListener(
-    "mousemove",
-    (e) => {
-      if (!(picking || e.altKey) || ours(e) || !(e.target instanceof Element)) return PV.outline(null);
-      PV.outline(e.target.getBoundingClientRect(), short(cssPath(e.target)));
-    },
-    true,
-  );
-
-  for (const type of ["mousedown", "mouseup", "pointerdown", "pointerup"]) {
+  if (!PV.exportMode) {
     document.addEventListener(
-      type,
+      "mousemove",
       (e) => {
-        if ((picking || e.altKey) && !e.ctrlKey && !ours(e)) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-        }
+        if (!(picking || e.altKey) || ours(e) || !(e.target instanceof Element)) return PV.outline(null);
+        PV.outline(e.target.getBoundingClientRect(), short(cssPath(e.target)));
       },
       true,
     );
+
+    for (const type of ["mousedown", "mouseup", "pointerdown", "pointerup"]) {
+      document.addEventListener(
+        type,
+        (e) => {
+          if ((picking || e.altKey) && !e.ctrlKey && !ours(e)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        },
+        true,
+      );
+    }
+
+    document.addEventListener(
+      "click",
+      (e) => {
+        if (!(picking || e.altKey) || e.ctrlKey || ours(e) || !(e.target instanceof Element)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const el = e.target;
+        setPick(false);
+        PV.outline(null);
+        PV.openSlip(elementAnchor(el), {
+          rect: () => PV.rectOf(el) || el.getBoundingClientRect(),
+          label: short(cssPath(el)),
+          showBox: true,
+        });
+      },
+      true,
+    );
+
+    addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && picking) setPick(false);
+    });
+    addEventListener("keyup", (e) => {
+      if (e.key === "Alt" && !picking) PV.outline(null);
+    });
   }
-
-  document.addEventListener(
-    "click",
-    (e) => {
-      if (!(picking || e.altKey) || e.ctrlKey || ours(e) || !(e.target instanceof Element)) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      const el = e.target;
-      setPick(false);
-      PV.outline(null);
-      PV.openSlip(elementAnchor(el), {
-        rect: () => PV.rectOf(el) || el.getBoundingClientRect(),
-        label: short(cssPath(el)),
-        showBox: true,
-      });
-    },
-    true,
-  );
-
-  addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && picking) setPick(false);
-  });
-  addEventListener("keyup", (e) => {
-    if (e.key === "Alt" && !picking) PV.outline(null);
-  });
 
   const SKIP_TAGS = new Set(["HTML", "BODY", "SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "LINK", "META", "BR", "HR", "PV-OVERLAY"]);
   const LEAF_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "TD", "TH", "DT", "DD", "BLOCKQUOTE", "PRE", "CODE", "A", "BUTTON", "LABEL", "INPUT", "IMG", "SVG", "FIGURE", "FIGCAPTION", "SPAN", "STRONG", "EM", "VIDEO", "CANVAS"]);

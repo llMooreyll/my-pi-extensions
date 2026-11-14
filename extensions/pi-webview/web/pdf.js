@@ -9,6 +9,9 @@ const rail = document.getElementById("rail");
 const unitLabel = cfg.unit === "slide" ? "SLIDE" : "P.";
 const pageTexts = new Map();
 let viewer = null;
+let pdfDoc = null;
+let pdfLib = null;
+let exportScale = 1;
 let userScaled = false;
 let regionMode = false;
 
@@ -56,11 +59,12 @@ function surrounding(page, text) {
 
 // ── region capture: Alt+drag, or ▭ then drag ──
 function setRegion(on) {
+  if (PV.exportMode) return;
   regionMode = on;
   document.documentElement.classList.toggle("pv-region-mode", on);
-  regionBtn.classList.toggle("on", on);
+  regionBtn?.classList.toggle("on", on);
 }
-const regionBtn = PV.addTool("▭", "Mark a region to ask about (or Alt+drag), key R", () => setRegion(!regionMode));
+const regionBtn = PV.exportMode ? null : PV.addTool("▭", "Mark a region to ask about (or Alt+drag), key R", () => setRegion(!regionMode));
 
 function capture(page, r, pr) {
   const canvas = page.querySelector(".canvasWrapper canvas");
@@ -100,7 +104,7 @@ function capture(page, r, pr) {
 container.addEventListener(
   "pointerdown",
   (e) => {
-    if (!(regionMode || e.altKey) || e.ctrlKey || e.button !== 0) return;
+    if (PV.exportMode || !(regionMode || e.altKey) || e.ctrlKey || e.button !== 0) return;
     const page = e.target.closest?.(".page");
     if (!page) return;
     e.preventDefault();
@@ -145,42 +149,79 @@ container.addEventListener(
 container.addEventListener(
   "mousedown",
   (e) => {
-    if (regionMode || e.altKey) e.preventDefault();
+    if (!PV.exportMode && (regionMode || e.altKey)) e.preventDefault();
   },
   true,
 );
 
+function layoutExportPages() {
+  const pages = [...container.querySelectorAll(".pv-export-page")];
+  if (!pages.length) return;
+  const availW = Math.max(280, container.clientWidth - 64);
+  for (const p of pages) {
+    const bw = Number(p.dataset.baseW) || 800;
+    const bh = Number(p.dataset.baseH) || 1000;
+    const targetW = userScaled ? bw * exportScale : Math.min(availW, bw);
+    const ratio = targetW / bw;
+    p.style.width = `${targetW.toFixed(1)}px`;
+    p.style.height = `${(bh * ratio).toFixed(1)}px`;
+    p.style.setProperty("--tl-scale", String(ratio));
+  }
+  PV.relocate();
+}
+
 // ── keyboard zoom ──
 addEventListener("keydown", (e) => {
-  if (!viewer || e.target instanceof HTMLElement && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if ((!viewer && !PV.exportMode) || (e.target instanceof HTMLElement && /^(INPUT|TEXTAREA)$/.test(e.target.tagName))) return;
   if (e.composedPath().some((n) => n.localName === "pv-overlay")) return;
   if ((e.key === "=" || e.key === "+") && (e.ctrlKey || !e.metaKey)) {
     e.preventDefault();
     userScaled = true;
-    viewer.currentScale = Math.min(5, viewer.currentScale * 1.15);
+    if (PV.exportMode) {
+      exportScale = Math.min(3, exportScale * 1.15);
+      layoutExportPages();
+    } else {
+      viewer.currentScale = Math.min(5, viewer.currentScale * 1.15);
+    }
   } else if (e.key === "-" && (e.ctrlKey || !e.metaKey)) {
     e.preventDefault();
     userScaled = true;
-    viewer.currentScale = Math.max(0.3, viewer.currentScale / 1.15);
+    if (PV.exportMode) {
+      exportScale = Math.max(0.3, exportScale / 1.15);
+      layoutExportPages();
+    } else {
+      viewer.currentScale = Math.max(0.3, viewer.currentScale / 1.15);
+    }
   } else if (e.key === "0") {
     userScaled = false;
-    viewer.currentScaleValue = "page-width";
-  } else if (e.key === "r" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (PV.exportMode) layoutExportPages();
+    else viewer.currentScaleValue = "page-width";
+  } else if (!PV.exportMode && e.key === "r" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     setRegion(!regionMode);
   }
 });
 container.addEventListener(
   "wheel",
   (e) => {
-    if (!viewer || !e.ctrlKey) return;
+    if ((!viewer && !PV.exportMode) || !e.ctrlKey) return;
     e.preventDefault();
     userScaled = true;
-    viewer.currentScale = Math.min(5, Math.max(0.3, viewer.currentScale * (e.deltaY < 0 ? 1.08 : 1 / 1.08)));
+    const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+    if (PV.exportMode) {
+      exportScale = Math.min(3, Math.max(0.3, exportScale * factor));
+      layoutExportPages();
+    } else {
+      viewer.currentScale = Math.min(5, Math.max(0.3, viewer.currentScale * factor));
+    }
   },
   { passive: false },
 );
 addEventListener("resize", () => {
-  if (viewer && !userScaled) viewer.currentScaleValue = "page-width";
+  if (PV.exportMode) {
+    if (!userScaled) layoutExportPages();
+  } else if (viewer && !userScaled) {
+    viewer.currentScaleValue = "page-width";
+  }
 });
 
 function collectPdfRegion(dragRect) {
@@ -270,12 +311,61 @@ PV.register({
     return `${unitLabel} ${anchor.page}${anchor.region ? " · ▭ region" : ""}`;
   },
   goto({ page }) {
-    if (!viewer || !page) return;
+    if (!page) return;
+    if (PV.exportMode) {
+      const el = pageEl(page);
+      if (!el) return;
+      el.scrollIntoView({ block: "start", behavior: "smooth" });
+      markRail(page);
+      el.classList.remove("pv-page-flash");
+      void el.offsetWidth;
+      el.classList.add("pv-page-flash");
+      return;
+    }
+    if (!viewer) return;
     viewer.currentPageNumber = page;
     const el = pageEl(page);
     el?.classList.remove("pv-page-flash");
     void el?.offsetWidth;
     el?.classList.add("pv-page-flash");
+  },
+  exportInfo(annotatedSet) {
+    const total = pdfDoc?.numPages || 0;
+    const annotated = [...annotatedSet].filter((n) => Number.isInteger(n) && n >= 1 && n <= total).sort((a, b) => a - b);
+    return { total, annotated };
+  },
+  async prepareExport(pageNums) {
+    if (!pdfDoc || !pdfLib) throw new Error("PDF is still loading");
+    const list = pageNums?.length ? pageNums : Array.from({ length: pdfDoc.numPages }, (_, i) => i + 1);
+    const out = [];
+    for (const num of list) {
+      const page = await pdfDoc.getPage(num);
+      const baseVp = page.getViewport({ scale: 1 });
+      const scale = Math.min(2, Math.max(1, 1240 / Math.max(1, baseVp.width)));
+      const vp = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(vp.width);
+      canvas.height = Math.round(vp.height);
+      const ctx = canvas.getContext("2d");
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      let image = canvas.toDataURL("image/webp", 0.86);
+      if (!image.startsWith("data:image/webp")) image = canvas.toDataURL("image/png");
+
+      const content = await page.getTextContent();
+      const spans = [];
+      for (const item of content.items) {
+        if (!item.str) continue;
+        const tx = pdfLib.Util.transform(vp.transform, item.transform);
+        const fontSize = Math.max(4, Math.hypot(tx[2], tx[3]) || Math.hypot(tx[0], tx[1]) || 12);
+        const left = tx[4];
+        const top = tx[5] - fontSize * 0.85;
+        const angle = Math.atan2(tx[1], tx[0]);
+        const transform = Math.abs(angle) > 0.01 ? `rotate(${angle.toFixed(4)}rad)` : undefined;
+        spans.push({ text: item.str, left, top, fontSize, ...(transform ? { transform } : {}) });
+      }
+      out.push({ page: num, width: canvas.width, height: canvas.height, image, spans });
+    }
+    return out;
   },
   locate(anchor) {
     if (anchor.kind !== "pdf") return null;
@@ -387,8 +477,44 @@ async function main() {
     setStatus("FAILED", detail, true);
     return;
   }
+  pdfDoc = doc;
+  pdfLib = lib;
   viewer.setDocument(doc);
   linkService.setDocument(doc, null);
 }
 
-main();
+function initExportedPdf() {
+  const pages = [...container.querySelectorAll(".pv-export-page")];
+  if (!pages.length) return;
+  const frag = document.createDocumentFragment();
+  for (const p of pages) {
+    const n = Number(p.dataset.pageNumber);
+    const b = document.createElement("button");
+    b.textContent = String(n).padStart(2, "0");
+    b.dataset.page = String(n);
+    b.addEventListener("click", () => {
+      p.scrollIntoView({ block: "start", behavior: "smooth" });
+      markRail(n);
+    });
+    frag.appendChild(b);
+  }
+  rail.replaceChildren(frag);
+  markRail(Number(pages[0].dataset.pageNumber));
+  container.addEventListener(
+    "scroll",
+    () => {
+      const top = container.getBoundingClientRect().top + 80;
+      let cur = pages[0];
+      for (const p of pages) {
+        if (p.getBoundingClientRect().top <= top) cur = p;
+        else break;
+      }
+      if (cur) markRail(Number(cur.dataset.pageNumber));
+    },
+    { passive: true },
+  );
+  layoutExportPages();
+}
+
+if (PV.exportMode) initExportedPdf();
+else main();
