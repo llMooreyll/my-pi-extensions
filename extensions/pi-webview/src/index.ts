@@ -514,7 +514,7 @@ export default function piWebview(pi: ExtensionAPI): void {
     promptSnippet: "Show a local md/html/pdf/office document to the user in the browser, at a line or page",
     promptGuidelines: [
       "Use view_open when the user asks to see, read or present a document in the browser, or when pointing them to a specific line or page helps.",
-      "User messages containing <browser-context> blocks come from selections the user made in the pi-webview browser viewer; the block gives the file and the line, page or CSS selector, so read the file there before answering.",
+      "User messages containing <browser-context> blocks come from selections the user made in the pi-webview browser viewer; read the cited file at the given line/lines/page directly (or check script-line / linked JS when dynamic='true') before answering.",
     ],
     parameters: Type.Object({
       path: Type.String({ description: "File path, relative to the working directory or absolute" }),

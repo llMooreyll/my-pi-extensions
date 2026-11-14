@@ -88,7 +88,7 @@ export function parseAsk(body: unknown): AskRequest {
         text,
         selector,
         tag: str(a.tag, 40) || undefined,
-        outer: str(a.outer, 4000) || undefined,
+        outer: str(a.outer, 200) || undefined,
         hint: { id: str(hint.id, 200) || undefined, classes: strList(hint.classes, 8, 80), text: str(hint.text, 120) || undefined },
       },
     };
@@ -124,36 +124,342 @@ function readSourceLines(path: string, start: number, end: number): string | und
   }
 }
 
-/** Best-effort source line of a picked element: only a needle that occurs exactly once counts. */
-function locateHtml(path: string, hint: { id?: string; classes: string[]; text?: string }): number | undefined {
+interface HtmlNode {
+  tag: string;
+  id?: string;
+  classes: string[];
+  attrs: Record<string, string>;
+  startLine: number;
+  endLine: number;
+  parent?: HtmlNode;
+  children: HtmlNode[];
+}
+
+interface HtmlLocateResult {
+  lines?: [number, number];
+  dynamic?: boolean;
+  scriptLine?: number;
+}
+
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+const RAW_TEXT_TAGS = new Set(["script", "style", "textarea", "title"]);
+
+function buildLineStarts(src: string): number[] {
+  const starts = [0];
+  for (let i = 0; i < src.length; i++) {
+    if (src.charCodeAt(i) === 10) starts.push(i + 1);
+  }
+  return starts;
+}
+
+function lineAt(starts: number[], offset: number): number {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (starts[mid]! <= offset) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+function parseAttrs(raw: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const re = /([a-zA-Z_:][\w:.-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  for (const m of raw.matchAll(re)) {
+    const key = m[1]!.toLowerCase();
+    const val = m[2] ?? m[3] ?? m[4] ?? "";
+    attrs[key] = val;
+  }
+  return attrs;
+}
+
+function parseHtmlTree(src: string): { roots: HtmlNode[]; all: HtmlNode[]; scripts: HtmlNode[]; starts: number[] } {
+  const starts = buildLineStarts(src);
+  const roots: HtmlNode[] = [];
+  const all: HtmlNode[] = [];
+  const scripts: HtmlNode[] = [];
+  const stack: HtmlNode[] = [];
+  const len = src.length;
+  let i = 0;
+
+  while (i < len) {
+    const lt = src.indexOf("<", i);
+    if (lt < 0) break;
+
+    if (src.startsWith("<!--", lt)) {
+      const end = src.indexOf("-->", lt + 4);
+      i = end < 0 ? len : end + 3;
+      continue;
+    }
+
+    const nextCh = src[lt + 1];
+    if (!nextCh || (!/[a-zA-Z!/]/.test(nextCh))) {
+      i = lt + 1;
+      continue;
+    }
+
+    if (nextCh === "!") {
+      const gt = src.indexOf(">", lt + 2);
+      i = gt < 0 ? len : gt + 1;
+      continue;
+    }
+
+    if (nextCh === "/") {
+      const m = /^<\/([a-zA-Z][\w:-]*)\s*>/.exec(src.slice(lt, lt + 128));
+      if (!m) {
+        i = lt + 1;
+        continue;
+      }
+      const tag = m[1]!.toLowerCase();
+      const closeLine = lineAt(starts, lt);
+      for (let s = stack.length - 1; s >= 0; s--) {
+        if (stack[s]!.tag === tag) {
+          for (let k = stack.length - 1; k >= s; k--) stack[k]!.endLine = closeLine;
+          stack.length = s;
+          break;
+        }
+      }
+      i = lt + m[0].length;
+      continue;
+    }
+
+    const openMatch = /^<([a-zA-Z][\w:-]*)/.exec(src.slice(lt, lt + 128));
+    if (!openMatch) {
+      i = lt + 1;
+      continue;
+    }
+    const tag = openMatch[1]!.toLowerCase();
+    let j = lt + openMatch[0].length;
+    let quote = "";
+    while (j < len) {
+      const ch = src[j]!;
+      if (quote) {
+        if (ch === quote) quote = "";
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === ">") {
+        break;
+      }
+      j++;
+    }
+    if (j >= len) break;
+
+    const selfClosing = src[j - 1] === "/" || VOID_TAGS.has(tag);
+    const attrText = src.slice(lt + openMatch[0].length, src[j - 1] === "/" ? j - 1 : j);
+    const attrs = parseAttrs(attrText);
+    const startLine = lineAt(starts, lt);
+    const parent = stack[stack.length - 1];
+    const node: HtmlNode = {
+      tag,
+      id: attrs.id || undefined,
+      classes: attrs.class ? attrs.class.trim().split(/\s+/).filter(Boolean) : [],
+      attrs,
+      startLine,
+      endLine: lineAt(starts, j),
+      parent,
+      children: [],
+    };
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+    all.push(node);
+    if (tag === "script") scripts.push(node);
+
+    i = j + 1;
+
+    if (!selfClosing && RAW_TEXT_TAGS.has(tag)) {
+      const closeRe = new RegExp(`</${tag}\\s*>`, "i");
+      const cm = closeRe.exec(src.slice(i));
+      if (cm) {
+        node.endLine = lineAt(starts, i + cm.index);
+        i = i + cm.index + cm[0].length;
+      }
+      continue;
+    }
+
+    if (!selfClosing) stack.push(node);
+  }
+
+  const lastLine = starts.length;
+  for (const openNode of stack) openNode.endLine = lastLine;
+  return { roots, all, scripts, starts };
+}
+
+interface SelectorPart {
+  tag?: string;
+  id?: string;
+  classes: string[];
+  attrs: Array<{ key: string; val: string }>;
+  nthOfType?: number;
+}
+
+function unescapeCss(s: string): string {
+  return s.replace(/\\([0-9a-fA-F]{1,6}\s?|.)/g, (_m, g: string) => {
+    if (/^[0-9a-fA-F]/.test(g)) return String.fromCodePoint(parseInt(g.trim(), 16));
+    return g;
+  });
+}
+
+function parseSelectorSegment(seg: string): SelectorPart | undefined {
+  let rest = seg.trim();
+  if (!rest) return undefined;
+  const part: SelectorPart = { classes: [], attrs: [] };
+
+  const nth = /:nth-of-type\((\d+)\)$/.exec(rest);
+  if (nth) {
+    part.nthOfType = Number(nth[1]);
+    rest = rest.slice(0, nth.index);
+  }
+
+  const tagM = /^([a-zA-Z][\w:-]*|\*)/.exec(rest);
+  if (tagM) {
+    if (tagM[1] !== "*") part.tag = tagM[1]!.toLowerCase();
+    rest = rest.slice(tagM[0].length);
+  }
+
+  while (rest.length) {
+    if (rest[0] === "#") {
+      const m = /^#((?:\\.|[\w-])+)(?=[.#[:\s]|$)/.exec(rest);
+      if (!m) return undefined;
+      part.id = unescapeCss(m[1]!);
+      rest = rest.slice(m[0].length);
+    } else if (rest[0] === ".") {
+      const m = /^\.((?:\\.|[\w-])+)(?=[.#[:\s]|$)/.exec(rest);
+      if (!m) return undefined;
+      part.classes.push(unescapeCss(m[1]!));
+      rest = rest.slice(m[0].length);
+    } else if (rest[0] === "[") {
+      const m = /^\[([a-zA-Z_:][\w:.-]*)\s*=\s*(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)')\]/.exec(rest);
+      if (!m) return undefined;
+      part.attrs.push({ key: m[1]!.toLowerCase(), val: unescapeCss(m[2] ?? m[3] ?? "") });
+      rest = rest.slice(m[0].length);
+    } else {
+      return undefined;
+    }
+  }
+  return part;
+}
+
+function matchesPart(node: HtmlNode, part: SelectorPart, roots: HtmlNode[], strictClasses = true): boolean {
+  if (part.tag && node.tag !== part.tag) return false;
+  if (part.id !== undefined && node.id !== part.id) return false;
+  for (const a of part.attrs) {
+    if (node.attrs[a.key] !== a.val) return false;
+  }
+  if (strictClasses) {
+    for (const c of part.classes) {
+      if (!node.classes.includes(c)) return false;
+    }
+  }
+  if (part.nthOfType !== undefined) {
+    const siblings = node.parent ? node.parent.children : roots;
+    let count = 0;
+    for (const s of siblings) {
+      if (s.tag === node.tag) {
+        count++;
+        if (s === node) break;
+      }
+    }
+    if (count !== part.nthOfType) return false;
+  }
+  return true;
+}
+
+function matchesChain(node: HtmlNode, segs: SelectorPart[], idx: number, roots: HtmlNode[], strictClasses: boolean): boolean {
+  if (!matchesPart(node, segs[idx]!, roots, strictClasses)) return false;
+  if (idx === 0) return true;
+  const parent = node.parent;
+  if (!parent) return false;
+
+  const prevSeg = segs[idx - 1]!;
+  if (matchesChain(parent, segs, idx - 1, roots, strictClasses)) return true;
+
+  // Browsers auto-insert <tbody> between <table> and <tr>; tolerate mismatch with static HTML.
+  if (prevSeg.tag === "tbody" && parent.tag === "table" && idx >= 2) {
+    return matchesChain(parent, segs, idx - 2, roots, strictClasses);
+  }
+  if (parent.tag === "tbody" && parent.parent?.tag === "table" && prevSeg.tag === "table") {
+    return matchesChain(parent.parent, segs, idx - 1, roots, strictClasses);
+  }
+  return false;
+}
+
+/** Locate picked/selected HTML element in source file via AST selector match, falling back to script clues. */
+function locateHtml(path: string, selector: string, hint: { id?: string; classes: string[]; text?: string }): HtmlLocateResult {
   let src: string;
   try {
     src = readFileSync(path, "utf8");
   } catch {
-    return undefined;
+    return {};
   }
+
+  const rawParts = selector.split(" > ");
+  const segs = rawParts.map(parseSelectorSegment);
+  if (segs.length && segs.every((s): s is SelectorPart => !!s)) {
+    const { roots, all, scripts, starts } = parseHtmlTree(src);
+    const lastIdx = segs.length - 1;
+    let hits = all.filter((n) => matchesChain(n, segs, lastIdx, roots, true));
+    if (!hits.length) {
+      hits = all.filter((n) => matchesChain(n, segs, lastIdx, roots, false));
+    }
+    if (hits.length === 1) {
+      return { lines: [hits[0]!.startLine, hits[0]!.endLine] };
+    }
+    if (hits.length > 1 && hint.text && hint.text.length >= 4) {
+      const fileLines = src.split("\n");
+      const textHits = hits.filter((h) => fileLines.slice(h.startLine - 1, h.endLine).join("\n").includes(hint.text!));
+      if (textHits.length === 1) {
+        return { lines: [textHits[0]!.startLine, textHits[0]!.endLine] };
+      }
+    }
+
+    // Selector didn't match static HTML: check inline <script> for dynamic creation clues.
+    const needles = [
+      ...(hint.id ? [hint.id] : []),
+      ...hint.classes.filter((c) => c.length >= 4 && !/^(is-|has-|active$|hover$|focus)/.test(c)).slice(0, 3),
+      ...(hint.text && hint.text.length >= 6 ? [hint.text] : []),
+    ];
+    for (const sc of scripts) {
+      const startOff = starts[sc.startLine - 1] ?? 0;
+      const endOff = starts[sc.endLine] ?? src.length;
+      const bodySlice = src.slice(startOff, endOff);
+      for (const n of needles) {
+        const at = bodySlice.indexOf(n);
+        if (at >= 0) {
+          return { dynamic: true, scriptLine: lineAt(starts, startOff + at) };
+        }
+      }
+    }
+    return { dynamic: true };
+  }
+
+  // Fallback literal search when selector contains unsupported syntax.
   const needles: string[] = [];
   if (hint.id) needles.push(`id="${hint.id}"`, `id='${hint.id}'`);
   if (hint.classes.length) needles.push(`class="${hint.classes.join(" ")}"`);
   if (hint.text && hint.text.length >= 6) needles.push(hint.text);
   for (const n of needles) {
     const at = src.indexOf(n);
-    if (at >= 0 && src.indexOf(n, at + 1) === -1) return src.slice(0, at).split("\n").length;
+    if (at >= 0 && src.indexOf(n, at + 1) === -1) {
+      const ln = src.slice(0, at).split("\n").length;
+      return { lines: [ln, ln] };
+    }
   }
-  return undefined;
+  return {};
 }
 
 function shortSelector(selector: string): string {
   return selector.length > 48 ? "…" + selector.slice(-47) : selector;
 }
 
-function labelFor(file: string, anchor: Anchor, unit: "page" | "slide", line?: number): string {
+function labelFor(file: string, anchor: Anchor, unit: "page" | "slide", lines?: [number, number]): string {
   if (anchor.kind === "md") {
     const [s, e] = anchor.lines;
     return `${file} · L${s}${e > s ? `–${e}` : ""}`;
   }
   if (anchor.kind === "pdf") return `${file} · ${unit === "slide" ? "slide " : "p."}${anchor.page}${anchor.region ? " ▭" : ""}`;
-  return `${file}${line ? `:${line}` : ""} · ${shortSelector(anchor.selector)}`;
+  const ln = lines ? `:${lines[0]}` : "";
+  return `${file}${ln} · ${shortSelector(anchor.selector)}`;
 }
 
 export interface BuiltBlock {
@@ -166,7 +472,7 @@ export function buildBlock(doc: Doc, anchor: Anchor, opts: { cwd?: string; note?
   const unit = doc.kind === "office" ? pageUnit(doc) : "page";
   const parts: string[] = [];
   let head: string;
-  let line: number | undefined;
+  let htmlLines: [number, number] | undefined;
 
   if (anchor.kind === "md") {
     const [s, e] = anchor.lines;
@@ -185,14 +491,26 @@ export function buildBlock(doc: Doc, anchor: Anchor, opts: { cwd?: string; note?
       parts.push(`<region-note>The user marked a region of this ${unit} (x,y,w,h as fractions of the ${unit})${opts.imagePath ? `; screenshot: ${opts.imagePath}` : ""}</region-note>`);
     }
   } else {
-    line = locateHtml(doc.path, anchor.hint);
-    head = `<browser-context kind="html" file="${attr(file)}"${line ? ` line="${line}"` : ""} selector="${attr(anchor.selector)}">`;
+    const loc = locateHtml(doc.path, anchor.selector, anchor.hint);
+    htmlLines = loc.lines;
+    const lineAttr = htmlLines ? (htmlLines[0] === htmlLines[1] ? ` line="${htmlLines[0]}"` : ` lines="${htmlLines[0]}-${htmlLines[1]}"`) : "";
+    const dynAttr = loc.dynamic ? ` dynamic="true"${loc.scriptLine ? ` script-line="${loc.scriptLine}"` : ""}` : "";
+    head = `<browser-context kind="html" file="${attr(file)}"${lineAttr}${dynAttr} selector="${attr(anchor.selector)}">`;
     if (anchor.text.trim()) parts.push(`<selection>\n${body(anchor.text.trim())}\n</selection>`);
-    if (anchor.outer) parts.push(`<element>\n${body(anchor.outer)}\n</element>`);
+    else if (anchor.outer) parts.push(`<element>${body(anchor.outer)}</element>`);
+    if (loc.dynamic) {
+      parts.push(
+        `<note>${
+          loc.scriptLine
+            ? `Element was not found in static HTML (likely rendered dynamically by script near line ${loc.scriptLine}). Read around that script line instead of scanning static HTML.`
+            : "Element was not found in static HTML (likely rendered dynamically by script). Check <script> or linked JS/template files instead of scanning static HTML."
+        }</note>`,
+      );
+    }
   }
 
   if (opts.note) parts.push(`<note>${body(opts.note)}</note>`);
-  return { block: `${head}\n${parts.join("\n")}\n</browser-context>`, label: labelFor(file, anchor, unit, line) };
+  return { block: `${head}\n${parts.join("\n")}\n</browser-context>`, label: labelFor(file, anchor, unit, htmlLines) };
 }
 
 export function composeMessage(blocks: string[], question: string): string {
@@ -259,10 +577,13 @@ export function parseBlocks(text: string, cwd: string): Ref[] {
     const selection = selectionOf(inner);
     let anchor: Anchor | undefined;
     let unit: "page" | "slide" = "page";
+    const kind = attrOf(attrs, "kind");
     const lines = attrOf(attrs, "lines");
     const page = attrOf(attrs, "page") ?? attrOf(attrs, "slide");
     const selector = attrOf(attrs, "selector");
-    if (lines) {
+    if (selector || kind === "html") {
+      if (selector) anchor = { kind: "html", text: selection, selector, hint: { classes: [] } };
+    } else if (lines) {
       const [s = 0, e = s] = lines.split("-").map(Number);
       if (s > 0) anchor = { kind: "md", text: selection, lines: [s, Math.max(s, e)], headings: [] };
     } else if (page) {
@@ -275,12 +596,19 @@ export function parseBlocks(text: string, cwd: string): Ref[] {
         context: "",
         region: region?.length === 4 && region.every((n) => n >= 0 && n <= 1) ? region : undefined,
       };
-    } else if (selector) {
-      anchor = { kind: "html", text: selection, selector, hint: { classes: [] } };
     }
     if (!anchor) continue;
-    const line = Number(attrOf(attrs, "line")) || undefined;
-    refs.push({ docId: docId(path), path, label: labelFor(file, anchor, unit, line), anchor });
+    const linesAttr = attrOf(attrs, "lines");
+    const lineAttr = Number(attrOf(attrs, "line")) || undefined;
+    const lineRange: [number, number] | undefined = linesAttr
+      ? (() => {
+          const [s = 0, e = s] = linesAttr.split("-").map(Number);
+          return s > 0 ? [s, Math.max(s, e)] : undefined;
+        })()
+      : lineAttr
+        ? [lineAttr, lineAttr]
+        : undefined;
+    refs.push({ docId: docId(path), path, label: labelFor(file, anchor, unit, lineRange), anchor });
   }
   return refs;
 }
@@ -291,13 +619,18 @@ export function foldContexts(markdown: string): string {
   if (out.includes("<browser-context")) {
     out = out.replace(BLOCK_RE, (_m, attrs: string, inner: string) => {
       const lines = attrOf(attrs, "lines");
-      const loc = lines
-        ? `L${lines}`
-        : attrOf(attrs, "page")
-          ? `p.${attrOf(attrs, "page")}`
-          : attrOf(attrs, "slide")
-            ? `slide ${attrOf(attrs, "slide")}`
-            : (attrOf(attrs, "selector") ?? "");
+      const line = attrOf(attrs, "line");
+      const selector = attrOf(attrs, "selector");
+      const lineLabel = lines ? `L${lines}` : line ? `L${line}` : "";
+      const loc = selector
+        ? `${lineLabel ? `${lineLabel} · ` : ""}${selector}`
+        : lineLabel
+          ? lineLabel
+          : attrOf(attrs, "page")
+            ? `p.${attrOf(attrs, "page")}`
+            : attrOf(attrs, "slide")
+              ? `slide ${attrOf(attrs, "slide")}`
+              : "";
       const sel = selectionOf(inner).replace(/\s+/g, " ");
       const note = /<note>([\s\S]*?)<\/note>/.exec(inner)?.[1]?.replace(/\s+/g, " ");
       const excerpt = sel ? ` — “${sel.slice(0, 72)}${sel.length > 72 ? "…" : ""}”` : "";

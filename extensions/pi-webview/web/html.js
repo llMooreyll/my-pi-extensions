@@ -14,20 +14,61 @@
     if (!on) PV.outline(null);
   }
 
-  function cssPath(el) {
-    const parts = [];
-    for (let n = el; n && n.nodeType === 1 && n !== document.documentElement; n = n.parentElement) {
-      if (n.id && document.querySelectorAll(`#${CSS.escape(n.id)}`).length === 1) {
-        parts.unshift(`#${CSS.escape(n.id)}`);
-        break;
+  function isUnique(sel, el) {
+    try {
+      const m = document.querySelectorAll(sel);
+      return m.length === 1 && m[0] === el;
+    } catch {
+      return false;
+    }
+  }
+
+  const UNIQUE_ATTRS = ["data-testid", "data-id", "name", "aria-label", "href"];
+
+  function segmentOf(n) {
+    if (n.id) {
+      const idSel = `#${CSS.escape(n.id)}`;
+      if (isUnique(idSel, n)) return { sel: idSel, anchor: true };
+    }
+    for (const attr of UNIQUE_ATTRS) {
+      const val = n.getAttribute(attr);
+      if (!val || val.length > 60 || /[\r\n]/.test(val)) continue;
+      const attrSel = `${n.localName}[${attr}="${CSS.escape(val)}"]`;
+      if (isUnique(attrSel, n)) return { sel: attrSel, anchor: true };
+    }
+    let s = n.localName;
+    const cls = [...n.classList]
+      .filter((c) => c.length <= 40 && !/^(is-|has-|active$|hover$|focus|selected$|open$|pv-)/.test(c))
+      .slice(0, 2);
+    if (cls.length) s += "." + cls.map((c) => CSS.escape(c)).join(".");
+    if (n.parentElement) {
+      const kids = [...n.parentElement.children];
+      const same = kids.filter((c) => c.localName === n.localName);
+      if (same.length > 1) {
+        let matched = same.length;
+        if (cls.length) {
+          try {
+            matched = kids.filter((c) => c.matches(s)).length;
+          } catch {
+            matched = same.length;
+          }
+        }
+        if (matched !== 1) s += `:nth-of-type(${same.indexOf(n) + 1})`;
       }
-      let s = n.localName;
-      const cls = [...n.classList].filter((c) => !/^(is-|has-|active$|hover$|focus)/.test(c)).slice(0, 2);
-      if (cls.length) s += "." + cls.map((c) => CSS.escape(c)).join(".");
-      const same = n.parentElement ? [...n.parentElement.children].filter((c) => c.localName === n.localName) : [];
-      if (same.length > 1) s += `:nth-of-type(${same.indexOf(n) + 1})`;
-      parts.unshift(s);
-      if (parts.length >= 5) break;
+    }
+    return { sel: s, anchor: false };
+  }
+
+  function cssPath(el) {
+    if (!el || el.nodeType !== 1) return "";
+    if (el === document.documentElement || el === document.body) return el.localName;
+    const parts = [];
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+      const { sel, anchor } = segmentOf(n);
+      parts.unshift(sel);
+      const candidate = parts.join(" > ");
+      if (isUnique(candidate, el)) return candidate;
+      if (anchor || n === document.documentElement || parts.length >= 16) break;
     }
     return parts.join(" > ");
   }
@@ -40,18 +81,25 @@
       .replace(/\s+/g, " ")
       .trim();
 
+  function compactOuter(el) {
+    const tag = el.localName;
+    const attrs = [];
+    if (el.id) attrs.push(`id="${el.id}"`);
+    if (el.classList.length) attrs.push(`class="${[...el.classList].slice(0, 4).join(" ")}"`);
+    const open = attrs.length ? `<${tag} ${attrs.join(" ")}>` : `<${tag}>`;
+    const txt = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+    if (!txt) return open;
+    const snippet = txt.length > 60 ? `${txt.slice(0, 60).trimEnd()}…` : txt;
+    return `${open}${snippet}</${tag}>`;
+  }
+
   function elementAnchor(el) {
-    let outer = el.outerHTML;
-    if (outer.length > 3000) {
-      const open = outer.slice(0, outer.indexOf(">") + 1);
-      outer = `${open}\n  <!-- ${el.children.length} child elements omitted -->\n</${el.localName}>`;
-    }
     return {
       kind: "html",
       text: "",
       selector: cssPath(el),
       tag: el.localName,
-      outer,
+      outer: compactOuter(el),
       hint: { id: el.id || undefined, classes: [...el.classList], text: ownText(el).slice(0, 80) || undefined },
       preview: (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim(),
     };
