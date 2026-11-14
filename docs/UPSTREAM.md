@@ -16,3 +16,8 @@
 - 上游：https://github.com/mackt/pi-language-tutor
 - 基线：`aeaa9fa` bump 0.5.0（subtree 导入，保留完整历史）
 - 本地改动：`651d2d1` 新增 `/dismiss` 隐藏复习面板；`14d6ea3` 写作检查忽略大小写。
+
+## pi-voice
+- 上游：https://github.com/earendil-works/pi-voice
+- 基线：npm 包 `@earendil-works/pi-voice@0.2.0`（完整源码、词表与 Silero VAD 模型基线导入）
+- 本地改动：待补充（系统级 ASR 服务暴露）。
