@@ -84,3 +84,17 @@ If you want to be able to re-run onboarding you can enable the debug env var whe
 ```bash
 PI_VOICE_DEBUG=1 pi -e /absolute/path/to/pi-voice
 ```
+
+## Shared ASR Service
+
+In addition to terminal dictation and the `transcribe_file` tool, this fork exposes an in-process ASR service on `globalThis[Symbol.for("pi.asr.v1")]` and emits `pi-asr:ready` / `pi-asr:shutdown` on `pi.events`.
+
+- **Methods**: `getStatus()`, `transcribePcm(pcm, opts)`, `transcribeAudio(bytes, opts)` (decodes encoded containers such as `webm`/`ogg`/`wav`/`m4a` via FFmpeg), and `transcribeFile(path, opts)`.
+- **Scheduling**: External requests share the configured model in `~/.pi/agent/pi-voice.json` and queue behind interactive `/voice` dictation.
+
+Local install from this repository:
+
+```zsh
+cd ~/Projects/Pi-extension-dev/extensions/pi-voice && npm install --ignore-scripts
+pi install ~/Projects/Pi-extension-dev/extensions/pi-voice
+```
