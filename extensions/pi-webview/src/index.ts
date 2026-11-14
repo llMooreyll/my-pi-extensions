@@ -250,7 +250,8 @@ async function deliverAsk(h: Hub, payload: unknown) {
   const pins = drainPins(h);
   const own = buildBlock(doc, anchor, { cwd: h.cwd, imagePath }).block;
   const prev = req.replyTo ? h.threads.find((t) => t.id === req.replyTo) : undefined;
-  const followUp = prev ? buildFollowUpBlock(prev.seq, prev.question, prev.parts) : undefined;
+  const isConsecutive = !!prev && h.threads.at(-1)?.id === prev.id;
+  const followUp = prev && !isConsecutive ? buildFollowUpBlock(prev.seq, prev.question, prev.parts) : undefined;
   const blocks = [...pins.blocks, own, ...(followUp ? [followUp] : [])];
   const delivered = sendToPi(h, blocks, req.question, image ? [...pins.images, image] : pins.images);
   publishPins(h);
