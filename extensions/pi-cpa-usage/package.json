@@ -1,0 +1,46 @@
+{
+  "name": "pi-cpa-usage",
+  "version": "0.1.0",
+  "description": "Generic CPA / CLIProxyAPI 5h and weekly OAuth quota usage viewer (/usage) with optional toggleable statusline summary",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "cpa",
+    "cliproxyapi",
+    "usage",
+    "quota",
+    "statusline"
+  ],
+  "author": "llMooreyll",
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.4",
+    "@earendil-works/pi-tui": "^0.75.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
