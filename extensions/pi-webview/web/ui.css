@@ -82,6 +82,15 @@ textarea::placeholder { color: var(--mute); font-style: italic; }
 .slip .ask:hover { background: var(--signal); color: #000; }
 .slip.sending footer button { opacity: .4; pointer-events: none; }
 
+button.mic {
+  padding: 0 11px; display: flex; align-items: center; justify-content: center;
+  font: 700 13px/1 var(--mono); color: var(--ink); border-left: 2px solid var(--ink);
+  transition: background .12s, color .12s;
+}
+button.mic:hover { background: var(--paper-2); }
+button.mic.recording { background: var(--signal); color: #000; animation: live .9s steps(2, jump-none) infinite; }
+button.mic.transcribing { background: var(--ink); color: var(--paper); opacity: .75; cursor: progress; }
+
 /* ───────── markers: what has happened at each spot ───────── */
 
 .marker { position: fixed; display: flex; gap: 3px; pointer-events: auto; }
@@ -117,13 +126,22 @@ textarea::placeholder { color: var(--mute); font-style: italic; }
 .drawer > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drawer > header button { align-self: stretch; display: flex; align-items: center; padding: 0 12px; }
 .drawer > header button:hover { background: var(--signal); color: #000; }
-.drawer .list { overflow: auto; overscroll-behavior: contain; }
+.drawer .list { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+
+.drawer footer.follow { display: flex; align-items: stretch; border-top: 2px solid var(--ink); background: var(--paper); }
+.drawer footer.follow textarea { flex: 1; min-width: 0; min-height: 36px; max-height: 18vh; overflow: auto; padding: 8px 12px; font: 14px/1.45 var(--serif); color: var(--ink); }
+.drawer footer.follow .ask { flex: none; padding: 0 14px; display: flex; align-items: center; border-left: 2px solid var(--ink); background: var(--ink); color: var(--paper); font: 800 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; transition: background .12s, color .12s; }
+.drawer footer.follow .ask:hover { background: var(--signal); color: #000; }
+.drawer.sending footer.follow button { opacity: .4; pointer-events: none; }
 
 /* ───────── threads ───────── */
 
 .th { padding: 14px 16px 16px; border-bottom: 1.5px solid var(--rule); }
 .th:last-child { border-bottom: 0; }
-.th > header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font: 800 9.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--mute); }
+.th > header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font: 800 9.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--mute); }
+.th .num { font-weight: 800; color: var(--ink); letter-spacing: .06em; }
+.th .num:empty { display: none; }
+.th .reply-ref { padding: 2px 5px 1px; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink-2); letter-spacing: .04em; text-transform: none; }
 .th .st { padding: 3px 5px 2px; border: 1.5px solid currentColor; }
 .th[data-status="running"] .st { color: #000; background: var(--signal); border-color: var(--signal); animation: live 1s steps(2, jump-none) infinite; }
 .th[data-status="pending"] .st { color: var(--blue); }
@@ -212,10 +230,10 @@ textarea::placeholder { color: var(--mute); font-style: italic; }
 .pin textarea:focus { border-color: var(--blue); }
 .pin .saved { position: absolute; right: 16px; bottom: 18px; font: 600 9px/1 var(--mono); color: var(--mute); letter-spacing: .08em; text-transform: uppercase; pointer-events: none; }
 
-.composer { display: grid; grid-template-columns: 1fr auto; border-top: 2px solid var(--ink); }
+.composer { display: grid; grid-template-columns: 1fr auto auto; border-top: 2px solid var(--ink); }
 .composer .attach { grid-column: 1 / -1; padding: 6px 12px 5px; background: var(--blue); color: #fff; font: 700 9.5px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .composer textarea { min-height: 52px; max-height: 30vh; overflow: auto; padding: 12px 14px; font: 15px/1.45 var(--serif); color: var(--ink); }
-.composer .send { padding: 0 16px; display: flex; align-items: center; background: var(--ink); color: var(--paper); font: 800 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+.composer .send { padding: 0 16px; display: flex; align-items: center; border-left: 2px solid var(--ink); background: var(--ink); color: var(--paper); font: 800 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
 .composer .send:hover { background: var(--signal); color: #000; }
 
 /* ───────── dock ───────── */

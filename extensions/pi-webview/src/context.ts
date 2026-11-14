@@ -11,6 +11,7 @@ export interface AskRequest {
   doc: string;
   mode: "ask" | "pin";
   question: string;
+  replyTo?: string;
   anchor: Anchor;
 }
 
@@ -47,6 +48,7 @@ export function parseAsk(body: unknown): AskRequest {
   const a = b.anchor as Record<string, unknown> | null | undefined;
   if (!doc || !mode || !a || typeof a !== "object") throw new Error("Missing doc, mode or anchor");
   const question = str(b.question, 8000).trim();
+  const replyTo = str(b.replyTo, 40).trim() || undefined;
   const text = str(a.text, 6000);
 
   if (a.kind === "md") {
@@ -54,7 +56,7 @@ export function parseAsk(body: unknown): AskRequest {
     const start = posInt(lines[0]);
     if (!start) throw new Error("Markdown reference without a line number");
     const end = Math.max(start, posInt(lines[1]) ?? start);
-    return { doc, mode, question, anchor: { kind: "md", text, lines: [start, end], headings: strList(a.headings, 6, 160) } };
+    return { doc, mode, question, replyTo, anchor: { kind: "md", text, lines: [start, end], headings: strList(a.headings, 6, 160) } };
   }
   if (a.kind === "pdf") {
     const page = posInt(a.page);
@@ -68,6 +70,7 @@ export function parseAsk(body: unknown): AskRequest {
       doc,
       mode,
       question,
+      replyTo,
       anchor: { kind: "pdf", text, page, context: str(a.context, 2400), region, image: image.startsWith(IMAGE_PREFIX) ? image : undefined },
     };
   }
@@ -79,6 +82,7 @@ export function parseAsk(body: unknown): AskRequest {
       doc,
       mode,
       question,
+      replyTo,
       anchor: {
         kind: "html",
         text,
@@ -197,6 +201,8 @@ export function composeMessage(blocks: string[], question: string): string {
 
 // Attribute values may contain ">" (CSS selectors), never '"' (see attr()), so match attributes one by one.
 const BLOCK_RE = /<browser-context((?:\s+[\w-]+="[^"]*")*)\s*>([\s\S]*?)<\/browser-context>/g;
+const FOLLOW_UP_RE = /<follow-up((?:\s+[\w-]+="[^"]*")*)\s*>([\s\S]*?)<\/follow-up>/g;
+const followUpBody = (v: string) => v.replace(/<\/?follow-up/gi, (m) => m.replace("<", "‹"));
 
 function attrOf(attrs: string, key: string): string | undefined {
   return new RegExp(`\\b${key}="([^"]*)"`).exec(attrs)?.[1];
@@ -206,9 +212,37 @@ function selectionOf(inner: string): string {
   return /<selection>\s*([\s\S]*?)\s*<\/selection>/.exec(inner)?.[1] ?? "";
 }
 
-/** The message text with its context blocks removed: what the user actually asked. */
+function answerExcerpt(parts: readonly string[], maxChars = 150): string {
+  const joined = parts
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!joined) return "";
+  return joined.length > maxChars ? `${joined.slice(0, maxChars).trimEnd()}…` : joined;
+}
+
+/** Build a compact follow-up anchor referencing an earlier thread by number, question, and answer opening. */
+export function buildFollowUpBlock(seq: number, prevQuestion: string, prevParts: readonly string[]): string {
+  const lines = [`<follow-up ref="#${seq}">`];
+  const q = prevQuestion.replace(/\s+/g, " ").trim();
+  if (q) lines.push(`<previous-question>${followUpBody(q.slice(0, 400))}</previous-question>`);
+  const excerpt = answerExcerpt(prevParts, 150);
+  if (excerpt) lines.push(`<previous-answer>${followUpBody(excerpt)}</previous-answer>`);
+  lines.push("</follow-up>");
+  return lines.join("\n");
+}
+
+export function parseFollowUpSeq(text: string): number | undefined {
+  const m = /<follow-up\b[^>]*\bref="#(\d+)"[^>]*>/.exec(text);
+  const n = m ? Number(m[1]) : 0;
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/** The message text with its context and follow-up blocks removed: what the user actually asked. */
 export function stripBlocks(text: string): string {
-  return text.replace(BLOCK_RE, "").trim();
+  return text.replace(BLOCK_RE, "").replace(FOLLOW_UP_RE, "").trim();
 }
 
 /**
@@ -251,24 +285,34 @@ export function parseBlocks(text: string, cwd: string): Ref[] {
   return refs;
 }
 
-/** Display-only: fold each context block in a user message into one quoted line. */
+/** Display-only: fold each context and follow-up block in a user message into one quoted line. */
 export function foldContexts(markdown: string): string {
-  if (!markdown.includes("<browser-context")) return markdown;
-  return markdown.replace(BLOCK_RE, (_m, attrs: string, inner: string) => {
-    const lines = attrOf(attrs, "lines");
-    const loc = lines
-      ? `L${lines}`
-      : attrOf(attrs, "page")
-        ? `p.${attrOf(attrs, "page")}`
-        : attrOf(attrs, "slide")
-          ? `slide ${attrOf(attrs, "slide")}`
-          : (attrOf(attrs, "selector") ?? "");
-    const sel = selectionOf(inner).replace(/\s+/g, " ");
-    const note = /<note>([\s\S]*?)<\/note>/.exec(inner)?.[1]?.replace(/\s+/g, " ");
-    const excerpt = sel ? ` — “${sel.slice(0, 72)}${sel.length > 72 ? "…" : ""}”` : "";
-    const region = /\bregion="/.test(attrs) ? " ▭" : "";
-    return `> ⌖ \`${attrOf(attrs, "file") ?? "?"}\` · ${loc}${region}${excerpt}${note ? `  \n> ✎ ${note}` : ""}`;
-  });
+  let out = markdown;
+  if (out.includes("<browser-context")) {
+    out = out.replace(BLOCK_RE, (_m, attrs: string, inner: string) => {
+      const lines = attrOf(attrs, "lines");
+      const loc = lines
+        ? `L${lines}`
+        : attrOf(attrs, "page")
+          ? `p.${attrOf(attrs, "page")}`
+          : attrOf(attrs, "slide")
+            ? `slide ${attrOf(attrs, "slide")}`
+            : (attrOf(attrs, "selector") ?? "");
+      const sel = selectionOf(inner).replace(/\s+/g, " ");
+      const note = /<note>([\s\S]*?)<\/note>/.exec(inner)?.[1]?.replace(/\s+/g, " ");
+      const excerpt = sel ? ` — “${sel.slice(0, 72)}${sel.length > 72 ? "…" : ""}”` : "";
+      const region = /\bregion="/.test(attrs) ? " ▭" : "";
+      return `> ⌖ \`${attrOf(attrs, "file") ?? "?"}\` · ${loc}${region}${excerpt}${note ? `  \n> ✎ ${note}` : ""}`;
+    });
+  }
+  if (out.includes("<follow-up")) {
+    out = out.replace(FOLLOW_UP_RE, (_m, attrs: string, inner: string) => {
+      const ref = attrOf(attrs, "ref") ?? "";
+      const pq = /<previous-question>([\s\S]*?)<\/previous-question>/.exec(inner)?.[1]?.replace(/\s+/g, " ").trim();
+      return `> ↳ ${ref}${pq ? ` — “${pq.slice(0, 72)}${pq.length > 72 ? "…" : ""}”` : ""}`;
+    });
+  }
+  return out;
 }
 
 /** Plain text of a message's content (text parts only). */

@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type Anchor, buildBlock, composeMessage, foldContexts, imageData, parseAsk, type Ref, textOf, withoutImage } from "./context.ts";
+import { type Anchor, buildBlock, buildFollowUpBlock, composeMessage, foldContexts, imageData, parseAsk, type Ref, textOf, withoutImage } from "./context.ts";
 import { CACHE_DIR, type Doc, displayPath, expandPath, kindOf, pruneCache } from "./docs.ts";
 import { baseUrl, broadcast, ensureServer, type Hub, hub, type Pin, statusPayload, stopServer } from "./hub.ts";
 import { createRouter, ensureDoc, HttpError, refreshRendition } from "./routes.ts";
@@ -13,6 +13,45 @@ import { describeTool, newId, pinPayload, publishThread, rebuildThreads, snapsho
 
 const WIDGET = "pi-webview";
 const PINS_ENTRY = "pi-webview-pins";
+const PI_ASR_SYMBOL = Symbol.for("pi.asr.v1");
+
+interface PiAsrService {
+  readonly version: number;
+  getStatus(): Promise<{ available: boolean; configured: boolean; modelId?: string; reason?: string }>;
+  transcribeAudio(
+    audio: Uint8Array,
+    options?: { mimeType?: string; signal?: AbortSignal },
+  ): Promise<{ text: string; warning?: string; modelId: string; seconds: number }>;
+}
+
+function getAsrService(): PiAsrService | undefined {
+  const svc = (globalThis as unknown as Record<symbol, unknown>)[PI_ASR_SYMBOL] as Partial<PiAsrService> | undefined;
+  if (!svc || svc.version !== 1 || typeof svc.getStatus !== "function" || typeof svc.transcribeAudio !== "function") {
+    return undefined;
+  }
+  return svc as PiAsrService;
+}
+
+async function queryAsrStatus() {
+  const svc = getAsrService();
+  if (!svc) return { available: false, configured: false, reason: "Pi Voice service is not loaded in this Pi session" };
+  return svc.getStatus();
+}
+
+async function transcribeWithAsr(body: Buffer, mimeType: string | undefined, signal: AbortSignal) {
+  const svc = getAsrService();
+  if (!svc) throw new HttpError(503, "Pi Voice service is not loaded. Enable pi-voice in Pi settings to use speech input.");
+  if (!body.byteLength) throw new HttpError(400, "Audio payload is empty");
+  try {
+    const result = await svc.transcribeAudio(body, { mimeType, signal });
+    return { text: result.text, ...(result.warning ? { warning: result.warning } : {}), modelId: result.modelId, seconds: result.seconds };
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    const message = e instanceof Error ? e.message : String(e);
+    const unavailable = /not configured|missing|shutting down|FFmpeg/i.test(message);
+    throw new HttpError(unavailable ? 503 : 500, message);
+  }
+}
 
 interface Target {
   line?: number;
@@ -174,7 +213,10 @@ async function deliverAsk(h: Hub, payload: unknown) {
 
   const pins = drainPins(h);
   const own = buildBlock(doc, anchor, { cwd: h.cwd, imagePath }).block;
-  const delivered = sendToPi(h, [...pins.blocks, own], req.question, image ? [...pins.images, image] : pins.images);
+  const prev = req.replyTo ? h.threads.find((t) => t.id === req.replyTo) : undefined;
+  const followUp = prev ? buildFollowUpBlock(prev.seq, prev.question, prev.parts) : undefined;
+  const blocks = [...pins.blocks, own, ...(followUp ? [followUp] : [])];
+  const delivered = sendToPi(h, blocks, req.question, image ? [...pins.images, image] : pins.images);
   publishPins(h);
   return { delivered, pinned: 0 };
 }
@@ -245,6 +287,8 @@ function installHandlers(h: Hub): void {
     editPin: (id, body) => editPin(h, id, body),
     deletePin: (id) => deletePin(h, id),
     snapshot: async () => ({ pins: h.pinned.map(pinPayload), threads: await snapshotThreads(h) }),
+    asrStatus: () => queryAsrStatus(),
+    asrTranscribe: (body, mime, signal) => transcribeWithAsr(body, mime, signal),
   });
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   h.onFsChange = (dir, name) => {

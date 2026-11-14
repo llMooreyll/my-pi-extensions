@@ -55,7 +55,7 @@
       <header><span class="no"></span><span class="loc"></span><button class="mode" title="Follow the selection when the page scrolls, or stay fixed on screen"></button></header>
       <div class="quote"></div>
       <textarea rows="3" placeholder="Ask about this…"></textarea>
-      <footer><span class="hint">Enter ask · Shift+Enter newline<br>Ctrl+Enter pin · Esc close</span><button class="pin" title="Pin: send with your next message">Pin</button><button class="ask">Ask →</button></footer>
+      <footer><span class="hint">Enter ask · Shift+Enter newline<br>Ctrl+Enter pin · Esc close</span><button class="mic" type="button" title="Voice input">🎙</button><button class="pin" title="Pin: send with your next message">Pin</button><button class="ask">Ask →</button></footer>
     </section>
     <aside class="panel" hidden>
       <header>
@@ -69,6 +69,7 @@
       <footer class="composer">
         <div class="attach" hidden></div>
         <textarea rows="2" placeholder="Message pi…"></textarea>
+        <button class="mic" type="button" title="Voice input">🎙</button>
         <button class="send">Send →</button>
       </footer>
     </aside>
@@ -234,21 +235,183 @@
     CSS.highlights.set("pv-pinned", new Highlight(...pinned));
   }
 
+  // ── voice input (delegated to Pi's system-wide pi-voice ASR service) ──
+  let activeMic = null; // { btn, stop, cancel }
+
+  function pickAudioMime() {
+    if (typeof MediaRecorder !== "function" || typeof MediaRecorder.isTypeSupported !== "function") return "";
+    return ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  }
+
+  function insertTranscript(ta, text) {
+    const clean = (text || "").trim();
+    if (!clean) return;
+    const start = typeof ta.selectionStart === "number" ? ta.selectionStart : ta.value.length;
+    const end = typeof ta.selectionEnd === "number" ? ta.selectionEnd : ta.value.length;
+    const before = ta.value.slice(0, start);
+    const after = ta.value.slice(end);
+    const lead = before && !/[\s\n]$/.test(before) ? " " : "";
+    const trail = after && !/^[\s\n]/.test(after) ? " " : "";
+    const inserted = `${lead}${clean}${trail}`;
+    ta.value = `${before}${inserted}${after}`;
+    const caret = before.length + inserted.length;
+    ta.focus();
+    ta.setSelectionRange?.(caret, caret);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function cancelActiveMic(container = null) {
+    if (!activeMic) return;
+    if (container && !container.contains(activeMic.btn)) return;
+    activeMic.cancel();
+  }
+
+  function attachMic(btn, ta) {
+    btn.addEventListener("click", async () => {
+      if (activeMic?.btn === btn) {
+        activeMic.stop();
+        return;
+      }
+      if (activeMic) activeMic.cancel();
+      if (btn.classList.contains("transcribing")) return;
+
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder !== "function") {
+        toast("Microphone recording is not supported in this browser", true);
+        return;
+      }
+
+      btn.classList.add("transcribing");
+      btn.textContent = "…";
+      let stream;
+      try {
+        const st = await api("/asr/status");
+        if (!st.available || !st.configured) {
+          throw new Error(st.reason || "Pi Voice is not configured. Run /voice-settings in pi.");
+        }
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        btn.classList.remove("transcribing");
+        btn.textContent = "🎙";
+        toast(String(e.message || e), true);
+        return;
+      }
+
+      const chunks = [];
+      let discarded = false;
+      const mimeType = pickAudioMime();
+      let recorder;
+      try {
+        recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      } catch (e) {
+        stream.getTracks().forEach((t) => t.stop());
+        btn.classList.remove("transcribing");
+        btn.textContent = "🎙";
+        toast(String(e.message || e), true);
+        return;
+      }
+
+      const releaseStream = () => stream.getTracks().forEach((t) => t.stop());
+      const resetBtn = () => {
+        btn.classList.remove("recording", "transcribing");
+        btn.textContent = "🎙";
+        btn.title = "Voice input";
+      };
+
+      const session = {
+        btn,
+        stop() {
+          if (recorder.state === "recording") recorder.stop();
+          releaseStream();
+          if (activeMic === session) activeMic = null;
+        },
+        cancel() {
+          discarded = true;
+          if (recorder.state === "recording") recorder.stop();
+          releaseStream();
+          if (activeMic === session) activeMic = null;
+          resetBtn();
+        },
+      };
+      activeMic = session;
+
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+      };
+      recorder.onerror = () => {
+        releaseStream();
+        if (activeMic === session) activeMic = null;
+        resetBtn();
+        toast("Microphone recording failed", true);
+      };
+      recorder.onstop = async () => {
+        releaseStream();
+        if (activeMic === session) activeMic = null;
+        if (discarded) return;
+        const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
+        if (!blob.size) {
+          resetBtn();
+          toast("No audio captured", true);
+          return;
+        }
+        btn.classList.remove("recording");
+        btn.classList.add("transcribing");
+        btn.textContent = "…";
+        btn.title = "Transcribing…";
+        try {
+          const res = await fetch(`${cfg.base}/asr`, {
+            method: "POST",
+            headers: { "content-type": blob.type || "application/octet-stream", accept: "application/json" },
+            body: blob,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+          if (data.text) insertTranscript(ta, data.text);
+          else toast("No speech detected");
+          if (data.warning) toast(data.warning);
+        } catch (e) {
+          toast(String(e.message || e), true);
+        } finally {
+          resetBtn();
+        }
+      };
+
+      btn.classList.remove("transcribing");
+      btn.classList.add("recording");
+      btn.textContent = "■";
+      btn.title = "Stop recording & transcribe";
+      recorder.start();
+    });
+  }
+
   // ── groups: one per distinct anchor on this page ──
   function buildGroups() {
     const map = new Map();
     const group = (anchor) => {
       const key = keyOf(anchor);
-      if (!map.has(key)) map.set(key, { key, anchor, threads: [], pins: [], pending: null });
+      if (!map.has(key)) map.set(key, { key, anchor, threads: [], pins: [], pending: [] });
       return map.get(key);
     };
     for (const t of threads) for (const r of t.refs) if (r.docId === cfg.doc) group(r.anchor).threads.push(t);
     for (const p of pins) if (p.docId === cfg.doc) group(p.anchor).pins.push(p);
-    for (const [key, p] of pending) {
-      if (map.get(key)?.threads.some((t) => t.at >= p.at - 5000)) pending.delete(key);
-      else group(p.anchor).pending = p;
+    for (const [key, list] of pending) {
+      const count = map.get(key)?.threads.length || 0;
+      const remaining = list.filter((p) => count <= p.baseCount);
+      if (remaining.length) {
+        pending.set(key, remaining);
+        group(remaining[0].anchor).pending = remaining;
+      } else {
+        pending.delete(key);
+      }
     }
     groups = [...map.values()];
+  }
+
+  function queuePending(key, anchor, question) {
+    const existing = groups.find((g) => g.key === key);
+    const list = pending.get(key) || [];
+    const baseCount = (existing?.threads.length || 0) + list.length;
+    list.push({ anchor, question, at: Date.now(), baseCount });
+    pending.set(key, list);
   }
 
   function render() {
@@ -265,15 +428,17 @@
     const drawers = $(".drawers");
     markers.replaceChildren();
     boxes.replaceChildren();
-    drawers.replaceChildren();
+    const existingDrawers = new Map([...drawers.querySelectorAll(".drawer")].map((el) => [el.dataset.key, el]));
+    const activeKeys = new Set();
+
     for (const g of groups) {
       const m = document.createElement("div");
       m.className = "marker";
       m.dataset.key = g.key;
-      const asked = g.threads.length + (g.pending ? 1 : 0);
+      const asked = g.threads.length + g.pending.length;
       if (asked) {
         const b = document.createElement("button");
-        b.className = `chip asked${g.pending || g.threads.some((t) => t.status === "running") ? " live" : ""}${openDrawers.has(g.key) ? " open" : ""}`;
+        b.className = `chip asked${g.pending.length || g.threads.some((t) => t.status === "running") ? " live" : ""}${openDrawers.has(g.key) ? " open" : ""}`;
         b.textContent = `◉ ${asked}`;
         b.title = "Answers here — click to expand";
         b.addEventListener("click", () => toggleDrawer(g.key));
@@ -295,7 +460,76 @@
         box.dataset.key = g.key;
         boxes.appendChild(box);
       }
-      if (openDrawers.has(g.key) && asked) drawers.appendChild(drawerEl(g));
+      if (openDrawers.has(g.key) && asked) {
+        activeKeys.add(g.key);
+        const existing = existingDrawers.get(g.key);
+        if (existing) syncDrawer(existing, g);
+        else drawers.appendChild(drawerEl(g));
+      }
+    }
+    for (const [k, d] of existingDrawers) {
+      if (!activeKeys.has(k)) {
+        cancelActiveMic(d);
+        d.remove();
+      }
+    }
+  }
+
+  function syncDrawer(d, g) {
+    d._group = g;
+    const title = d.querySelector(":scope > header span");
+    if (title) title.textContent = adapter?.label?.(g.anchor) || "";
+    const list = d.querySelector(".list");
+    const follow = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    const existingTh = new Map([...list.querySelectorAll("article.th[data-thread]")].map((el) => [el.dataset.thread, el]));
+    const nodes = g.threads.map((t) => {
+      const el = existingTh.get(t.id);
+      if (el) {
+        fillThread(el, t);
+        return el;
+      }
+      return threadEl(t, false);
+    });
+    for (const p of g.pending) nodes.push(pendingEl(p));
+    list.replaceChildren(...nodes);
+    if (follow) list.scrollTop = list.scrollHeight;
+    const ta = d.querySelector("footer.follow textarea");
+    if (ta) {
+      const last = g.threads[g.threads.length - 1];
+      ta.placeholder = last?.seq ? `Follow up on #${last.seq}…` : "Follow up…";
+    }
+  }
+
+  async function sendFollowUp(d) {
+    if (d.classList.contains("sending")) return;
+    const g = d._group;
+    const ta = d.querySelector("footer.follow textarea");
+    const question = ta.value.trim();
+    if (!question) {
+      shake(d);
+      ta.focus();
+      return;
+    }
+    const { image: _image, preview: _preview, ...anchor } = g.anchor;
+    const last = g.threads[g.threads.length - 1];
+    const replyTo = last?.id;
+    d.classList.add("sending");
+    try {
+      const data = await api("/ask", {
+        method: "POST",
+        body: JSON.stringify({ doc: cfg.doc, mode: "ask", question, anchor, ...(replyTo ? { replyTo } : {}) }),
+      });
+      ta.value = "";
+      queuePending(g.key, anchor, question);
+      render();
+      const list = d.querySelector(".list");
+      list.scrollTop = list.scrollHeight;
+      toast(data.delivered === "now" ? "→ Sent to pi" : "→ Queued — pi is busy");
+    } catch (e) {
+      toast(String(e.message || e), true);
+    } finally {
+      d.classList.remove("sending");
+      ta.focus();
     }
   }
 
@@ -303,9 +537,9 @@
     const d = document.createElement("section");
     d.className = "drawer";
     d.dataset.key = g.key;
+    d._group = g;
     const head = document.createElement("header");
     const label = document.createElement("span");
-    label.textContent = adapter?.label?.(g.anchor) || "";
     const close = document.createElement("button");
     close.textContent = "✕";
     close.title = "Collapse";
@@ -313,9 +547,26 @@
     head.append(label, close);
     const list = document.createElement("div");
     list.className = "list";
-    for (const t of g.threads) list.appendChild(threadEl(t, false));
-    if (g.pending) list.appendChild(pendingEl(g.pending));
-    d.append(head, list);
+    const foot = document.createElement("footer");
+    foot.className = "follow";
+    foot.innerHTML = `<textarea rows="1" placeholder="Follow up…"></textarea><button class="mic" type="button" title="Voice input">🎙</button><button class="ask" type="button">Ask →</button>`;
+    const ta = foot.querySelector("textarea");
+    const mic = foot.querySelector(".mic");
+    const askBtn = foot.querySelector(".ask");
+    attachMic(mic, ta);
+    askBtn.addEventListener("click", () => sendFollowUp(d));
+    ta.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendFollowUp(d);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        toggleDrawer(d._group.key);
+      }
+    });
+    d.append(head, list, foot);
+    syncDrawer(d, g);
     return d;
   }
 
@@ -334,7 +585,7 @@
     const el = document.createElement("article");
     el.className = "th";
     el.dataset.thread = t.id;
-    el.innerHTML = `<header><span class="st"></span><time></time></header><ul class="refs"></ul><p class="q"></p><div class="a md"></div><div class="act"></div>`;
+    el.innerHTML = `<header><span class="num"></span><span class="st"></span><span class="reply-ref" hidden></span><time></time></header><ul class="refs"></ul><p class="q"></p><div class="a md"></div><div class="act"></div>`;
     if (withRefs) {
       const ul = el.querySelector(".refs");
       for (const r of t.refs) {
@@ -353,7 +604,14 @@
 
   function fillThread(el, t) {
     el.dataset.status = t.status;
+    const num = el.querySelector(".num");
+    if (num) num.textContent = t.seq ? `#${t.seq}` : "";
     el.querySelector(".st").textContent = STATUS[t.status] || t.status;
+    const ref = el.querySelector(".reply-ref");
+    if (ref) {
+      ref.textContent = t.replyToSeq ? `↳ #${t.replyToSeq}` : "";
+      ref.hidden = !t.replyToSeq;
+    }
     el.querySelector("time").textContent = time(t.at);
     const q = el.querySelector(".q");
     q.textContent = t.question || (t.refs.length ? "(references only)" : "");
@@ -399,6 +657,7 @@
     }
   }
   function closePanel() {
+    cancelActiveMic(panel);
     panel.hidden = true;
   }
 
@@ -524,6 +783,7 @@
       toast(e.message, true);
     }
   }
+  attachMic($(".composer .mic"), composer);
   $(".send").addEventListener("click", sendComposer);
   composer.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
@@ -561,8 +821,18 @@
       else {
         const wire = $('.scroll[data-of="wire"]');
         const follow = wire.scrollHeight - wire.scrollTop - wire.clientHeight < 40;
-        for (const el of root.querySelectorAll(`[data-thread="${t.id}"]`)) fillThread(el, t);
+        const drawerFollows = new Map();
+        for (const el of root.querySelectorAll(`[data-thread="${t.id}"]`)) {
+          const dList = el.closest(".drawer .list");
+          if (dList && !drawerFollows.has(dList)) {
+            drawerFollows.set(dList, dList.scrollHeight - dList.scrollTop - dList.clientHeight < 40);
+          }
+          fillThread(el, t);
+        }
         if (follow) wire.scrollTop = wire.scrollHeight;
+        for (const [dList, stick] of drawerFollows) {
+          if (stick) dList.scrollTop = dList.scrollHeight;
+        }
         schedule();
       }
     } else {
@@ -578,6 +848,7 @@
     es = new EventSource(`${cfg.base}/events?doc=${encodeURIComponent(cfg.doc)}`);
     const on = (name, fn) => es.addEventListener(name, (e) => fn(e.data ? JSON.parse(e.data) : {}));
     on("hello", (s) => {
+      pending.clear();
       setStatus({ ...s, online: true });
       threads = s.threads || [];
       setPins(s.pins || []);
@@ -585,6 +856,7 @@
     on("status", (s) => setStatus({ ...s, online: true }));
     on("pins", setPins);
     on("threads", (list) => {
+      pending.clear();
       threads = list;
       render();
     });
@@ -836,6 +1108,7 @@
 
   function closeSlip() {
     if (slip.hidden) return;
+    cancelActiveMic(slip);
     slip.hidden = true;
     current?.onClose?.();
     current = null;
@@ -858,7 +1131,7 @@
       } else {
         const { image: _image, preview: _preview, ...anchor } = job.anchor;
         const key = keyOf(anchor);
-        pending.set(key, { anchor, question, at: Date.now() });
+        queuePending(key, anchor, question);
         openDrawers.add(key);
         render();
         toast(data.delivered === "now" ? "→ Sent to pi" : "→ Queued — pi is busy");
@@ -876,6 +1149,7 @@
     }
   }
 
+  attachMic($(".slip .mic"), slipText);
   $(".slip .ask").addEventListener("click", () => send("ask"));
   $(".slip .pin").addEventListener("click", () => send("pin"));
   slipText.addEventListener("keydown", (e) => {

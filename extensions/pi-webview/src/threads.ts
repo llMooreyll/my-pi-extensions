@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { parseBlocks, type Ref, stripBlocks, textOf, withoutImage } from "./context.ts";
+import { parseBlocks, parseFollowUpSeq, type Ref, stripBlocks, textOf, withoutImage } from "./context.ts";
 import { broadcast, type Hub, type Pin, type Thread } from "./hub.ts";
 import { renderReply } from "./render.ts";
 
@@ -26,7 +26,17 @@ export async function threadPayload(t: Thread) {
     t.dirty = false;
     t.html = await renderReply(replyText(t));
   }
-  return { id: t.id, refs: t.refs.map(refPayload), question: t.question, html: t.html, status: t.status, activity: t.activity, at: t.at };
+  return {
+    id: t.id,
+    seq: t.seq,
+    ...(t.replyToSeq ? { replyToSeq: t.replyToSeq } : {}),
+    refs: t.refs.map(refPayload),
+    question: t.question,
+    html: t.html,
+    status: t.status,
+    activity: t.activity,
+    at: t.at,
+  };
 }
 
 /** Push a thread to the pages; streaming updates are coalesced. */
@@ -53,7 +63,20 @@ export function publishThread(h: Hub, t: Thread, now = false): void {
 export function startThread(h: Hub, text: string, cwd: string, at = Date.now()): Thread {
   const refs = parseBlocks(text, cwd);
   for (const r of refs) h.knownPaths.set(r.docId, r.path);
-  const t: Thread = { id: newId(), refs, question: stripBlocks(text).slice(0, 4000), parts: [], live: "", status: "running", at, dirty: true };
+  const seq = h.nextSeq++;
+  const replyToSeq = parseFollowUpSeq(text);
+  const t: Thread = {
+    id: newId(),
+    seq,
+    ...(replyToSeq ? { replyToSeq } : {}),
+    refs,
+    question: stripBlocks(text).slice(0, 4000),
+    parts: [],
+    live: "",
+    status: "running",
+    at,
+    dirty: true,
+  };
   h.threads.push(t);
   if (h.threads.length > MAX_THREADS) h.threads.splice(0, h.threads.length - MAX_THREADS);
   return t;
@@ -67,6 +90,7 @@ interface MessageEntry {
 /** Rebuild all threads from the active session branch, so a resumed session shows its earlier answers. */
 export function rebuildThreads(h: Hub, entries: readonly unknown[], cwd: string): void {
   h.threads = [];
+  h.nextSeq = 1;
   h.activeThread = undefined;
   let current: Thread | undefined;
   for (const e of entries as MessageEntry[]) {

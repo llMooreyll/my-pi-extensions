@@ -24,6 +24,10 @@ export type ThreadStatus = "running" | "done" | "aborted";
 /** One user message and the assistant output that followed it. */
 export interface Thread {
   id: string;
+  /** 1-based deterministic turn number within the active session branch. */
+  seq: number;
+  /** Referenced earlier thread number when this message is a follow-up. */
+  replyToSeq?: number;
   refs: Ref[];
   question: string;
   /** Finished assistant texts of this run. */
@@ -58,6 +62,7 @@ export interface Hub {
   heartbeat?: ReturnType<typeof setInterval>;
   pinned: Pin[];
   threads: Thread[];
+  nextSeq: number;
   activeThread?: Thread;
   /** Paths of documents referenced in session history, so their links work before they are opened. */
   knownPaths: Map<string, string>;
@@ -81,6 +86,7 @@ export function hub(): Hub {
     watchers: new Map(),
     pinned: [],
     threads: [],
+    nextSeq: 1,
     knownPaths: new Map(),
     busy: false,
     session: "pi",
@@ -88,6 +94,7 @@ export function hub(): Hub {
   const h = g[HUB_KEY]!;
   // A hub created by an older version of this extension survives /reload; fill in newer fields.
   h.threads ??= [];
+  h.nextSeq ??= h.threads.length + 1;
   h.knownPaths ??= new Map();
   h.pinned = h.pinned.filter((p) => p && typeof p === "object" && "ref" in p);
   return h;

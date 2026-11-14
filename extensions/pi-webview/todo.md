@@ -1,2 +1,2 @@
-add a continue ask function
-add a asr
+- [x] add a continue ask function
+- [x] add a asr

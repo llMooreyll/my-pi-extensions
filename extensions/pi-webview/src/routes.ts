@@ -60,6 +60,10 @@ export interface RouteDeps {
   deletePin(id: string | undefined): unknown;
   /** Pins and threads for a freshly connected page. */
   snapshot(): Promise<Record<string, unknown>>;
+  /** Check whether system-wide Pi ASR service is available and configured. */
+  asrStatus(): Promise<unknown>;
+  /** Transcribe recorded audio bytes via system-wide Pi ASR service. */
+  asrTranscribe(body: Buffer, mimeType: string | undefined, signal: AbortSignal): Promise<unknown>;
 }
 
 function send(res: ServerResponse, status: number, body: string, type = "text/plain; charset=utf-8"): void {
@@ -143,6 +147,17 @@ async function readJson(req: IncomingMessage, limit: number): Promise<unknown> {
   } catch {
     throw new HttpError(400, "Invalid JSON");
   }
+}
+
+async function readBinary(req: IncomingMessage, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > limit) throw new HttpError(413, "Audio payload too large");
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks, size);
 }
 
 /** Documents referenced from session history open on demand, as long as the file still exists. */
@@ -292,6 +307,29 @@ async function handle(h: Hub, deps: RouteDeps, req: IncomingMessage, res: Server
       if (method === "PATCH" && id) return sendJson(res, 200, deps.editPin(id, await readJson(req, 1024 * 1024)));
       if (method === "DELETE") return sendJson(res, 200, deps.deletePin(id));
       throw new HttpError(405, "PATCH /pins/:id or DELETE /pins[/:id]");
+
+    case "asr": {
+      if (id === "status" && !rest.length) {
+        if (method !== "GET") throw new HttpError(405, "GET only");
+        return sendJson(res, 200, await deps.asrStatus());
+      }
+      if (!id && !rest.length) {
+        if (method !== "POST") throw new HttpError(405, "POST only");
+        const ac = new AbortController();
+        const onClose = () => {
+          if (!res.writableEnded) ac.abort(new Error("Request aborted"));
+        };
+        res.on("close", onClose);
+        try {
+          const body = await readBinary(req, 32 * 1024 * 1024);
+          const mime = typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : undefined;
+          return sendJson(res, 200, await deps.asrTranscribe(body, mime, ac.signal));
+        } finally {
+          res.off("close", onClose);
+        }
+      }
+      throw new HttpError(404, `Not found: /asr/${id ?? ""}`);
+    }
 
     default:
       throw new HttpError(404, `Not found: ${area}`);
