@@ -93,6 +93,39 @@ function goto({ line }) {
   if (best) scrollToEl(best.closest("pre") || best);
 }
 
+function collectMdBlocks(dragRect) {
+  const hits = [];
+  for (const el of docEl.querySelectorAll("[data-line]")) {
+    const target = el.tagName === "CODE" && el.parentElement?.tagName === "PRE" ? el.parentElement : el;
+    const r = PV.rectOf(target);
+    if (!r) continue;
+    const inter = PV.clipToRect(r, dragRect);
+    if (!inter) continue;
+    const cov = PV.rectArea(inter) / Math.max(1, PV.rectArea(r));
+    const vCov = inter.height / Math.max(1, r.height);
+    if (cov >= 0.3 || (vCov >= 0.6 && inter.width >= 20)) {
+      hits.push({ el, rect: r, coverage: Math.max(cov, vCov * 0.85) });
+    }
+  }
+  const kept = PV.pruneElements(hits, dragRect, docEl);
+  const rects = kept.map((k) => k.rect);
+  return { kept, rects, bbox: PV.unionRects(rects) };
+}
+
+function mergeLineRanges(blocks) {
+  const raw = blocks
+    .map((el) => [lineOf(el), Math.max(lineOf(el), endOf(el))])
+    .filter(([s]) => s > 0)
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const merged = [];
+  for (const [s, e] of raw) {
+    const prev = merged[merged.length - 1];
+    if (prev && s <= prev[1] + 1) prev[1] = Math.max(prev[1], e);
+    else merged.push([s, e]);
+  }
+  return merged;
+}
+
 PV.register({
   fromSelection(sel, range) {
     const a = elOf(range.startContainer)?.closest("[data-line]");
@@ -107,6 +140,47 @@ PV.register({
     const start = Math.min(lineOf(a), lineOf(b));
     const end = Math.max(endOf(a), endOf(b), start);
     return { kind: "md", text: PV.rangeText(range), lines: [start, end], headings: headingPath(start) };
+  },
+  marquee: {
+    preview(dragRect) {
+      const { kept, rects, bbox } = collectMdBlocks(dragRect);
+      if (!kept.length || !bbox) return null;
+      const ranges = mergeLineRanges(kept.map((k) => k.el));
+      const label = ranges.length
+        ? `${kept.length} block${kept.length > 1 ? "s" : ""} · L${ranges[0][0]}${ranges[ranges.length - 1][1] > ranges[0][0] ? `–${ranges[ranges.length - 1][1]}` : ""}`
+        : "";
+      return { rects, bbox, label };
+    },
+    finish(dragRect) {
+      const { kept, rects, bbox } = collectMdBlocks(dragRect);
+      if (!kept.length || !bbox) return null;
+      const els = kept.map((k) => k.el);
+      const ranges = mergeLineRanges(els);
+      if (!ranges.length) return null;
+      const start = ranges[0][0];
+      const end = ranges[ranges.length - 1][1];
+      const text = els
+        .map((e) => (e.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 5000);
+      return {
+        anchor: {
+          kind: "md",
+          text,
+          lines: [start, end],
+          ...(ranges.length > 1 ? { ranges } : {}),
+          box: true,
+          headings: headingPath(start),
+        },
+        rects,
+        bbox,
+        label: `L${start}${end > start ? `–${end}` : ""}`,
+        rectFn: () => PV.smartAnchorRect(els.map((e) => PV.rectOf(e.closest("pre") || e)).filter(Boolean)) || bbox,
+        subRectsFn: () => els.map((e) => PV.rectOf(e.closest("pre") || e)).filter(Boolean),
+        fullRectFn: () => PV.unionRects(els.map((e) => PV.rectOf(e.closest("pre") || e)).filter(Boolean)) || bbox,
+      };
+    },
   },
   label(anchor) {
     if (anchor.kind !== "md") return "";
@@ -129,6 +203,24 @@ PV.register({
     const blocks = [...docEl.querySelectorAll("[data-line]")];
     const block = blocks.find((el) => lineOf(el) === start) || blocks.filter((el) => lineOf(el) <= start).pop();
     if (!block) return null;
+    if (anchor.box || anchor.ranges?.length) {
+      const ranges = anchor.ranges?.length ? anchor.ranges : [[start, end]];
+      const matched = blocks.filter((el) => {
+        const s = lineOf(el);
+        const e = endOf(el);
+        return ranges.some(([rs, re]) => s >= rs && e <= re);
+      });
+      const els = matched.length ? matched : [block];
+      const subRects = () => els.map((el) => PV.rectOf(el.closest("pre") || el)).filter(Boolean);
+      return {
+        els,
+        el: els[0],
+        box: true,
+        subRects,
+        fullRect: () => PV.unionRects(subRects()),
+        rect: () => PV.smartAnchorRect(subRects()),
+      };
+    }
     const range = anchor.text ? PV.findText(docEl, anchor.text, block) : null;
     // A highlight over the drop cap paints a tall box above it; start after the initial letter.
     if (range?.startOffset === 0 && range.startContainer.parentElement?.closest("p.pv-lead") && !range.startContainer.previousSibling) range.setStart(range.startContainer, 1);

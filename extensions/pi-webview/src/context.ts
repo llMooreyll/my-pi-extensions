@@ -2,10 +2,17 @@ import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { type Doc, displayPath, docId, expandPath, pageUnit } from "./docs.ts";
 
+export interface HtmlItem {
+  selector: string;
+  tag?: string;
+  outer?: string;
+  hint: { id?: string; classes: string[]; text?: string };
+}
+
 export type Anchor =
-  | { kind: "md"; text: string; lines: [number, number]; headings: string[] }
+  | { kind: "md"; text: string; lines: [number, number]; ranges?: Array<[number, number]>; box?: boolean; headings: string[] }
   | { kind: "pdf"; text: string; page: number; context: string; region?: number[]; image?: string }
-  | { kind: "html"; text: string; selector: string; tag?: string; outer?: string; hint: { id?: string; classes: string[]; text?: string } };
+  | { kind: "html"; text: string; selector: string; tag?: string; outer?: string; hint: { id?: string; classes: string[]; text?: string }; items?: HtmlItem[] };
 
 export interface AskRequest {
   doc: string;
@@ -56,7 +63,26 @@ export function parseAsk(body: unknown): AskRequest {
     const start = posInt(lines[0]);
     if (!start) throw new Error("Markdown reference without a line number");
     const end = Math.max(start, posInt(lines[1]) ?? start);
-    return { doc, mode, question, replyTo, anchor: { kind: "md", text, lines: [start, end], headings: strList(a.headings, 6, 160) } };
+    const ranges = Array.isArray(a.ranges)
+      ? a.ranges
+          .slice(0, 32)
+          .map((r) => (Array.isArray(r) ? [posInt(r[0]), posInt(r[1])] : []))
+          .filter((r): r is [number, number] => !!r[0] && !!r[1] && r[1] >= r[0])
+      : undefined;
+    return {
+      doc,
+      mode,
+      question,
+      replyTo,
+      anchor: {
+        kind: "md",
+        text,
+        lines: [start, end],
+        ...(ranges && ranges.length > 1 ? { ranges } : {}),
+        ...(a.box === true ? { box: true } : {}),
+        headings: strList(a.headings, 6, 160),
+      },
+    };
   }
   if (a.kind === "pdf") {
     const page = posInt(a.page);
@@ -75,7 +101,25 @@ export function parseAsk(body: unknown): AskRequest {
     };
   }
   if (a.kind === "html") {
-    const selector = str(a.selector, 600);
+    const parseHtmlItem = (raw: Record<string, unknown>): HtmlItem | undefined => {
+      const selector = str(raw.selector, 600);
+      if (!selector) return undefined;
+      const hint = (raw.hint && typeof raw.hint === "object" ? raw.hint : {}) as Record<string, unknown>;
+      return {
+        selector,
+        tag: str(raw.tag, 40) || undefined,
+        outer: str(raw.outer, 200) || undefined,
+        hint: { id: str(hint.id, 200) || undefined, classes: strList(hint.classes, 8, 80), text: str(hint.text, 120) || undefined },
+      };
+    };
+    const items = Array.isArray(a.items)
+      ? a.items
+          .slice(0, 32)
+          .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+          .map(parseHtmlItem)
+          .filter((x): x is HtmlItem => !!x)
+      : undefined;
+    const selector = str(a.selector, 600) || items?.[0]?.selector || "";
     if (!selector) throw new Error("HTML reference without a selector");
     const hint = (a.hint && typeof a.hint === "object" ? a.hint : {}) as Record<string, unknown>;
     return {
@@ -90,6 +134,7 @@ export function parseAsk(body: unknown): AskRequest {
         tag: str(a.tag, 40) || undefined,
         outer: str(a.outer, 200) || undefined,
         hint: { id: str(hint.id, 200) || undefined, classes: strList(hint.classes, 8, 80), text: str(hint.text, 120) || undefined },
+        ...(items && items.length > 1 ? { items } : {}),
       },
     };
   }
@@ -459,7 +504,8 @@ function labelFor(file: string, anchor: Anchor, unit: "page" | "slide", lines?: 
   }
   if (anchor.kind === "pdf") return `${file} · ${unit === "slide" ? "slide " : "p."}${anchor.page}${anchor.region ? " ▭" : ""}`;
   const ln = lines ? `:${lines[0]}` : "";
-  return `${file}${ln} · ${shortSelector(anchor.selector)}`;
+  const count = anchor.items?.length && anchor.items.length > 1 ? `${anchor.items.length}× ` : "";
+  return `${file}${ln} · ${count}${shortSelector(anchor.selector)}`;
 }
 
 export interface BuiltBlock {
@@ -476,11 +522,14 @@ export function buildBlock(doc: Doc, anchor: Anchor, opts: { cwd?: string; note?
 
   if (anchor.kind === "md") {
     const [s, e] = anchor.lines;
-    head = `<browser-context kind="md" file="${attr(file)}" lines="${s}-${e}">`;
+    const ranges = anchor.ranges?.length ? anchor.ranges : [[s, e] as [number, number]];
+    head = `<browser-context kind="md" file="${attr(file)}" lines="${s}-${e}"${ranges.length > 1 ? ` count="${ranges.length}"` : ""}>`;
     if (anchor.headings.length) parts.push(`<heading-path>${body(anchor.headings.join(" › "))}</heading-path>`);
     if (anchor.text.trim()) parts.push(`<selection>\n${body(anchor.text.trim())}\n</selection>`);
-    const src = readSourceLines(doc.path, s, e);
-    if (src !== undefined) parts.push(`<source lines="${s}-${e}">\n${body(src)}\n</source>`);
+    for (const [rs, re] of ranges) {
+      const src = readSourceLines(doc.path, rs, re);
+      if (src !== undefined) parts.push(`<source lines="${rs}-${re}">\n${body(src)}\n</source>`);
+    }
   } else if (anchor.kind === "pdf") {
     const kind = doc.kind === "office" ? extname(doc.path).slice(1).toLowerCase() : "pdf";
     const region = anchor.region ? ` region="${anchor.region.map((n) => n.toFixed(3)).join(",")}"` : "";
@@ -489,6 +538,42 @@ export function buildBlock(doc: Doc, anchor: Anchor, opts: { cwd?: string; note?
     if (anchor.context.trim()) parts.push(`<surrounding>\n${body(anchor.context.trim())}\n</surrounding>`);
     if (anchor.region) {
       parts.push(`<region-note>The user marked a region of this ${unit} (x,y,w,h as fractions of the ${unit})${opts.imagePath ? `; screenshot: ${opts.imagePath}` : ""}</region-note>`);
+    }
+  } else if (anchor.items?.length && anchor.items.length > 1) {
+    let minLine = Infinity;
+    let maxLine = 0;
+    let anyDynamic = false;
+    let firstScriptLine: number | undefined;
+    const itemLines: string[] = [];
+
+    anchor.items.forEach((item, idx) => {
+      const loc = locateHtml(doc.path, item.selector, item.hint);
+      if (loc.lines) {
+        minLine = Math.min(minLine, loc.lines[0]);
+        maxLine = Math.max(maxLine, loc.lines[1]);
+      }
+      if (loc.dynamic) {
+        anyDynamic = true;
+        firstScriptLine ??= loc.scriptLine;
+      }
+      const lAttr = loc.lines ? (loc.lines[0] === loc.lines[1] ? ` line="${loc.lines[0]}"` : ` lines="${loc.lines[0]}-${loc.lines[1]}"`) : "";
+      const dAttr = loc.dynamic ? ` dynamic="true"${loc.scriptLine ? ` script-line="${loc.scriptLine}"` : ""}` : "";
+      itemLines.push(`<item index="${idx + 1}"${lAttr}${dAttr} selector="${attr(item.selector)}">${item.outer ? body(item.outer) : ""}</item>`);
+    });
+
+    if (minLine <= maxLine) htmlLines = [minLine, maxLine];
+    const spanAttr = htmlLines ? (htmlLines[0] === htmlLines[1] ? ` line="${htmlLines[0]}"` : ` lines="${htmlLines[0]}-${htmlLines[1]}"`) : "";
+    const dynAttr = anyDynamic ? ` dynamic="true"${firstScriptLine ? ` script-line="${firstScriptLine}"` : ""}` : "";
+    head = `<browser-context kind="html" file="${attr(file)}"${spanAttr}${dynAttr} count="${anchor.items.length}" selector="${attr(anchor.selector)}">`;
+    parts.push(...itemLines);
+    if (anyDynamic) {
+      parts.push(
+        `<note>${
+          firstScriptLine
+            ? `One or more elements were not found in static HTML (likely rendered dynamically by script near line ${firstScriptLine}). Read around that script line instead of scanning static HTML.`
+            : "One or more elements were not found in static HTML (likely rendered dynamically by script). Check <script> or linked JS/template files instead of scanning static HTML."
+        }</note>`,
+      );
     }
   } else {
     const loc = locateHtml(doc.path, anchor.selector, anchor.hint);
@@ -582,10 +667,37 @@ export function parseBlocks(text: string, cwd: string): Ref[] {
     const page = attrOf(attrs, "page") ?? attrOf(attrs, "slide");
     const selector = attrOf(attrs, "selector");
     if (selector || kind === "html") {
-      if (selector) anchor = { kind: "html", text: selection, selector, hint: { classes: [] } };
+      if (selector) {
+        const items: HtmlItem[] = [];
+        for (const im of inner.matchAll(/<item((?:\s+[\w-]+="[^"]*")*)\s*>[\s\S]*?<\/item>/g)) {
+          const isel = attrOf(im[1] ?? "", "selector");
+          if (isel) items.push({ selector: isel, hint: { classes: [] } });
+        }
+        anchor = {
+          kind: "html",
+          text: selection,
+          selector,
+          hint: { classes: [] },
+          ...(items.length > 1 ? { items } : {}),
+        };
+      }
     } else if (lines) {
       const [s = 0, e = s] = lines.split("-").map(Number);
-      if (s > 0) anchor = { kind: "md", text: selection, lines: [s, Math.max(s, e)], headings: [] };
+      if (s > 0) {
+        const ranges: Array<[number, number]> = [];
+        for (const sm of inner.matchAll(/<source\s+lines="(\d+)-(\d+)"/g)) {
+          const rs = Number(sm[1]);
+          const re = Number(sm[2]);
+          if (rs > 0) ranges.push([rs, Math.max(rs, re)]);
+        }
+        anchor = {
+          kind: "md",
+          text: selection,
+          lines: [s, Math.max(s, e)],
+          ...(ranges.length > 1 ? { ranges, box: true } : {}),
+          headings: [],
+        };
+      }
     } else if (page) {
       if (attrOf(attrs, "slide")) unit = "slide";
       const region = attrOf(attrs, "region")?.split(",").map(Number);
@@ -621,9 +733,10 @@ export function foldContexts(markdown: string): string {
       const lines = attrOf(attrs, "lines");
       const line = attrOf(attrs, "line");
       const selector = attrOf(attrs, "selector");
+      const count = Number(attrOf(attrs, "count")) || 0;
       const lineLabel = lines ? `L${lines}` : line ? `L${line}` : "";
       const loc = selector
-        ? `${lineLabel ? `${lineLabel} · ` : ""}${selector}`
+        ? `${lineLabel ? `${lineLabel} · ` : ""}${count > 1 ? `${count}× ` : ""}${selector}`
         : lineLabel
           ? lineLabel
           : attrOf(attrs, "page")

@@ -109,6 +109,32 @@ button.mic.transcribing { background: var(--ink); color: var(--paper); opacity: 
 .box { position: fixed; pointer-events: none; }
 .box.asked { outline: 2px solid var(--signal); background: color-mix(in srgb, var(--signal) 6%, transparent); }
 .box.pinned { outline: 2px dashed var(--blue); background: color-mix(in srgb, var(--blue) 7%, transparent); }
+.box.sub.asked { outline: 1px dotted color-mix(in srgb, var(--signal) 70%, transparent); background: color-mix(in srgb, var(--signal) 4%, transparent); }
+.box.sub.pinned { outline: 1px dotted color-mix(in srgb, var(--blue) 70%, transparent); background: color-mix(in srgb, var(--blue) 4%, transparent); }
+
+/* ───────── Ctrl+drag marquee & smart minimum bounding box ───────── */
+
+.marquee-drag {
+  position: fixed; pointer-events: none;
+  border: 1.5px dashed var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+}
+.marquee-hit {
+  position: fixed; pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--signal) 75%, transparent);
+  background: color-mix(in srgb, var(--signal) 8%, transparent);
+}
+.marquee-bbox {
+  position: fixed; pointer-events: none;
+  border: 2px solid var(--signal);
+  background: color-mix(in srgb, var(--signal) 5%, transparent);
+}
+.marquee-badge {
+  position: absolute; left: -2px; bottom: 100%; max-width: 56ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 3px 6px 2px; background: var(--signal); color: #000;
+  font: 800 9.5px/1 var(--mono); letter-spacing: .06em;
+}
 
 /* ───────── drawer: answers unfolded in place ───────── */
 

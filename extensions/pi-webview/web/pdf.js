@@ -100,7 +100,7 @@ function capture(page, r, pr) {
 container.addEventListener(
   "pointerdown",
   (e) => {
-    if (!(regionMode || e.altKey) || e.button !== 0) return;
+    if (!(regionMode || e.altKey) || e.ctrlKey || e.button !== 0) return;
     const page = e.target.closest?.(".page");
     if (!page) return;
     e.preventDefault();
@@ -122,9 +122,18 @@ container.addEventListener(
     const up = () => {
       removeEventListener("pointermove", move);
       setRegion(false);
-      if (r.w < 8 || r.h < 8) return box.remove();
+      box.remove();
+      if (r.w < 8 || r.h < 8) return;
       const anchor = capture(page, r, pr);
-      PV.openSlip(anchor, { rect: () => box.getBoundingClientRect(), onClose: () => box.remove() });
+      const [rx, ry, rw, rh] = anchor.region;
+      const pageNum = anchor.page;
+      const liveRect = () => {
+        const p = pageEl(pageNum);
+        if (!p) return null;
+        const rect = p.getBoundingClientRect();
+        return new DOMRect(rect.left + rx * rect.width, rect.top + ry * rect.height, rw * rect.width, rh * rect.height);
+      };
+      PV.openSlip(anchor, { rect: liveRect, fullRect: liveRect, showBox: true, label: `${unitLabel} ${pageNum} · ▭` });
     };
     addEventListener("pointermove", move);
     addEventListener("pointerup", up, { once: true });
@@ -174,6 +183,48 @@ addEventListener("resize", () => {
   if (viewer && !userScaled) viewer.currentScaleValue = "page-width";
 });
 
+function collectPdfRegion(dragRect) {
+  let bestPage = null;
+  let bestPr = null;
+  let bestInter = null;
+  let bestArea = 0;
+  for (const p of container.querySelectorAll(".page")) {
+    const pr = p.getBoundingClientRect();
+    const inter = PV.clipToRect(pr, dragRect);
+    const a = PV.rectArea(inter);
+    if (a > bestArea) {
+      bestArea = a;
+      bestPage = p;
+      bestPr = pr;
+      bestInter = inter;
+    }
+  }
+  if (!bestPage || !bestPr || !bestInter || bestInter.width < 4 || bestInter.height < 4) return null;
+
+  const spanRects = [];
+  for (const s of bestPage.querySelectorAll(".textLayer span")) {
+    if (!s.textContent || !s.textContent.trim()) continue;
+    const sr = s.getBoundingClientRect();
+    if (sr.width <= 0.5 || sr.height <= 0.5) continue;
+    const inter = PV.clipToRect(sr, bestInter);
+    if (!inter) continue;
+    const cov = PV.rectArea(inter) / Math.max(1, PV.rectArea(sr));
+    const cx = (sr.left + sr.right) / 2;
+    const cy = (sr.top + sr.bottom) / 2;
+    const centerIn = cx >= bestInter.left && cx <= bestInter.right && cy >= bestInter.top && cy <= bestInter.bottom;
+    if (cov >= 0.35 || centerIn) spanRects.push(sr);
+  }
+
+  let bbox = PV.unionRects(spanRects);
+  if (bbox) {
+    const pad = 3;
+    bbox = PV.clipToRect(new DOMRect(bbox.left - pad, bbox.top - pad, bbox.width + pad * 2, bbox.height + pad * 2), bestPr) || bestInter;
+  } else {
+    bbox = bestInter;
+  }
+  return { page: bestPage, pageNum: Number(bestPage.dataset.pageNumber), pr: bestPr, rects: spanRects, bbox };
+}
+
 PV.register({
   fromSelection(sel, range) {
     const page = elOf(range.startContainer)?.closest(".page");
@@ -181,6 +232,39 @@ PV.register({
     const n = Number(page.dataset.pageNumber);
     const text = sel.toString();
     return { kind: "pdf", text, page: n, context: surrounding(n, text) };
+  },
+  marquee: {
+    preview(dragRect) {
+      const hit = collectPdfRegion(dragRect);
+      if (!hit) return null;
+      return {
+        rects: hit.rects,
+        bbox: hit.bbox,
+        label: `${unitLabel} ${hit.pageNum}${hit.rects.length ? ` · ${hit.rects.length} spans` : " · ▭"}`,
+      };
+    },
+    finish(dragRect) {
+      const hit = collectPdfRegion(dragRect);
+      if (!hit || hit.bbox.width < 8 || hit.bbox.height < 8) return null;
+      const { page, pageNum, pr, rects, bbox } = hit;
+      const anchor = capture(page, { x: bbox.left - pr.left, y: bbox.top - pr.top, w: bbox.width, h: bbox.height }, pr);
+      if (anchor.text) anchor.context = surrounding(pageNum, anchor.text);
+      const [rx, ry, rw, rh] = anchor.region;
+      const liveRect = () => {
+        const p = pageEl(pageNum);
+        if (!p) return bbox;
+        const r = p.getBoundingClientRect();
+        return new DOMRect(r.left + rx * r.width, r.top + ry * r.height, rw * r.width, rh * r.height);
+      };
+      return {
+        anchor,
+        rects,
+        bbox,
+        label: `${unitLabel} ${pageNum} · ▭`,
+        rectFn: liveRect,
+        fullRectFn: liveRect,
+      };
+    },
   },
   label(anchor) {
     return `${unitLabel} ${anchor.page}${anchor.region ? " · ▭ region" : ""}`;

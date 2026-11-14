@@ -20,7 +20,17 @@
   const scrollKey = `pv-scroll:${cfg.doc}`;
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
   const keyOf = (a) =>
-    [a.kind, a.lines ? a.lines.join("-") : "", a.page || "", a.region ? a.region.map((n) => n.toFixed(3)).join(",") : "", a.selector || "", norm(a.text).slice(0, 80)].join("|");
+    [
+      a.kind,
+      a.lines ? a.lines.join("-") : "",
+      a.ranges ? a.ranges.map((r) => r.join("-")).join(",") : "",
+      a.page || "",
+      a.region ? a.region.map((n) => n.toFixed(3)).join(",") : "",
+      a.regions ? a.regions.map((r) => `${r.page}:${r.region.map((n) => n.toFixed(3)).join(",")}`).join(";") : "",
+      a.selector || "",
+      a.items ? a.items.map((i) => i.selector).join(",") : "",
+      norm(a.text).slice(0, 80),
+    ].join("|");
   const api = (path, init = {}) =>
     fetch(`${cfg.base}${path}`, { ...init, headers: { "content-type": "application/json", accept: "application/json", ...(init.headers || {}) } }).then(async (res) => {
       const data = await res.json().catch(() => ({}));
@@ -48,6 +58,7 @@
     <link rel="stylesheet" href="${cfg.base}/vendor/katex/dist/katex.min.css">
     <link rel="stylesheet" href="${cfg.base}/assets/ui.css">
     <div class="layer boxes"></div>
+    <div class="layer marquee"></div>
     <div class="layer markers"></div>
     <div class="layer drawers"></div>
     <div class="tab" hidden><button class="t-ask">Ask <kbd>Enter</kbd></button><button class="t-pin">Pin</button></div>
@@ -180,7 +191,8 @@
   }
 
   // ── locating anchors on this page ──
-  const connected = (loc) => loc.el?.isConnected && (!loc.range || loc.range.startContainer.isConnected);
+  const connected = (loc) =>
+    (loc.els ? loc.els.some((el) => el?.isConnected) : loc.el?.isConnected) && (!loc.range || loc.range.startContainer.isConnected);
   function locOf(anchor) {
     const key = keyOf(anchor);
     const hit = locCache.get(key);
@@ -199,18 +211,200 @@
   function geom(loc) {
     if (loc.rect) {
       const r = loc.rect();
-      return { tail: r, body: r };
+      const full = loc.fullRect ? loc.fullRect() : r;
+      return { tail: r, body: r, full: full || r };
     }
     if (loc.range) {
       const rects = [...loc.range.getClientRects()].filter((r) => r.width > 0);
-      if (rects.length) return { tail: rects[rects.length - 1], body: loc.range.getBoundingClientRect() };
+      if (rects.length) {
+        const body = loc.range.getBoundingClientRect();
+        return { tail: rects[rects.length - 1], body, full: body };
+      }
     }
     const r = loc.el.getBoundingClientRect();
-    return { tail: r, body: r };
+    return { tail: r, body: r, full: r };
   }
   function clipRect() {
     return adapter?.clip?.() || new DOMRect(0, viewer ? 46 : 0, innerWidth, innerHeight - (viewer ? 46 : 0));
   }
+
+  // ── smart geometry & minimum bounding box engine ──
+  function clipToRect(a, b) {
+    if (!a || !b) return null;
+    const left = Math.max(a.left, b.left);
+    const top = Math.max(a.top, b.top);
+    const right = Math.min(a.right, b.right);
+    const bottom = Math.min(a.bottom, b.bottom);
+    return right > left && bottom > top ? new DOMRect(left, top, right - left, bottom - top) : null;
+  }
+
+  function unionRects(rects) {
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    for (const r of rects) {
+      if (!r || r.width <= 0 || r.height <= 0) continue;
+      if (r.left < left) left = r.left;
+      if (r.top < top) top = r.top;
+      if (r.right > right) right = r.right;
+      if (r.bottom > bottom) bottom = r.bottom;
+    }
+    return left < right && top < bottom ? new DOMRect(left, top, right - left, bottom - top) : null;
+  }
+
+  function rectsIntersect(a, b) {
+    return !!a && !!b && a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+  }
+
+  function rectArea(r) {
+    return r && r.width > 0 && r.height > 0 ? r.width * r.height : 0;
+  }
+
+  function rectOf(target, depth = 0) {
+    if (!target) return null;
+    if (target instanceof Range) {
+      const crs = [...target.getClientRects()].filter((r) => r.width > 0.5 && r.height > 0.5);
+      return crs.length ? unionRects(crs) : target.getBoundingClientRect();
+    }
+    if (!(target instanceof Element) || !target.isConnected) return null;
+    const cs = getComputedStyle(target);
+    if (cs.display === "none" || cs.visibility === "hidden" || parseFloat(cs.opacity) === 0) return null;
+
+    let rect = null;
+    if (cs.display === "contents") {
+      if (depth < 4) {
+        const childRects = [];
+        for (const c of target.children) {
+          const cr = rectOf(c, depth + 1);
+          if (cr) childRects.push(cr);
+          if (childRects.length >= 64) break;
+        }
+        rect = unionRects(childRects);
+      }
+    } else {
+      const raw = target.getBoundingClientRect();
+      if (raw.width <= 0.5 || raw.height <= 0.5) {
+        if (depth < 3 && target.children.length) {
+          const childRects = [];
+          for (const c of target.children) {
+            const cr = rectOf(c, depth + 1);
+            if (cr) childRects.push(cr);
+            if (childRects.length >= 64) break;
+          }
+          rect = unionRects(childRects);
+        }
+      } else if (cs.display === "inline") {
+        const crs = [...target.getClientRects()].filter((r) => r.width > 0.5 && r.height > 0.5);
+        rect = crs.length ? unionRects(crs) : raw;
+      } else {
+        rect = raw;
+      }
+    }
+    if (!rect) return null;
+
+    // Intersect with inner overflow-clipping containers so off-clip descendants do not inflate the box.
+    for (let p = target.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+      const pcs = getComputedStyle(p);
+      const ox = pcs.overflowX;
+      const oy = pcs.overflowY;
+      if (ox === "hidden" || ox === "clip" || ox === "scroll" || ox === "auto" || oy === "hidden" || oy === "clip" || oy === "scroll" || oy === "auto") {
+        const pr = p.getBoundingClientRect();
+        if (pr.width > 0 && pr.height > 0) {
+          rect = clipToRect(rect, pr);
+          if (!rect) return null;
+        }
+      }
+    }
+    return rect;
+  }
+
+  /** Visible-first bounding box for placing floating UI (Marker / Slip / Drawer) when items span wide scroll ranges. */
+  function smartAnchorRect(rects, clip = clipRect()) {
+    const valid = rects.filter((r) => r && r.width > 0 && r.height > 0);
+    if (!valid.length) return null;
+    const clipped = valid.map((r) => clipToRect(r, clip)).filter(Boolean);
+    if (clipped.length) return unionRects(clipped);
+    // All items scrolled out of view: pick the one closest to the viewport vertical midpoint.
+    const cy = (clip.top + clip.bottom) / 2;
+    let best = valid[0];
+    let bestDist = Infinity;
+    for (const r of valid) {
+      const d = Math.abs((r.top + r.bottom) / 2 - cy);
+      if (d < bestDist) {
+        bestDist = d;
+        best = r;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Prune raw hit DOM elements into a clean, minimal non-overlapping set inside `dragRect`:
+   * - drop giant wrappers that extend far outside `dragRect` when children were matched
+   * - promote cohesive containers >= 85% covered inside `dragRect` and drop their descendants
+   * - coalesce dense sibling bursts (> 16 items) into covered parents
+   */
+  function pruneElements(hits, dragRect, shellRoot = document.body) {
+    if (!hits.length) return [];
+    const byEl = new Map(hits.map((h) => [h.el, h]));
+    const isShell = (el) => !el || el === document.documentElement || el === document.body || el === shellRoot || el.tagName === "MAIN";
+
+    // Pass 1: promote well-contained containers (>= 85% inside dragRect) over their descendants.
+    const sorted = [...hits].sort((a, b) => rectArea(b.rect) - rectArea(a.rect));
+    const dropped = new Set();
+    for (const item of sorted) {
+      if (dropped.has(item.el) || isShell(item.el)) continue;
+      if (item.coverage >= 0.85) {
+        for (const other of hits) {
+          if (other.el !== item.el && item.el.contains(other.el)) dropped.add(other.el);
+        }
+      }
+    }
+
+    // Pass 2: if a partial wrapper (< 85% inside) still wraps kept descendants, drop the wrapper.
+    let kept = hits.filter((h) => !dropped.has(h.el));
+    const keptSet = new Set(kept.map((h) => h.el));
+    kept = kept.filter((h) => {
+      if (isShell(h.el)) return false;
+      for (const other of keptSet) {
+        if (other !== h.el && h.el.contains(other)) return false;
+      }
+      return true;
+    });
+
+    // Pass 3: if still > 16 fragmented sibling items (e.g. a grid/table), coalesce into well-covered parents.
+    if (kept.length > 16) {
+      const byParent = new Map();
+      for (const h of kept) {
+        const p = h.el.parentElement;
+        if (!p || isShell(p)) continue;
+        if (!byParent.has(p)) byParent.set(p, []);
+        byParent.get(p).push(h);
+      }
+      const promoted = new Set();
+      for (const [p, group] of byParent) {
+        if (group.length < 2) continue;
+        const pr = rectOf(p);
+        const inter = clipToRect(pr, dragRect);
+        const pCov = pr && inter ? rectArea(inter) / Math.max(1, rectArea(pr)) : 0;
+        const visibleKids = [...p.children].filter((c) => rectOf(c));
+        if (pCov >= 0.65 && group.length / Math.max(1, visibleKids.length) >= 0.6) {
+          promoted.add(p);
+          for (const g of group) byEl.delete(g.el);
+          byEl.set(p, { el: p, rect: pr, coverage: pCov });
+        }
+      }
+      if (promoted.size) {
+        kept = kept.filter((h) => !promoted.has(h.el.parentElement));
+        for (const p of promoted) kept.push(byEl.get(p));
+      }
+    }
+
+    // Order top-to-bottom, left-to-right for stable reading order.
+    return kept.sort((a, b) => (Math.abs(a.rect.top - b.rect.top) > 6 ? a.rect.top - b.rect.top : a.rect.left - b.rect.left));
+  }
+
   /** Forget cached locations (after a re-render) and redraw. */
   function relocate() {
     locCache.clear();
@@ -222,7 +416,8 @@
   const hlStyle = document.createElement("style");
   hlStyle.textContent =
     "::highlight(pv-asked){background-color:rgb(255 74 28/.16);text-decoration:underline 2px rgb(255 74 28);text-underline-offset:4px}" +
-    "::highlight(pv-pinned){background-color:rgb(35 53 255/.14);text-decoration:underline 2px dotted rgb(35 53 255);text-underline-offset:4px}";
+    "::highlight(pv-pinned){background-color:rgb(35 53 255/.14);text-decoration:underline 2px dotted rgb(35 53 255);text-underline-offset:4px}" +
+    "html.pv-marquee-active,html.pv-marquee-active *{user-select:none!important;-webkit-user-select:none!important}";
   (document.head || document.documentElement).appendChild(hlStyle);
   const canHighlight = typeof Highlight === "function" && !!CSS.highlights;
   function paint() {
@@ -458,10 +653,21 @@
       markers.appendChild(m);
       const loc = locOf(g.anchor);
       if (loc?.box) {
+        const kindCls = g.pins.length ? " pinned" : " asked";
         const box = document.createElement("div");
-        box.className = `box${g.pins.length ? " pinned" : " asked"}`;
+        box.className = `box${kindCls}`;
         box.dataset.key = g.key;
         boxes.appendChild(box);
+        const subs = loc.subRects ? loc.subRects() : loc.rects;
+        if (subs && subs.length > 1) {
+          for (let idx = 0; idx < subs.length; idx++) {
+            const sb = document.createElement("div");
+            sb.className = `box sub${kindCls}`;
+            sb.dataset.key = g.key;
+            sb.dataset.sub = String(idx);
+            boxes.appendChild(sb);
+          }
+        }
       }
       if (openDrawers.has(g.key) && asked) {
         activeKeys.add(g.key);
@@ -988,7 +1194,11 @@
     card.querySelector(".loc").textContent = p.label;
     card.querySelector(".loc").addEventListener("click", () => reveal(p));
     const quote = card.querySelector("blockquote");
-    quote.textContent = p.anchor.region ? "▭ region of the page" : norm(p.anchor.text).slice(0, 280) || p.anchor.selector || "";
+    quote.textContent = p.anchor.region
+      ? "▭ region of the page"
+      : p.anchor.items?.length > 1
+        ? `${p.anchor.items.length} elements · ${p.anchor.items.map((i) => i.tag || i.selector).join(", ")}`.slice(0, 280)
+        : norm(p.anchor.text).slice(0, 280) || p.anchor.selector || "";
     card.querySelector(".del").addEventListener("click", () => api(`/pins/${p.id}`, { method: "DELETE" }).catch((e) => toast(e.message, true)));
     const note = card.querySelector("textarea");
     const saved = card.querySelector(".saved");
@@ -1201,11 +1411,26 @@
         m.style.top = `${Math.max(clip.top, g.tail.top - 10)}px`;
       }
     }
+    const subCache = new Map();
     for (const b of root.querySelectorAll(".box")) {
+      const subIdx = b.dataset.sub;
+      if (subIdx !== undefined) {
+        if (!subCache.has(b.dataset.key)) {
+          const gr = groups.find((x) => x.key === b.dataset.key);
+          const loc = gr && locOf(gr.anchor);
+          subCache.set(b.dataset.key, loc?.subRects ? loc.subRects() : loc?.rects || []);
+        }
+        const sr = subCache.get(b.dataset.key)[Number(subIdx)];
+        b.hidden = !visible(sr);
+        if (b.hidden) continue;
+        Object.assign(b.style, { left: `${sr.left}px`, top: `${sr.top}px`, width: `${sr.width}px`, height: `${sr.height}px` });
+        continue;
+      }
       const g = geomOf(b.dataset.key);
-      b.hidden = !visible(g?.body);
+      const r = g?.full || g?.body;
+      b.hidden = !visible(r);
       if (b.hidden) continue;
-      Object.assign(b.style, { left: `${g.body.left - 3}px`, top: `${g.body.top - 3}px`, width: `${g.body.width + 6}px`, height: `${g.body.height + 6}px` });
+      Object.assign(b.style, { left: `${r.left - 3}px`, top: `${r.top - 3}px`, width: `${r.width + 6}px`, height: `${r.height + 6}px` });
     }
     for (const d of root.querySelectorAll(".drawer")) {
       const st = drawerState(d.dataset.key);
@@ -1241,7 +1466,10 @@
       d.style.left = `${Math.min(Math.max(16, left), innerWidth - w - 24)}px`;
       d.style.top = `${top}px`;
     }
-    if (current && slipMode === "follow" && !slip.hidden) placeSlip();
+    if (current && !slip.hidden) {
+      if (slipMode === "follow") placeSlip();
+      if (current.showBox) syncActiveSlipBox(visible);
+    }
   }
   addEventListener("resize", schedule);
   document.addEventListener(
@@ -1372,9 +1600,30 @@
     addEventListener("pointerup", up, { once: true });
   });
 
+  function syncActiveSlipBox(visibleFn = () => true) {
+    if (!current?.showBox || slip.hidden) return;
+    const rawSubs = current.subRects ? current.subRects() : [];
+    const subRects = rawSubs.length > 1 ? rawSubs.filter(visibleFn) : [];
+    const bbox = current.fullRect ? current.fullRect() : current.rectFn?.();
+    if (!bbox || (!visibleFn(bbox) && !subRects.length)) {
+      marqueeLayer.replaceChildren();
+      return;
+    }
+    renderMarqueePreview(null, { rects: subRects, bbox, label: current.label });
+  }
+
   function openSlip(anchor, opts = {}) {
     closeSlip();
-    current = { anchor, range: opts.range || null, rectFn: opts.rect || null, onClose: opts.onClose || null };
+    current = {
+      anchor,
+      range: opts.range || null,
+      rectFn: opts.rect || null,
+      subRects: opts.subRects || null,
+      fullRect: opts.fullRect || null,
+      label: opts.label ?? (adapter?.label?.(anchor) || ""),
+      showBox: opts.showBox ?? (!opts.range && !!opts.rect),
+      onClose: opts.onClose || null,
+    };
     serial += 1;
     sessionStorage.setItem("pv-serial", String(serial));
     $(".no").textContent = `№ ${String(serial).padStart(2, "0")}`;
@@ -1397,6 +1646,7 @@
     slipText.value = "";
     slip.hidden = false;
     placeSlip(true);
+    syncActiveSlipBox();
     slipText.focus({ preventScroll: true });
   }
 
@@ -1404,6 +1654,7 @@
     if (slip.hidden) return;
     cancelActiveMic(slip);
     slip.hidden = true;
+    clearMarquee();
     current?.onClose?.();
     current = null;
   }
@@ -1460,6 +1711,153 @@
     }
   });
 
+  // ── Ctrl + drag marquee selection → smart minimum bounding box ──
+  const marqueeLayer = $(".marquee");
+  let suppressClickUntil = 0;
+
+  function clearMarquee() {
+    marqueeLayer.replaceChildren();
+    document.documentElement.classList.remove("pv-marquee-active");
+  }
+
+  function renderMarqueePreview(dragRect, preview) {
+    const nodes = [];
+    if (dragRect) {
+      const drag = document.createElement("div");
+      drag.className = "marquee-drag";
+      Object.assign(drag.style, { left: `${dragRect.left}px`, top: `${dragRect.top}px`, width: `${dragRect.width}px`, height: `${dragRect.height}px` });
+      nodes.push(drag);
+    }
+    if (preview?.rects?.length) {
+      for (const r of preview.rects) {
+        const hit = document.createElement("div");
+        hit.className = "marquee-hit";
+        Object.assign(hit.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+        nodes.push(hit);
+      }
+    }
+    if (preview?.bbox) {
+      const b = preview.bbox;
+      const bboxEl = document.createElement("div");
+      bboxEl.className = "marquee-bbox";
+      Object.assign(bboxEl.style, { left: `${b.left - 3}px`, top: `${b.top - 3}px`, width: `${b.width + 6}px`, height: `${b.height + 6}px` });
+      if (preview.label) {
+        const badge = document.createElement("span");
+        badge.className = "marquee-badge";
+        badge.textContent = preview.label;
+        bboxEl.appendChild(badge);
+      }
+      nodes.push(bboxEl);
+    }
+    marqueeLayer.replaceChildren(...nodes);
+  }
+
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (Date.now() < suppressClickUntil) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (e.button !== 0 || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+      if (fromUs(e) || !adapter?.marquee) return;
+      if (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='']")) return;
+
+      const x0 = e.clientX;
+      const y0 = e.clientY;
+      let active = false;
+      let cancelled = false;
+      let rafId = 0;
+      let latestRect = new DOMRect(x0, y0, 0, 0);
+
+      const updatePreview = () => {
+        rafId = 0;
+        if (!active || cancelled) return;
+        const preview = adapter.marquee.preview?.(latestRect) || null;
+        renderMarqueePreview(latestRect, preview);
+      };
+
+      const onMove = (ev) => {
+        const dx = ev.clientX - x0;
+        const dy = ev.clientY - y0;
+        if (!active) {
+          if (Math.hypot(dx, dy) < 5) return;
+          active = true;
+          hideTab();
+          closeSlip();
+          document.documentElement.classList.add("pv-marquee-active");
+          document.getSelection()?.removeAllRanges();
+        }
+        ev.preventDefault();
+        const left = Math.min(x0, ev.clientX);
+        const top = Math.min(y0, ev.clientY);
+        latestRect = new DOMRect(left, top, Math.abs(dx), Math.abs(dy));
+        if (!rafId) rafId = requestAnimationFrame(updatePreview);
+      };
+
+      const cleanup = () => {
+        removeEventListener("pointermove", onMove, true);
+        removeEventListener("pointerup", onUp, true);
+        removeEventListener("keydown", onKey, true);
+        removeEventListener("blur", onCancel);
+        if (rafId) cancelAnimationFrame(rafId);
+        document.documentElement.classList.remove("pv-marquee-active");
+      };
+
+      const onCancel = () => {
+        cancelled = true;
+        cleanup();
+        clearMarquee();
+      };
+
+      const onKey = (ev) => {
+        if (ev.key === "Escape" && active) {
+          ev.preventDefault();
+          ev.stopImmediatePropagation();
+          onCancel();
+        }
+      };
+
+      const onUp = (ev) => {
+        cleanup();
+        if (!active || cancelled) return;
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        suppressClickUntil = Date.now() + 200;
+        document.getSelection()?.removeAllRanges();
+        const left = Math.min(x0, ev.clientX);
+        const top = Math.min(y0, ev.clientY);
+        const finalRect = new DOMRect(left, top, Math.abs(ev.clientX - x0), Math.abs(ev.clientY - y0));
+        const res = adapter.marquee.finish?.(finalRect) || null;
+        if (res?.anchor) {
+          openSlip(res.anchor, {
+            rect: res.rectFn || (() => res.bbox),
+            subRects: res.subRectsFn || null,
+            fullRect: res.fullRectFn || null,
+            label: res.label,
+            showBox: true,
+          });
+        } else {
+          clearMarquee();
+          if (finalRect.width > 24 || finalRect.height > 24) toast("No selectable objects inside marquee");
+        }
+      };
+
+      addEventListener("pointermove", onMove, true);
+      addEventListener("pointerup", onUp, true);
+      addEventListener("keydown", onKey, true);
+      addEventListener("blur", onCancel, { once: true });
+    },
+    true,
+  );
+
   window.PiView = {
     cfg,
     register(a) {
@@ -1474,6 +1872,14 @@
     rangeText,
     relocate,
     syncTheme,
+    rectOf,
+    unionRects,
+    clipToRect,
+    smartAnchorRect,
+    rectsIntersect,
+    rectArea,
+    pruneElements,
+    clipRect,
   };
   connect();
 })();
