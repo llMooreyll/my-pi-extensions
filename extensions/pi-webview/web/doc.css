@@ -294,23 +294,6 @@ body { margin: 0; font: 400 1.125rem/1.7 var(--serif); font-optical-sizing: auto
   border: 2px solid var(--signal); background: color-mix(in srgb, var(--signal) 12%, transparent);
 }
 
-/* ───────── index ───────── */
-
-.index .mast { grid-column: 2 / -1; }
-.index .doc { grid-column: 2 / -1; padding-right: clamp(1rem, 3vw, 2rem); }
-.shelf { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--ink); }
-.shelf li { border-bottom: 1px solid var(--ink); }
-.shelf a {
-  display: grid; grid-template-columns: 3rem 5rem 1fr auto; align-items: baseline; gap: 1rem; padding: 1rem .6rem;
-  color: var(--ink); text-decoration: none; transition: background .12s, color .12s, padding .25s cubic-bezier(.2, 1, .3, 1);
-}
-.shelf a:hover { background: var(--ink); color: var(--paper); padding-left: 1.4rem; }
-.shelf .n { font: 700 11px/1 var(--mono); color: var(--signal); }
-.shelf .k { font: 700 10px/1 var(--mono); letter-spacing: .16em; }
-.shelf .f { font: 750 clamp(1.2rem, 2.2vw, 1.8rem)/1.15 var(--display); letter-spacing: -.02em; overflow-wrap: anywhere; }
-.shelf .l { font: 700 10px/1 var(--mono); color: var(--signal); letter-spacing: .1em; }
-.shelf .empty { padding: 2rem .6rem; font-style: italic; color: var(--mute); }
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition: none !important; }
 }

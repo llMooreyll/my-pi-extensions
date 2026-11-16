@@ -16,6 +16,7 @@ const WIDGET = "pi-webview";
 const PINS_ENTRY = "pi-webview-pins";
 const STARS_ENTRY = "pi-webview-stars";
 const PI_ASR_SYMBOL = Symbol.for("pi.asr.v1");
+const FILE_PICKER_SYMBOL = Symbol.for("pi.file-picker.v1");
 
 interface PiAsrService {
   readonly version: number;
@@ -32,6 +33,20 @@ function getAsrService(): PiAsrService | undefined {
     return undefined;
   }
   return svc as PiAsrService;
+}
+
+/** File picker provided by pi-input-plus on globalThis[Symbol.for("pi.file-picker.v1")]. */
+interface FilePickerService {
+  readonly version: number;
+  pick(
+    ui: ExtensionContext["ui"],
+    options: { cwd: string; title?: string; accept?: (absolutePath: string) => boolean },
+  ): Promise<{ path: string; isDirectory: boolean } | undefined>;
+}
+
+function getFilePicker(): FilePickerService | undefined {
+  const svc = (globalThis as unknown as Record<symbol, Partial<FilePickerService> | undefined>)[FILE_PICKER_SYMBOL];
+  return svc?.version === 1 && typeof svc.pick === "function" ? (svc as FilePickerService) : undefined;
 }
 
 async function queryAsrStatus() {
@@ -568,15 +583,25 @@ export default function piWebview(pi: ExtensionAPI): void {
   pi.registerMarkdownTransformer((markdown, { messageType }) => (messageType === "user" ? foldContexts(markdown) : markdown));
 
   pi.registerCommand("view", {
-    description: "Open md/html/pdf/pptx/docx in the browser and ask pi about selections. Usage: /view <file>[:line|:page] [--new]",
+    description: "Open md/html/pdf/pptx/docx in the browser and ask pi about selections. Usage: /view [file[:line|:page]] [--new] (no file opens the file picker)",
     handler: async (args, ctx) => {
       try {
-        if (!args.trim()) {
-          await ensureServer(h);
-          await openBrowser(`${baseUrl(h)}/`);
-          return;
+        let path: string;
+        let target: Target | undefined;
+        let fresh = false;
+        if (args.trim()) {
+          ({ path, target, fresh } = parseViewArgs(args, ctx.cwd));
+        } else {
+          const picker = getFilePicker();
+          if (ctx.mode !== "tui" || !picker) throw new Error("Usage: /view <file>[:line|:page] [--new] (the file picker needs the TUI and the pi-input-plus extension)");
+          const picked = await picker.pick(ctx.ui, {
+            cwd: ctx.cwd,
+            title: "View a document",
+            accept: (file) => kindOf(file) !== undefined,
+          });
+          if (!picked) return;
+          path = picked.path;
         }
-        const { path, target, fresh } = parseViewArgs(args, ctx.cwd);
         const r = await openDoc(h, path, target, fresh);
         ctx.ui.notify(r.reused ? `${r.file} is already open in the browser${target ? "; scrolled there" : " (add --new for another tab)"}` : `Opened ${r.file}`, "info");
       } catch (e) {

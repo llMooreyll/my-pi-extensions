@@ -6,7 +6,7 @@ import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Doc, canonicalPath, convertOffice, displayPath, kindOf, makeDoc } from "./docs.ts";
 import { type Hub, releaseDir, statusPayload, watchDir } from "./hub.ts";
-import { PDF_STAGE, frontMatterHtml, indexPage, injectHtml, markdownTitle, renderMarkdown, shellPage } from "./render.ts";
+import { PDF_STAGE, frontMatterHtml, injectHtml, markdownTitle, renderMarkdown, shellPage } from "./render.ts";
 
 const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
 const VENDOR_PKGS = new Set(["pdfjs-dist", "katex"]);
@@ -210,16 +210,6 @@ async function handle(h: Hub, deps: RouteDeps, req: IncomingMessage, res: Server
   }
 
   switch (area) {
-    case undefined: {
-      const items = [...h.docs.values()].map((d) => ({
-        id: d.id,
-        kind: d.kind,
-        file: displayPath(d.path, h.cwd),
-        live: [...h.clients].filter((c) => c.docId === d.id).length,
-      }));
-      return send(res, 200, indexPage(base, items, h.session), MIME[".html"]);
-    }
-
     case "assets":
       return sendFile(res, within(WEB_DIR, [id!, ...rest].filter(Boolean)), "no-cache");
 

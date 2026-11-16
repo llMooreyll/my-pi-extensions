@@ -270,7 +270,7 @@ ${THEME_BOOT}
 <body>
 <div class="grain" aria-hidden="true"></div>
 <header class="topbar">
-  <a class="mark" href="${base}/" title="All open documents">pi<i>/</i>view</a>
+  <span class="mark">pi<i>/</i>view</span>
   <span class="tag">${escapeHtml(kindLabel)}</span>
   <span class="doc-title">${escapeHtml(o.title)}</span>
   <span class="path">${escapeHtml(o.file)}</span>
@@ -297,26 +297,4 @@ export function injectHtml(html: string, base: string, doc: Doc, file: string): 
   const root = /<html\b[^>]*>/i.exec(html);
   if (root) return html.slice(0, root.index + root[0].length) + snippet + html.slice(root.index + root[0].length);
   return snippet + html;
-}
-
-export function indexPage(base: string, items: { id: string; kind: string; file: string; live: number }[], session: string): string {
-  const rows = items.length
-    ? items
-        .map(
-          (d, i) =>
-            `<li><a href="${base}/v/${d.id}"><span class="n">${String(i + 1).padStart(2, "0")}</span><span class="k">${escapeHtml(d.kind.toUpperCase())}</span><span class="f">${escapeHtml(d.file)}</span><span class="l">${d.live ? `● ${d.live}` : ""}</span></a></li>`,
-        )
-        .join("")
-    : `<li class="empty">Nothing open yet. Run <code>/view &lt;file&gt;</code> in pi.</li>`;
-  return `<!doctype html>
-<html lang="en" class="flow index">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>pi/view</title>
-${fontLinks}<link rel="stylesheet" href="${base}/assets/doc.css">
-${THEME_BOOT}
-</head>
-<body><div class="grain" aria-hidden="true"></div>
-<header class="topbar"><span class="mark">pi<i>/</i>view</span><span class="tag">INDEX</span><span class="path">${escapeHtml(session)}</span></header>
-<header class="mast"><h1 class="mast-title">Reading <i>room</i></h1></header>
-<main class="doc"><ol class="shelf">${rows}</ol></main>
-</body></html>`;
 }
