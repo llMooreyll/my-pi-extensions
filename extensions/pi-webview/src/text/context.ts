@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
+import { attr, attrOf } from "../shared/blocks.ts";
 import { type Doc, displayPath, docId, expandPath, pageUnit } from "./docs.ts";
 
 export interface HtmlItem {
@@ -152,7 +153,6 @@ export function withoutImage(anchor: Anchor): Anchor {
   return rest;
 }
 
-const attr = (v: string | number) => String(v).replace(/"/g, "'").replace(/\s+/g, " ");
 // Page text must not be able to close the block early.
 const body = (v: string) => v.replace(/<\/?browser-context/gi, (m) => m.replace("<", "‹"));
 
@@ -598,54 +598,16 @@ export function buildBlock(doc: Doc, anchor: Anchor, opts: { cwd?: string; note?
   return { block: `${head}\n${parts.join("\n")}\n</browser-context>`, label: labelFor(file, anchor, unit, htmlLines) };
 }
 
-export function composeMessage(blocks: string[], question: string): string {
-  return [...blocks, question].filter(Boolean).join("\n\n");
-}
-
 // Attribute values may contain ">" (CSS selectors), never '"' (see attr()), so match attributes one by one.
 const BLOCK_RE = /<browser-context((?:\s+[\w-]+="[^"]*")*)\s*>([\s\S]*?)<\/browser-context>/g;
-const FOLLOW_UP_RE = /<follow-up((?:\s+[\w-]+="[^"]*")*)\s*>([\s\S]*?)<\/follow-up>/g;
-const followUpBody = (v: string) => v.replace(/<\/?follow-up/gi, (m) => m.replace("<", "‹"));
-
-function attrOf(attrs: string, key: string): string | undefined {
-  return new RegExp(`\\b${key}="([^"]*)"`).exec(attrs)?.[1];
-}
 
 function selectionOf(inner: string): string {
   return /<selection>\s*([\s\S]*?)\s*<\/selection>/.exec(inner)?.[1] ?? "";
 }
 
-function answerExcerpt(parts: readonly string[], maxChars = 150): string {
-  const joined = parts
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!joined) return "";
-  return joined.length > maxChars ? `${joined.slice(0, maxChars).trimEnd()}…` : joined;
-}
-
-/** Build a compact follow-up anchor referencing an earlier thread by number, question, and answer opening. */
-export function buildFollowUpBlock(seq: number, prevQuestion: string, prevParts: readonly string[]): string {
-  const lines = [`<follow-up ref="#${seq}">`];
-  const q = prevQuestion.replace(/\s+/g, " ").trim();
-  if (q) lines.push(`<previous-question>${followUpBody(q.slice(0, 400))}</previous-question>`);
-  const excerpt = answerExcerpt(prevParts, 150);
-  if (excerpt) lines.push(`<previous-answer>${followUpBody(excerpt)}</previous-answer>`);
-  lines.push("</follow-up>");
-  return lines.join("\n");
-}
-
-export function parseFollowUpSeq(text: string): number | undefined {
-  const m = /<follow-up\b[^>]*\bref="#(\d+)"[^>]*>/.exec(text);
-  const n = m ? Number(m[1]) : 0;
-  return Number.isInteger(n) && n > 0 ? n : undefined;
-}
-
-/** The message text with its context and follow-up blocks removed: what the user actually asked. */
+/** The message text with its <browser-context> blocks removed. */
 export function stripBlocks(text: string): string {
-  return text.replace(BLOCK_RE, "").replace(FOLLOW_UP_RE, "").trim();
+  return text.replace(BLOCK_RE, "");
 }
 
 /**
@@ -725,7 +687,7 @@ export function parseBlocks(text: string, cwd: string): Ref[] {
   return refs;
 }
 
-/** Display-only: fold each context and follow-up block in a user message into one quoted line. */
+/** Display-only: fold each <browser-context> block in a user message into one quoted line. */
 export function foldContexts(markdown: string): string {
   let out = markdown;
   if (out.includes("<browser-context")) {
@@ -751,45 +713,5 @@ export function foldContexts(markdown: string): string {
       return `> ⌖ \`${attrOf(attrs, "file") ?? "?"}\` · ${loc}${region}${excerpt}${note ? `  \n> ✎ ${note}` : ""}`;
     });
   }
-  if (out.includes("<follow-up")) {
-    out = out.replace(FOLLOW_UP_RE, (_m, attrs: string, inner: string) => {
-      const ref = attrOf(attrs, "ref") ?? "";
-      const pq = /<previous-question>([\s\S]*?)<\/previous-question>/.exec(inner)?.[1]?.replace(/\s+/g, " ").trim();
-      return `> ↳ ${ref}${pq ? ` — “${pq.slice(0, 72)}${pq.length > 72 ? "…" : ""}”` : ""}`;
-    });
-  }
   return out;
-}
-
-/** Plain text of a message's content (text parts only). */
-export function textOf(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((c) => c && typeof c === "object" && (c as { type?: unknown }).type === "text")
-    .map((c) => String((c as { text?: unknown }).text ?? ""))
-    .join("");
-}
-
-/** Latest thinking text from an assistant message's content array. */
-export function thinkingOf(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((c) => c && typeof c === "object" && (c as { type?: unknown }).type === "thinking")
-    .map((c) => String((c as { thinking?: unknown }).thinking ?? ""))
-    .join("\n")
-    .trim();
-}
-
-/** Name of the last toolCall block currently present in an assistant message. */
-export function toolCallNameOf(content: unknown): string | undefined {
-  if (!Array.isArray(content)) return undefined;
-  for (let i = content.length - 1; i >= 0; i--) {
-    const c = content[i];
-    if (c && typeof c === "object" && (c as { type?: unknown }).type === "toolCall") {
-      const name = (c as { name?: unknown }).name;
-      if (typeof name === "string" && name) return name;
-    }
-  }
-  return undefined;
 }

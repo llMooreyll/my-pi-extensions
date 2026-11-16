@@ -33,42 +33,6 @@ export interface Star {
   at: number;
 }
 
-export type ThreadStatus = "running" | "done" | "aborted";
-export type ThreadPhase = "waiting" | "thinking" | "toolcall" | "tool" | "answering";
-
-export interface ThreadStep {
-  label: string;
-  state: "running" | "done" | "error";
-}
-
-/** One user message and the assistant output that followed it. */
-export interface Thread {
-  id: string;
-  /** 1-based deterministic turn number within the active session branch. */
-  seq: number;
-  /** Referenced earlier thread number when this message is a follow-up. */
-  replyToSeq?: number;
-  refs: Ref[];
-  question: string;
-  /** Finished assistant texts of this run. */
-  parts: string[];
-  /** The assistant text currently streaming. */
-  live: string;
-  status: ThreadStatus;
-  /** Current live execution phase while running. */
-  phase?: ThreadPhase;
-  /** Live thinking excerpt while the model is reasoning. */
-  thinking?: string;
-  /** Tool currently running, shown as progress. */
-  activity?: string;
-  /** Compact list of tool steps executed in the active run. */
-  steps?: ThreadStep[];
-  at: number;
-  renderedText?: string;
-  html?: string;
-  dirty: boolean;
-}
-
 export interface SseClient {
   res: ServerResponse;
   docId: string;
@@ -89,9 +53,6 @@ export interface Hub {
   heartbeat?: ReturnType<typeof setInterval>;
   pinned: Pin[];
   stars: Star[];
-  threads: Thread[];
-  nextSeq: number;
-  activeThread?: Thread;
   /** Paths of documents referenced in session history, so their links work before they are opened. */
   knownPaths: Map<string, string>;
   busy: boolean;
@@ -114,16 +75,12 @@ export function hub(): Hub {
     watchers: new Map(),
     pinned: [],
     stars: [],
-    threads: [],
-    nextSeq: 1,
     knownPaths: new Map(),
     busy: false,
     session: "pi",
   };
   const h = g[HUB_KEY]!;
   // A hub created by an older version of this extension survives /reload; fill in newer fields.
-  h.threads ??= [];
-  h.nextSeq ??= h.threads.length + 1;
   h.knownPaths ??= new Map();
   h.pinned = h.pinned.filter((p) => p && typeof p === "object" && "ref" in p);
   h.stars ??= [];
@@ -156,7 +113,7 @@ export async function ensureServer(h: Hub): Promise<void> {
   h.heartbeat.unref?.();
 }
 
-/** Close every page connection and the server. Pins and threads belong to the session and stay. */
+/** Close every page connection and the server. Pins and turns belong to the session and stay. */
 export function stopServer(h: Hub): void {
   // Tell open tabs the server is going away on purpose, so they stop reconnecting.
   broadcast(h, "bye", {});

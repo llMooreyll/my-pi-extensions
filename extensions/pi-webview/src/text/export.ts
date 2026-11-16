@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 import { type Doc, displayPath, pageUnit } from "./docs.ts";
 import { type Hub } from "./hub.ts";
 import { escapeHtml, frontMatterHtml, markdownTitle, renderMarkdown } from "./render.ts";
-import { starPayload, threadPayload } from "./threads.ts";
+import { snapshotThreads, starPayload } from "./threads.ts";
 
-const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
+const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "web");
 const requireFromHere = createRequire(import.meta.url);
 const MAX_INLINE_BYTES = 12 * 1024 * 1024;
 
@@ -249,7 +249,7 @@ export interface ExportResult {
 export async function exportDocumentHtml(h: Hub, doc: Doc, rawPages?: unknown): Promise<ExportResult> {
   const file = displayPath(doc.path, h.cwd);
   const unit = doc.kind === "office" ? pageUnit(doc) : "page";
-  const allThreads = await Promise.all(h.threads.map(threadPayload));
+  const allThreads = await snapshotThreads(h);
   const docStars = h.stars.filter((s) => s.docId === doc.id).map(starPayload);
   const starSeqs = new Set(docStars.map((s) => s.threadSeq));
   const docThreads = allThreads.filter((t) => t.refs.some((r) => r.docId === doc.id) || starSeqs.has(t.seq));

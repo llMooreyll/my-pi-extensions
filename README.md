@@ -8,7 +8,7 @@ Pi Coding Agent 扩展合集仓库。包含自建扩展与基于上游修改的�
 |---|---|---|---|---|
 | [pi-remote](extensions/pi-remote) | Android 手机端远程控制与流式查看 Pi 会话 | 新编写 | 包含 hostd、relay、mobile app 与 bridge 扩展，Noise NK 端到端加密 | [README](extensions/pi-remote/README.md) |
 | [pi-session-view](extensions/pi-session-view) | 全屏模式会话轮次大纲（Turn rail）与 Neovim 查看器 | 新编写 | 常驻轮次轨道、Alt+S 大纲面板、Alt+O / /open-msg 在 Neovim 中打开轮次内容 | [README](extensions/pi-session-view/README.md) |
-| [pi-webview](extensions/pi-webview) | 在浏览器中阅读 md/html/pdf/Office 文件，选中内容向 pi 提问 | 新编写 | `/view` 命令（无参数时打开 pi-input-plus 文件选择器）与 `view_open` 工具、选区提问与钉住引用、原处抽屉展开与连续追问、轮次标号与上文引用、接入系统 ASR 语音输入、PDF 框选与 HTML 元素拾取 | [README](extensions/pi-webview/README.md) |
+| [pi-webview](extensions/pi-webview) | 在浏览器中阅读 md/html/pdf/Office 文件与配合在线课程视频学习，选中内容或字幕向 pi 提问 | 新编写 | `/view` 命令（无参数时打开 pi-input-plus 文件选择器）与 `view_open` 工具、选区提问与钉住引用、原处抽屉展开与连续追问、轮次标号与上文引用、接入系统 ASR 语音输入、PDF 框选与 HTML 元素拾取；独立的视频学习模块（`/watch`、`/watch-close`、`/watch-stop` 与 `video_state`/`video_seek`/`video_frame` 工具，通过 CDP 接管 YouTube/Bilibili 标签页替换为本地字幕、侧栏与全屏转轮交互、截帧与选句提问，按会话隔离标签页与状态） | [README](extensions/pi-webview/README.md) |
 | [pi-input-plus](extensions/pi-input-plus) | 输入框扩展：`@` 与 Tab 打开 vim 风格文件选择器、大段粘贴与剪贴板图片的预览浮窗、供其他扩展调用的选择器服务 | 新编写 | 行首或空白后输入 `@` 打开选择器（文件插入 `name[绝对路径]`，目录插入绝对路径）；路径以 `/` 结尾时按 Tab 打开选择器，否则补全到最长公共前缀且不显示候选列表；光标在粘贴块前按空格或单击打开预览；`globalThis[Symbol.for("pi.file-picker.v1")]` 选择器服务 | [README](extensions/pi-input-plus/README.md) |
 | [pi-video](extensions/pi-video) | `read_video` 工具与 `/read-video` 命令 | 新编写 | 把本地视频放进模型上下文；`/read-video` 用 pi-input-plus 的选择器选 mp4，在输入框插入 `name.mp4[绝对路径]` | [README](extensions/pi-video/README.md) |
 | [pi-interactive-subagents](extensions/pi-interactive-subagents) | 终端复用器非阻塞子代理与协同团队 | HazAT/pi-interactive-subagents | 有序模型回退链、基于 Git worktree 隔离分支的团队模式（team_* 工具）、agent_before_settle 退出时序修复 | [README](extensions/pi-interactive-subagents/README.md) |
@@ -79,7 +79,7 @@ my-pi-extensions/
 ├── extensions/
 │   ├── pi-remote/                # Android 远程控制套件（hostd, relay, mobile, bridge）
 │   ├── pi-session-view/          # 全屏会话大纲与 Neovim 查看器
-│   ├── pi-webview/               # 浏览器阅读与提问
+│   ├── pi-webview/               # 浏览器文档阅读与视频学习提问
 │   ├── pi-interactive-subagents/ # 终端复用器子代理与长期团队协同
 │   ├── statusline-pi/            # 底部状态栏
 │   ├── pi-language-tutor/        # 外语学习与写作检查

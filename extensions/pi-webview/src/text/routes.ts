@@ -8,7 +8,7 @@ import { type Doc, canonicalPath, convertOffice, displayPath, kindOf, makeDoc } 
 import { type Hub, releaseDir, statusPayload, watchDir } from "./hub.ts";
 import { PDF_STAGE, frontMatterHtml, injectHtml, markdownTitle, renderMarkdown, shellPage } from "./render.ts";
 
-const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
+const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "web");
 const VENDOR_PKGS = new Set(["pdfjs-dist", "katex"]);
 const vendorRoots = new Map<string, string>();
 const requireFromHere = createRequire(import.meta.url);
