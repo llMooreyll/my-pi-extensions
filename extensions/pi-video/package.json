@@ -1,0 +1,21 @@
+{
+  "name": "pi-video",
+  "version": "0.1.0",
+  "description": "read_video tool (local video into Gemini context) and /read-video command that picks an mp4 with the pi-input-plus file picker",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "video"
+  ],
+  "author": "llMooreyll",
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

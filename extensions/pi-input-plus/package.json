@@ -1,0 +1,24 @@
+{
+  "name": "pi-input-plus",
+  "version": "0.1.0",
+  "description": "Prompt input extensions for Pi: vim-style file picker on @ and Tab, viewer for large pastes and pasted images, and a shared file-picker service",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "tui",
+    "file-picker",
+    "editor"
+  ],
+  "author": "llMooreyll",
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}
