@@ -9,6 +9,7 @@ Pi Coding Agent 的底部状态栏扩展。基于 [luongnv89/pi-extensions](http
    - 改为异步 `execFile` 查询，查询期间不阻塞主循环；增加分支有效性检查（分支切换后丢弃过期的旧响应）以及并发去重。
 2. **边框样式设置**：
    - 增加 `src/editor.ts`，支持修改状态栏边框显示样式。
+   - 边框通过覆盖已有输入框实例的 `renderTopBorder` / `renderBottomBorder` 实现，不再替换输入框组件，其他装饰输入框的扩展（如 pi-input-plus）可与它叠加，加载顺序不影响结果；`/statusline-pi` 关闭时恢复输入框自带边框。
 3. **响应速度统计**：
    - 增加 `src/speed.ts`，统计模型输出的 tokens/s，并在状态栏显示平滑后的平均速度（`tps`）。
 4. **统一上下文区间计算**：

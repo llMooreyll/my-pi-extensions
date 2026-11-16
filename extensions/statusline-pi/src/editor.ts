@@ -1,5 +1,4 @@
-import { CustomEditor, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import { type EditorTheme, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type EditorComponent, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 /** Styled segments placed at the left and right ends of one border line. */
 export interface BorderSegments {
@@ -12,28 +11,46 @@ export interface StatusBorderSource {
 	bottom(width: number): BorderSegments;
 }
 
+type BorderRenderer = (width: number, hiddenLineCount: number) => string;
+
+const APPLIED = Symbol.for("statusline-pi.bordersApplied");
+
+interface BorderHost {
+	renderTopBorder?: BorderRenderer;
+	renderBottomBorder?: BorderRenderer;
+	borderColor?: (text: string) => string;
+	[APPLIED]?: boolean;
+}
+
 /**
- * Prompt editor whose top and bottom borders carry status segments. Overriding the
- * border renderers (instead of rewriting rendered lines) keeps autocomplete rows,
- * which Pi draws below the bottom border, untouched.
+ * Puts status segments on the top and bottom borders of an existing prompt editor
+ * instance. Overriding the border renderers on the instance (instead of subclassing
+ * or replacing the editor) lets other extensions decorate the same editor, and leaves
+ * the autocomplete rows Pi draws below the bottom border untouched. While `getSource`
+ * returns undefined the editor's own borders are drawn.
  */
-export class StatusBorderEditor extends CustomEditor {
-	private readonly source: StatusBorderSource;
+export function applyStatusBorders(editor: EditorComponent, getSource: () => StatusBorderSource | undefined): void {
+	const host = editor as unknown as BorderHost;
+	const renderTop = host.renderTopBorder;
+	const renderBottom = host.renderBottomBorder;
+	if (host[APPLIED] || typeof renderTop !== "function" || typeof renderBottom !== "function") return;
+	host[APPLIED] = true;
+	const ownTop = renderTop.bind(editor);
+	const ownBottom = renderBottom.bind(editor);
+	const border = (text: string): string => host.borderColor?.(text) ?? text;
 
-	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, source: StatusBorderSource) {
-		super(tui, theme, keybindings);
-		this.source = source;
-	}
-
-	protected renderTopBorder(width: number, hiddenLineCount: number): string {
-		const { left, right } = this.source.top(width);
-		return fitBorder(left, withHiddenLines("↑", hiddenLineCount, right), width, (text) => this.borderColor(text));
-	}
-
-	protected renderBottomBorder(width: number, hiddenLineCount: number): string {
-		const { left, right } = this.source.bottom(width);
-		return fitBorder(left, withHiddenLines("↓", hiddenLineCount, right), width, (text) => this.borderColor(text));
-	}
+	host.renderTopBorder = (width, hiddenLineCount) => {
+		const source = getSource();
+		if (!source) return ownTop(width, hiddenLineCount);
+		const { left, right } = source.top(width);
+		return fitBorder(left, withHiddenLines("↑", hiddenLineCount, right), width, border);
+	};
+	host.renderBottomBorder = (width, hiddenLineCount) => {
+		const source = getSource();
+		if (!source) return ownBottom(width, hiddenLineCount);
+		const { left, right } = source.bottom(width);
+		return fitBorder(left, withHiddenLines("↓", hiddenLineCount, right), width, border);
+	};
 }
 
 function withHiddenLines(arrow: string, hiddenLineCount: number, right: string): string {

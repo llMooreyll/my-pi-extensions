@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { execFile, execFileSync } from "node:child_process";
 import {
@@ -8,7 +8,7 @@ import {
 	formatCostSection,
 	type SessionCostState,
 } from "./cost.js";
-import { StatusBorderEditor, type BorderSegments } from "./editor.js";
+import { applyStatusBorders, type BorderSegments, type StatusBorderSource } from "./editor.js";
 import { ResponseSpeedTracker, type SpeedSnapshot } from "./speed.js";
 import {
 	createCpuSampler,
@@ -73,6 +73,9 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 	let cpuSampler: CpuSampler = createCpuSampler();
 	let systemUsage: SystemUsageSnapshot = refreshSystemUsage(cpuSampler);
 	let notifiedGptContextBreakpoint = false;
+	// Read by the border renderers on the editor; undefined draws the editor's own borders.
+	let borderSource: StatusBorderSource | undefined;
+	let editorInstalled = false;
 
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
@@ -81,6 +84,7 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		editorInstalled = false;
 		if (refreshTimer) clearInterval(refreshTimer);
 		refreshTimer = undefined;
 		renderRequested = undefined;
@@ -180,13 +184,11 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		speed.setModel(getModelKey(ctx));
 
 		// Model, context and speed live on the editor border; the footer keeps the rest.
-		const borderSource = {
+		borderSource = {
 			top: (width: number): BorderSegments => formatTopBorder(ctx, pi, width),
 			bottom: (width: number): BorderSegments => formatBottomBorder(ctx, speed.snapshot(), width),
 		};
-		ctx.ui.setEditorComponent(
-			(tui, theme, keybindings) => new StatusBorderEditor(tui, theme, keybindings, borderSource),
-		);
+		installBorderEditor(ctx);
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			const unsubscribeBranch = footerData.onBranchChange(() => {
@@ -254,7 +256,23 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		renderRequested = undefined;
 		notifiedGptContextBreakpoint = false;
 		ctx.ui.setFooter(undefined);
-		ctx.ui.setEditorComponent(undefined);
+		borderSource = undefined;
+	}
+
+	/**
+	 * Decorates whichever editor is configured instead of replacing it, so extensions that
+	 * also decorate the editor keep working in either load order. Disabling only clears
+	 * `borderSource`; the editor factory is left in place for the others.
+	 */
+	function installBorderEditor(ctx: ExtensionContext): void {
+		if (editorInstalled) return;
+		editorInstalled = true;
+		const previous = ctx.ui.getEditorComponent();
+		ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+			const editor = previous?.(tui, theme, keybindings) ?? new CustomEditor(tui, theme, keybindings);
+			applyStatusBorders(editor, () => borderSource);
+			return editor;
+		});
 	}
 
 	function maybeNotifyGptContextBreakpoint(ctx: ExtensionContext): void {
