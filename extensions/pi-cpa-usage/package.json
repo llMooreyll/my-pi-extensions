@@ -35,7 +35,7 @@
     "statusline"
   ],
   "author": "llMooreyll",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^0.75.4",
     "@earendil-works/pi-tui": "^0.75.4"

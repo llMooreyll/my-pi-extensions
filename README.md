@@ -103,15 +103,12 @@ my-pi-extensions/
 
 仓库整体采用 [GNU General Public License v3.0 (GPL-3.0)](LICENSE) 许可。
 
+自写扩展均采用 GPL-3.0-or-later，Copyright (c) 2026 llMooreyll：`pi-remote`、`pi-session-view`、`pi-webview`、`pi-input-plus`、`pi-video`、`pi-board`、`pi-home`、`pi-cpa-usage`。
+
 第三方分叉扩展保留各上游原作者的 MIT 版权声明与许可文本：
 - `statusline-pi`: MIT License, Copyright (c) 2024 luongnv89（见 [extensions/statusline-pi/LICENSE](extensions/statusline-pi/LICENSE)）
 - `pi-interactive-subagents`: MIT License, Copyright (c) 2026 HazAT（见 [extensions/pi-interactive-subagents/LICENSE](extensions/pi-interactive-subagents/LICENSE)）
 - `pi-language-tutor`: MIT License, Copyright (c) 2026 Mack（见 [extensions/pi-language-tutor/LICENSE](extensions/pi-language-tutor/LICENSE)）
 - `pi-voice`: MIT License, Copyright (c) 2026 Earendil Works contributors（见 [extensions/pi-voice/LICENSE](extensions/pi-voice/LICENSE)）
-- `pi-session-view`: MIT License, Copyright (c) 2026 llMooreyll
-- `pi-webview`: MIT License, Copyright (c) 2026 llMooreyll
-- `pi-input-plus`: MIT License, Copyright (c) 2026 llMooreyll
-- `pi-video`: MIT License, Copyright (c) 2026 llMooreyll
-- `pi-board`: MIT License, Copyright (c) 2026 llMooreyll
 
 上游地址与基线记录详见 [docs/UPSTREAM.md](docs/UPSTREAM.md)。

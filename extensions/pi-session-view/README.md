@@ -45,4 +45,4 @@ Pi Coding Agent 的全屏模式会话轮次大纲轨道（Turn rail）与 Neovim
 
 ## 许可
 
-MIT 许可证，Copyright (c) 2026 llMooreyll。详见 package.json。
+GNU General Public License v3.0 or later（GPL-3.0-or-later），Copyright (c) 2026 llMooreyll。全文见仓库根目录的 [LICENSE](../../LICENSE)。

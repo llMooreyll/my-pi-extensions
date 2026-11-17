@@ -11,7 +11,7 @@
     "editor"
   ],
   "author": "llMooreyll",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "pi": {
     "extensions": [
       "./src/index.ts"
