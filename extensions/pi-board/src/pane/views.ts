@@ -7,7 +7,7 @@ import type { BoardState, ChangeLog, TurnGroup } from "./data.ts";
 import { renderDiff } from "./diff.ts";
 import { DEFAULT_PREFIXES, idColor, inline, renderMarkdown, richWrap } from "./rich.ts";
 import type { FileChange } from "./turn.ts";
-import { type Paint, spread, style, truncate, width } from "./term.ts";
+import { type Paint, spread, style, truncate, width, wrap } from "./term.ts";
 
 export type RowItem =
 	| { kind: "entry"; entry: BoardEntry }
@@ -133,6 +133,8 @@ export function entryCard(e: BoardEntry, sections: SectionSchema[], cols: number
 	const out: string[] = [];
 	const line = (s = "") => out.push(`   ${rule} ${s}`);
 
+	// The list row truncates long titles; the card always carries the whole one.
+	for (const t of wrap(e.title, inner)) line(style.bold(t));
 	line(chips(e));
 
 	const rest = Object.keys(e.fields).filter((k) => !CHIP_FIELDS.has(k));
@@ -386,7 +388,10 @@ function changeRow(c: ChangeEvent, log: ChangeLog, cols: number, expanded: Set<s
 		selectable: true,
 		item: { kind: "change", change: c },
 		lines,
-		expanded: expanded.has(key) ? ["", ...renderDiff(c.diff, cols, 4, c.truncated), ""] : undefined,
+		// Expanded: the rest of a long message first (rows only show two lines), then the diff.
+		expanded: expanded.has(key)
+			? [...msgLines.slice(2).map((l) => `    ${l}`), "", ...renderDiff(c.diff, cols, 4, c.truncated), ""]
+			: undefined,
 	};
 }
 
