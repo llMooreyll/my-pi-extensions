@@ -56,6 +56,8 @@ export interface BoardIssue {
 	/** 1-based; 0 when the issue concerns the whole file. */
 	line: number;
 	id?: string;
+	/** Stable rule name (e.g. "heading", "field", "dup-id", "ref", "supersede"); with file, id and message it identifies an issue across edits. */
+	rule?: string;
 	/** One actionable sentence: what is wrong and how to fix it. */
 	message: string;
 }

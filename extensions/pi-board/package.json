@@ -1,0 +1,27 @@
+{
+  "name": "pi-board",
+  "version": "0.1.0",
+  "description": "Plan board for Pi: validated plan documents in docs/board/, per-change records with a message for every write/edit, a tmux board pane and a status widget",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "plan",
+    "tmux"
+  ],
+  "author": "llMooreyll",
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}

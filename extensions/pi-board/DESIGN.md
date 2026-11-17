@@ -137,6 +137,10 @@ fields: [date, reference, metric, verdict]
 
 - 主代理调用 write 或 edit、目标在 `docs/board/` 下时，扩展在执行前（`tool_call`）先在内存中算出写入后的完整内容，用解析器整体检查 `docs/board/` 下的全部文件（被改的文件用新内容）。
 - 不通过时拒绝本次调用，把错误清单作为拒绝原因返回给 AI，AI 修改后重新提交。判断完全由代码完成。
+- 只拒绝本次写入**新引入**的问题（按 `file|rule|id|message` 对比写入前后）。文档里已有的问题不阻止写入，否则一份多处有问题的文档无法逐个文件修复；已有问题显示在面板的 `FORMAT ISSUES`。
+- 取代决定时，新 D 的 `supersedes` 与旧 D 的 `superseded-by` 必须在同一次 edit 里同时写入，否则中间状态会被规则 5 拒绝。
+- 内存推算 edit 结果只做逐字匹配，不复现内置 edit 的模糊匹配；对不上时拒绝并提示先重新 read。
+- 校验代码自身出错时，目标在 `docs/board/` 的写入拒绝，其他写入放行。覆盖的 write/edit 按顺序执行，保证校验顺序与执行顺序一致。
 - 只拦截计划文档。其他文件的 write/edit 只要求 `message`（§5），不做内容校验。
 
 ### 4.2 规则
@@ -229,16 +233,17 @@ fields: [date, reference, metric, verdict]
 
 ### 8.2 Plan 页
 
-从上到下依次是：
+（2026-11-17 用户要求改版）每类一个独立栏目，用 tab 切换，标签上写该类未关闭条目数：
 
 1. `Conflicts`：`open` 的 C
-2. `Waiting on you`：`owner: user` 且未关闭的 T
-3. `In progress`：`doing` 的 T
-4. `Todo`：`todo` 的 T，按优先级排序
-5. `Recent decisions`：最近的 `active` D
-6. 扩展板块，每个板块一节
+2. `Waiting on you`：`owner: user` 或 `waiting` 的未关闭 T
+3. `Doing`：`doing` 的 T
+4. `Todo`：`todo`、`paused` 的 T，按优先级排序
+5. `Decisions`：全部 `active` D，按日期倒序
+6. 扩展板块，每个板块一个栏目
+7. `Changes`（§8.3）
 
-每个条目占一行，显示编号、标题、关键字段。回车展开正文。已关闭的条目默认隐藏，按键切换显示。
+`FORMAT ISSUES` 固定在标签栏下方，所有栏目都显示，`x` 把全部格式问题引用到 pi。每个条目两行，回车展开正文。已关闭的条目默认隐藏，`h` 显示在当前栏目末尾。启动时先显示 Conflicts，其次 Waiting on you，都为空时显示 Doing。
 
 ### 8.3 Changes 页
 
@@ -257,13 +262,18 @@ fields: [date, reference, metric, verdict]
 
 | 键 | 作用 |
 |---|---|
-| `Tab` 或 `1` / `2` | 切换 Plan / Changes |
-| `j` `k` / 方向键 | 移动 |
+| `Tab` / `→`、`Shift+Tab` / `←`、`1`–`9`、鼠标点击标签 | 切换栏目 |
+| `j` `k` / `↑` `↓` | 移动 |
+| `Ctrl+D` `Ctrl+U` / 滚轮 | 翻动（可滚过长 diff） |
+| `c` | 查看当前任务的全部改动；`f` 清除筛选 |
+| `x` | 把全部格式问题引用到 pi |
+| `Esc` | 清除选中 |
 | `Enter` | 展开或收起 |
 | `Space` | 选中 |
 | `y` | 引用到 pi |
 | `h` | 显示或隐藏已关闭的条目（Plan）、计划文档的改动（Changes） |
-| `o` | 用 nvim 打开 diff（Changes） |
+| `o` | 用 nvim 打开 diff（Changes）或条目所在文件（计划栏目） |
+| `q` | 关闭面板（`/board` 重新打开） |
 
 界面文字全部用英文。
 
@@ -271,10 +281,9 @@ fields: [date, reference, metric, verdict]
 
 放在输入框上方，只在主代理里显示：
 
-- 第一行是摘要：`doing T12 · conflicts 2 · waiting on you 3 · this turn 5 changes`。
-- 之后每个后台进程一行：`sub:scout running`、`team:dev waiting` 等。
-- 鼠标点击某一行，就切换到后台 window 并选中对应窗格，不放大。点击是根据代码推断可行的，需要实测。
-- 键盘：`Alt+G` 打开选择列表，选中后跳转。从后台 window 回来用 tmux 的 `prefix + l`。
+- 与 subagent、team widget 同款的三行边框：顶行 `Board` 与本轮改动数，内容行左侧是进行中的任务，右侧是 `conflicts N · waiting on you N`；数量为 0 的项变暗，不省略。
+- 后台进程不在这里重复列出。subagent 与 team 自己的 widget 已列出它们；在这两个 widget 上用鼠标点击某一行（含 team 的错误详情行），就切换到后台 window 并选中对应窗格，不放大。点击只在全屏模式下生效，需要实测。
+- 键盘：`Alt+J` 打开选择列表（`Alt+G` 已被用户键位 `tui.altScreen.bottom` 占用），选中后跳转。从后台 window 回来用 tmux 的 `prefix + l`。
 - widget 不获取输入焦点。
 
 ## 10. 后台 window（修改 pi-interactive-subagents）
@@ -307,9 +316,11 @@ fields: [date, reference, metric, verdict]
 
 ## 13. 未确认事项与风险
 
-- widget 的鼠标点击是根据代码推断可行的，未实测；不可行时只保留 `Alt+G`。
+- widget 的鼠标点击是根据代码推断可行的，未实测；不可行时只保留 `Alt+J`。
 - 覆盖 write/edit 后，新增参数在 pi 的参数校验中的表现未实测。
 - RPC 模式下 widget 不支持组件，pi-remote 手机端看不到可点击的列表，只显示摘要文字。
-- bash 写操作的检测按文本匹配，可能漏判或误判。
+- bash 写操作的检测按文本匹配，可能漏判或误判（例如内联脚本写文件）。
+- 同一仓库同时开两个主 pi 时，子代理按最近更新的 lead-state 归入轮次，可能归错；团队成员通过 run.json 定位自己的主代理，不受影响。
+- 只改末尾换行或只改换行符（CRLF/LF）的改动，增删行数为 0、diff 为空。
 - message 写得好不好，代码只能检查长度，判断不了质量。
 - 冲突能否发现，依赖 AI 遵守 §7 第 2 条；代码只能发现 §4.2 中的结构性矛盾。
