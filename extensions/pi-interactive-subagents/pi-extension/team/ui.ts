@@ -33,6 +33,8 @@ export function stateStyle(state: RowState): { label: string; color: string } {
 }
 
 export interface TeamRow {
+  /** Member instanceId; lets a click on the row focus the member's pane. */
+  id?: string;
   name: string;
   agent: string;
   write: boolean;
@@ -79,10 +81,21 @@ function summarize(rows: TeamRow[]): string {
   return parts.join(" · ");
 }
 
-/** Lines for the banner above the lead's editor. Every line is at most `width` columns. */
-export function renderTeamBanner(rows: TeamRow[], width: number, theme: UiTheme, now = Date.now()): string[] {
+/**
+ * Lines for the banner above the lead's editor. Every line is at most `width` columns.
+ * When `lineIds` is given it is filled with the member id of each returned line (undefined for borders); a member's
+ * error detail line carries the same id as its row.
+ */
+export function renderTeamBanner(
+  rows: TeamRow[],
+  width: number,
+  theme: UiTheme,
+  now = Date.now(),
+  lineIds?: Array<string | undefined>,
+): string[] {
   const paint = accentPaint(theme);
   const lines = [borderTop("Team", summarize(rows), width, paint)];
+  lineIds?.push(undefined);
   const showModel = width >= 90;
 
   for (const row of rows) {
@@ -100,14 +113,17 @@ export function renderTeamBanner(rows: TeamRow[], width: number, theme: UiTheme,
     right += `  ${theme.fg("dim", formatClock(now - row.spawnedAt))} `;
 
     lines.push(borderLine(left, right, width, paint));
+    lineIds?.push(row.id);
 
     if (row.error && (row.state === "failed" || row.state === "lost")) {
       const detail = truncateToWidth(row.error.replace(/\s+/g, " "), Math.max(0, width - 8));
       lines.push(borderLine(`   ${theme.fg("error", "└")} ${theme.fg("error", detail)}`, "", width, paint));
+      lineIds?.push(row.id);
     }
   }
 
   lines.push(borderBottom(width, paint));
+  lineIds?.push(undefined);
   return lines;
 }
 

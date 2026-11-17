@@ -742,16 +742,222 @@ function createCmuxSplitSurface(
 }
 
 /**
+ * tmux layout for agent panes. `window` (default) keeps every subagent and team
+ * member pane of this pi process in one background window; `split` puts each pane
+ * next to the parent pane.
+ */
+function tmuxLayout(): "window" | "split" {
+  return (process.env.PI_SUBAGENT_TMUX_LAYOUT ?? "").trim().toLowerCase() === "split" ? "split" : "window";
+}
+
+/** Background window of this pi process: its id and overflow ordinal (1 for the first window). */
+let tmuxAgentWindow: { id: string; ordinal: number } | null = null;
+/** Window that each window-layout pane belongs to, keyed by pane id. */
+const tmuxPaneWindowIds = new Map<string, string>();
+/** pi session id; its first 4 characters disambiguate a window name that is already taken. */
+let muxSessionId: string | null = null;
+/** Non-fatal mux problems of this process (cosmetic failures), newest last. Kept in memory only. */
+const muxWarnings: string[] = [];
+
+/** Record the pi session id. Called on session_start. */
+export function setMuxSessionId(sessionId: string): void {
+  muxSessionId = sessionId;
+}
+
+/** Non-fatal mux problems recorded by this process. */
+export function getMuxWarnings(): readonly string[] {
+  return muxWarnings;
+}
+
+function noteMuxWarning(message: string): void {
+  muxWarnings.push(message);
+  if (muxWarnings.length > 20) muxWarnings.shift();
+}
+
+function tmuxSync(args: string[]): string {
+  return execFileSync("tmux", args, { encoding: "utf8" }).trim();
+}
+
+/**
+ * Whether tmux still has the window. A failing list-windows throws instead of
+ * answering false: a transient error must not look like a closed window, or the
+ * old window would be orphaned.
+ */
+function tmuxWindowAlive(windowId: string): boolean {
+  return tmuxSync(["list-windows", "-a", "-F", "#{window_id}"]).split("\n").includes(windowId);
+}
+
+/** This process's agent window, or the one the parent pi passed down in PI_SUBAGENT_TMUX_WINDOW. */
+function currentAgentWindow(): { id: string; ordinal: number } | null {
+  if (tmuxAgentWindow) return tmuxAgentWindow;
+  const inherited = process.env.PI_SUBAGENT_TMUX_WINDOW?.trim();
+  return inherited ? { id: inherited, ordinal: 1 } : null;
+}
+
+/** `agents:<cwd basename>`, `-<ordinal>` for overflow windows, and `-<session id prefix>` if the name is taken. */
+function tmuxAgentWindowName(sessionId: string, ordinal: number): string {
+  const base = `agents:${basename(process.cwd()) || "pi"}`;
+  const wanted = ordinal > 1 ? `${base}-${ordinal}` : base;
+  const names = tmuxSync(["list-windows", "-t", sessionId, "-F", "#{window_name}"]).split("\n");
+  if (!names.includes(wanted) || !muxSessionId) return wanted;
+  return `${wanted}-${muxSessionId.slice(0, 4)}`;
+}
+
+/** Pane owner as declared by the caller; `name` is the bare name without a kind prefix. */
+export interface AgentPaneInfo {
+  kind: "sub" | "team";
+  name: string;
+}
+
+function agentPaneTitle(agent: AgentPaneInfo): string {
+  return `${agent.kind}:${agent.name}`;
+}
+
+/**
+ * Split a new pane off the agent window. Returns null when tmux refuses, typically
+ * because the window has no room left or is gone.
+ */
+function splitAgentWindow(windowId: string): string | null {
+  try {
+    tmuxSync(["select-layout", "-t", windowId, "tiled"]);
+  } catch {
+    // Tiling only makes room for the split below; the split decides.
+  }
+  let paneId: string;
+  try {
+    paneId = tmuxSync(["split-window", "-d", "-t", windowId, "-P", "-F", "#{pane_id}"]);
+  } catch {
+    return null;
+  }
+  if (!paneId.startsWith("%")) {
+    throw new Error(`Unexpected tmux split-window output: ${paneId}`);
+  }
+  try {
+    tmuxSync(["select-layout", "-t", windowId, "tiled"]);
+  } catch {
+    // Cosmetic: the pane exists either way.
+  }
+  return paneId;
+}
+
+/** Create an agent window with its first pane. */
+function openAgentWindow(ordinal: number): { windowId: string; paneId: string } {
+  const sourcePane = process.env.TMUX_PANE;
+  if (!sourcePane) throw new Error("TMUX_PANE not set");
+  // Target the session of the pi pane; new-window then takes the next free index.
+  const sessionId = tmuxSync(["display-message", "-p", "-t", sourcePane, "#{session_id}"]);
+  const created = tmuxSync([
+    "new-window",
+    "-d",
+    "-t",
+    sessionId,
+    "-n",
+    tmuxAgentWindowName(sessionId, ordinal),
+    "-P",
+    "-F",
+    "#{window_id} #{pane_id}",
+  ]);
+  const match = /^(@\d+) (%\d+)$/.exec(created);
+  if (!match) throw new Error(`Unexpected tmux new-window output: ${created}`);
+  tmuxAgentWindow = { id: match[1], ordinal };
+  return { windowId: match[1], paneId: match[2] };
+}
+
+/**
+ * Pane border title. Programs in the pane (pi, the shell) set titles with OSC 0/2,
+ * so the pane is told to ignore them; @agent_title keeps the title readable from
+ * user formats. All steps are cosmetic: failures are recorded, not thrown.
+ */
+function setAgentPaneTitle(paneId: string, windowId: string, title: string): void {
+  try {
+    tmuxSync(["set-option", "-p", "-t", paneId, "allow-set-title", "off"]);
+  } catch {
+    try {
+      // Fall back to the window scope if this tmux accepts the option only there.
+      tmuxSync(["set-option", "-w", "-t", windowId, "allow-set-title", "off"]);
+    } catch (err) {
+      noteMuxWarning(`allow-set-title off failed for ${paneId}: ${(err as Error).message}`);
+    }
+  }
+  try {
+    tmuxSync(["select-pane", "-t", paneId, "-T", title]);
+  } catch (err) {
+    noteMuxWarning(`select-pane -T failed for ${paneId}: ${(err as Error).message}`);
+  }
+  try {
+    tmuxSync(["set-option", "-p", "-t", paneId, "@agent_title", title]);
+  } catch (err) {
+    noteMuxWarning(`@agent_title failed for ${paneId}: ${(err as Error).message}`);
+  }
+}
+
+function placeAgentPane(paneId: string, windowId: string, title: string): string {
+  setAgentPaneTitle(paneId, windowId, title);
+  tmuxPaneWindowIds.set(paneId, windowId);
+  return paneId;
+}
+
+/**
+ * Create a pane in this process's agent window. Splits into the current window
+ * while it has room; when it has none, or is gone, a window is opened instead
+ * (`-2`, `-3`, ... for overflow windows).
+ */
+function createTmuxWindowPane(agent: AgentPaneInfo): string {
+  const title = agentPaneTitle(agent);
+  const current = currentAgentWindow();
+  if (current && tmuxWindowAlive(current.id)) {
+    const paneId = splitAgentWindow(current.id);
+    if (paneId) return placeAgentPane(paneId, current.id, title);
+    const opened = openAgentWindow(current.ordinal + 1);
+    return placeAgentPane(opened.paneId, opened.windowId, title);
+  }
+  const opened = openAgentWindow(1);
+  return placeAgentPane(opened.paneId, opened.windowId, title);
+}
+
+/**
+ * Env assignment that lets child pi processes (subagents, team members) reuse this
+ * process's agent window instead of opening their own.
+ */
+export function agentWindowEnvParts(): string[] {
+  if (tmuxLayout() !== "window") return [];
+  const current = currentAgentWindow();
+  return current ? [`PI_SUBAGENT_TMUX_WINDOW=${shellEscape(current.id)}`] : [];
+}
+
+/** Window that a pane from createSurface lives in; undefined for split-layout panes. */
+export function surfaceWindowId(surface: string): string | undefined {
+  return tmuxPaneWindowIds.get(surface);
+}
+
+/**
+ * Bring a tmux pane and its window to the front without zooming.
+ * Returns false outside tmux or when the pane no longer exists.
+ */
+export function focusMuxPane(paneId: string, windowId?: string): boolean {
+  if (getMuxBackend() !== "tmux") return false;
+  try {
+    if (windowId) tmuxSync(["select-window", "-t", windowId]);
+    tmuxSync(["select-pane", "-t", paneId]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Create a new terminal surface for a subagent.
  *
  * For cmux: the first call creates a right-split pane; subsequent calls add
  * tabs to that same pane (avoiding ever-narrower splits).
  * For zellij: chooses a tab-aware tiled or stacked placement.
- * For tmux/wezterm: falls back to split behavior.
+ * For tmux: a pane in the background window (default), or split behavior with
+ * PI_SUBAGENT_TMUX_LAYOUT=split.
+ * For wezterm: falls back to split behavior.
  *
  * Returns an identifier (`surface:42` in cmux, `%12` in tmux, `pane:7` in zellij, `42` in wezterm).
  */
-export function createSurface(name: string): string {
+export function createSurface(name: string, agent: AgentPaneInfo = { kind: "sub", name }): string {
   const backend = getMuxBackend();
 
   if (backend === "cmux" && cmuxSubagentPane) {
@@ -776,7 +982,11 @@ export function createSurface(name: string): string {
     return createZellijSurface(name);
   }
 
-  // On tmux, target the parent pi's pane so splits follow the agent, not the user's focus.
+  if (backend === "tmux" && tmuxLayout() === "window") {
+    return createTmuxWindowPane(agent);
+  }
+
+  // On tmux split layout, target the parent pi's pane so splits follow the agent, not the user's focus.
   // See https://github.com/HazAT/pi-interactive-subagents/issues/12
   const fromSurface = backend === "tmux" ? process.env.TMUX_PANE : undefined;
   return createSurfaceSplit(name, "right", fromSurface);
@@ -1202,6 +1412,7 @@ export function closeSurface(surface: string): void {
 
   if (backend === "tmux") {
     execFileSync("tmux", ["kill-pane", "-t", surface], { encoding: "utf8" });
+    tmuxPaneWindowIds.delete(surface);
     return;
   }
 

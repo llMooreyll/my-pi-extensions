@@ -10,7 +10,17 @@ import { Type } from "@sinclair/typebox";
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { closeSurface, createSurface, isMuxAvailable, muxSetupHint, sendLongCommand, shellEscape } from "../subagents/cmux.ts";
+import {
+  agentWindowEnvParts,
+  closeSurface,
+  createSurface,
+  isMuxAvailable,
+  muxSetupHint,
+  sendLongCommand,
+  shellEscape,
+  surfaceWindowId,
+} from "../subagents/cmux.ts";
+import { type BackgroundAgent, backgroundRowClick, setBackgroundAgentSource } from "../subagents/background.ts";
 import {
   DENIED_FOR_MEMBERS,
   LEAD_MONITOR_MS,
@@ -187,6 +197,19 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
 
   registerTeamRenderers(pi);
 
+  setBackgroundAgentSource("team", () =>
+    liveMembers().map(
+      (m): BackgroundAgent => ({
+        id: m.instanceId,
+        kind: "team",
+        name: m.name,
+        state: readStatus(m)?.state ?? "starting",
+        paneId: m.surface,
+        windowId: m.surface ? surfaceWindowId(m.surface) : undefined,
+      }),
+    ),
+  );
+
   // ── helpers ──
 
   function saveRoster(): void {
@@ -223,6 +246,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
     return liveMembers().map((m) => {
       const status = readStatus(m);
       return {
+        id: m.instanceId,
         name: m.name,
         agent: m.agent,
         write: m.write,
@@ -246,10 +270,18 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
       }
       ctxRef.ui.setWidget(
         "team-status",
-        (_tui: any, theme: any) => ({
-          invalidate() {},
-          render: (width: number) => renderTeamBanner(rows, width, theme),
-        }),
+        (_tui: any, theme: any) => {
+          // Member id of each rendered line (borders have none), for click-to-focus.
+          let lineIds: Array<string | undefined> = [];
+          return {
+            invalidate() {},
+            render: (width: number) => {
+              lineIds = [];
+              return renderTeamBanner(rows, width, theme, Date.now(), lineIds);
+            },
+            handleMouse: backgroundRowClick(() => lineIds),
+          };
+        },
         { placement: "aboveEditor" },
       );
     } catch {
@@ -676,7 +708,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
           spillPath: prepared.spillPath,
         });
 
-        surface = createSurface(`team:${name}`);
+        surface = createSurface(`team:${name}`, { kind: "team", name });
         record.surface = surface;
         saveRoster();
         await sleep(deps.getShellReadyDelayMs());
@@ -699,6 +731,7 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
         if (process.env.PI_CODING_AGENT_DIR) {
           env.push(`PI_CODING_AGENT_DIR=${shellEscape(process.env.PI_CODING_AGENT_DIR)}`);
         }
+        env.push(...agentWindowEnvParts());
         const args = [
           "pi",
           "--session", shellEscape(sessionFile),

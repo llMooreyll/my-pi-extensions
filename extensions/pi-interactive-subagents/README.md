@@ -39,7 +39,7 @@
 ## 支持的终端复用器
 
 - cmux
-- tmux（`tmux new -A -s pi`）
+- tmux（`tmux new -A -s pi`）：子代理和团队成员默认放在后台 window `agents:<目录名>`；设置 `PI_SUBAGENT_TMUX_LAYOUT=split` 改回分屏。
 - zellij（`zellij --session pi`）
 - WezTerm
 

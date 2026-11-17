@@ -27,7 +27,16 @@ import {
   renameCurrentTab,
   renameWorkspace,
   readScreen,
+  setMuxSessionId,
+  surfaceWindowId,
+  agentWindowEnvParts,
 } from "./cmux.ts";
+import {
+  type BackgroundAgent,
+  backgroundRowClick,
+  publishBackgroundAgentsService,
+  setBackgroundAgentSource,
+} from "./background.ts";
 
 import {
   findLastAssistantMessage,
@@ -560,6 +569,19 @@ interface RunningSubagent {
 /** All currently running subagents, keyed by id. */
 const runningSubagents = new Map<string, RunningSubagent>();
 
+/** Rows for the background-agent service; state is the status kind shown in the widget. */
+function listSubagentBackgroundAgents(): BackgroundAgent[] {
+  const now = Date.now();
+  return Array.from(runningSubagents.values(), (running) => ({
+    id: running.id,
+    kind: "sub" as const,
+    name: running.name,
+    state: classifyStatus(running.statusState, now).kind,
+    paneId: running.surface,
+    windowId: surfaceWindowId(running.surface),
+  }));
+}
+
 // ── Widget management ──
 
 /** Latest ExtensionContext from session_start, used for widget updates. */
@@ -625,11 +647,16 @@ function updateWidget() {
     (_tui: any, theme: any) => {
       // Borders follow the global theme accent instead of a fixed RGB blue.
       const paint: Paint = (text) => theme.fg("accent", text);
+      // Agent id of each rendered line (borders have none), for click-to-focus.
+      let rowIds: Array<string | undefined> = [];
       return {
         invalidate() {},
         render(width: number) {
-          return renderSubagentWidgetLines(Array.from(runningSubagents.values()), width, paint);
+          const agents = Array.from(runningSubagents.values());
+          rowIds = [undefined, ...agents.map((agent) => agent.id), undefined];
+          return renderSubagentWidgetLines(agents, width, paint);
         },
+        handleMouse: backgroundRowClick(() => rowIds),
       };
     },
     { placement: "aboveEditor" },
@@ -973,7 +1000,7 @@ async function launchSubagent(
   // Use pre-created surface (parallel mode) or create a new one.
   // For new surfaces, pause briefly so the shell is ready before sending the command.
   const surfacePreCreated = !!options?.surface;
-  const surface = options?.surface ?? createSurface(params.name);
+  const surface = options?.surface ?? createSurface(params.name, { kind: "sub", name: params.name });
   if (!surfacePreCreated) {
     await new Promise<void>((resolve) => setTimeout(resolve, getShellReadyDelayMs()));
   }
@@ -1149,6 +1176,7 @@ async function launchSubagent(
   envParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
   envParts.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(activityFile)}`);
   envParts.push(`PI_SUBAGENT_SURFACE=${shellEscape(surface)}`);
+  envParts.push(...agentWindowEnvParts());
   const envPrefix = envParts.join(" ") + " ";
 
   // Pass task and skill prompts to the sub-agent.
@@ -1369,9 +1397,12 @@ async function watchSubagent(
 }
 
 export default function subagentsExtension(pi: ExtensionAPI) {
+  setBackgroundAgentSource("sub", listSubagentBackgroundAgents);
+
   // Capture the UI context for widget updates
   pi.on("session_start", (_event, ctx) => {
     latestCtx = ctx;
+    setMuxSessionId(ctx.sessionManager.getSessionId());
   });
 
   // Clean up on session shutdown
@@ -1829,7 +1860,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         // Record entry count before resuming so we can extract new messages
         const entryCountBefore = getNewEntries(params.sessionPath, 0).length;
 
-        const surface = createSurface(name);
+        const surface = createSurface(name, { kind: "sub", name });
         await new Promise<void>((resolve) => setTimeout(resolve, getShellReadyDelayMs()));
 
         // Build pi resume command
@@ -1871,6 +1902,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         resumeEnvParts.push(`PI_SUBAGENT_SESSION=${shellEscape(params.sessionPath)}`);
         resumeEnvParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
         resumeEnvParts.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(activityFile)}`);
+        resumeEnvParts.push(...agentWindowEnvParts());
         if (autoExit) {
           resumeEnvParts.push(`PI_SUBAGENT_AUTO_EXIT=1`);
         }
@@ -2223,6 +2255,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       getArtifactDir,
       getShellReadyDelayMs,
     });
+  }
+
+  // Subagents and members load this package too; only the main pi process publishes.
+  if (!process.env.PI_SUBAGENT_ID && !process.env.PI_TEAM_MEMBER_ID) {
+    publishBackgroundAgentsService();
   }
 }
 // test
