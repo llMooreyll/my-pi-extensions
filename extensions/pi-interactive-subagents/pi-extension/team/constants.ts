@@ -1,4 +1,3 @@
-export const MAX_LIVE_MEMBERS = 4;
 export const MEMBER_POLL_MS = 1000;
 export const LEAD_POLL_MS = 1000;
 export const LEAD_MONITOR_MS = 2000;

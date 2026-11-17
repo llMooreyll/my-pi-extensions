@@ -26,7 +26,6 @@ import {
   LEAD_MONITOR_MS,
   LEAD_POLL_MS,
   LEAD_SUMMARY_LIMIT,
-  MAX_LIVE_MEMBERS,
   MEMBER_NAME_RE,
   MEMBER_TOOL_NAMES,
   QUIT_TEARDOWN_WAIT_MS,
@@ -576,9 +575,6 @@ export function registerTeamLead(pi: ExtensionAPI, deps: TeamLeadDeps): void {
         return failResult(`Invalid member name "${name}": use lowercase letters, digits and dashes, starting with a letter.`);
       }
       if (findMember(name, false)) return failResult(`A live member named "${name}" already exists.`);
-      if (liveMembers().length >= MAX_LIVE_MEMBERS) {
-        return failResult(`Team already has ${MAX_LIVE_MEMBERS} live members; stop one first.`);
-      }
       if (!write && params.link && params.link.length > 0) {
         return failResult("link is only supported together with write: true.");
       }
