@@ -7,6 +7,7 @@ import { Choice, Sheet, Spinner, Txt } from "../ds/primitives";
 import { withAttachments } from "../lib/attach";
 import { pickFiles } from "../lib/pick";
 import { cancel as cancelTransfer, uploadFiles, useTransfers } from "../state/transfers";
+import { ComputerFilesSheet } from "./ComputerFiles";
 import { F, MARGIN, usePalette } from "../ds/tokens";
 import { BUILTIN_COMMANDS } from "../lib/slash";
 import { testLog, useTestAction, useTestInput } from "../lib/test-hooks";
@@ -24,6 +25,8 @@ export interface ComposerProps {
   onOpenCommands: () => void;
   /** File attachments (7.7.5): ids of uploads; undefined when hostd or the platform has no file support. */
   files?: { processId: string; ids: string[]; setIds: (ids: string[]) => void };
+  /** The session folder on the computer; enables mentioning computer files with @-references. */
+  cwd?: string;
 }
 
 const MAX_FILES = 10;
@@ -83,6 +86,7 @@ export function Composer(p: ComposerProps) {
   const [webH, setWebH] = useState(LINE_BOX);
   const [hint, setHint] = useState<string | undefined>();
   const [attachOpen, setAttachOpen] = useState(false);
+  const [browseOpen, setBrowseOpen] = useState(false);
   useTestInput("composer-input", p.setText);
   const fileIds = p.files?.ids ?? [];
   const items = useTransfers((s) => s.items);
@@ -129,8 +133,14 @@ export function Composer(p: ComposerProps) {
     if (t && t.state !== "done") void cancelTransfer(id);
     p.files.setIds(p.files.ids.filter((x) => x !== id));
   };
+  const mention = (refs: string[]) => {
+    setBrowseOpen(false);
+    if (!refs.length) return;
+    const t = p.text;
+    p.setText(`${t}${t && !/\s$/.test(t) ? " " : ""}${refs.join(" ")} `);
+  };
   const onPlus = () => {
-    if (p.files) { setAttachOpen(true); return; }
+    if (p.files || p.cwd) { setAttachOpen(true); return; }
     void pick();
   };
 
@@ -257,10 +267,14 @@ export function Composer(p: ComposerProps) {
         <Choice a11y="composer-attach-image" label="Image for the model" strong
           sub={p.imagesAllowed ? "pi looks at the picture itself" : "this model cannot read images; switch the model first"}
           disabled={!p.imagesAllowed} onPress={() => { setAttachOpen(false); void pick(); }} />
-        <Choice a11y="composer-attach-file" label="File to the computer" strong
-          sub={`any file, saved on the computer; pi gets its path${fileIds.length ? ` · ${fileIds.length} attached` : ""}`}
-          disabled={fileIds.length >= MAX_FILES} onPress={() => void attachFiles()} />
+        {p.cwd ? <Choice a11y="composer-attach-mention" label="File on the computer" strong
+          sub="browse from the session folder; pi gets an @-reference and reads it there"
+          onPress={() => { setAttachOpen(false); setBrowseOpen(true); }} /> : null}
+        {p.files ? <Choice a11y="composer-attach-file" label="File from this phone" strong
+          sub={`any file, copied to the computer; pi gets its path${fileIds.length ? ` · ${fileIds.length} attached` : ""}`}
+          disabled={fileIds.length >= MAX_FILES} onPress={() => void attachFiles()} /> : null}
       </Sheet>
+      {p.cwd ? <ComputerFilesSheet visible={browseOpen} cwd={p.cwd} onPick={mention} onClose={() => setBrowseOpen(false)} /> : null}
     </View>
   );
 }

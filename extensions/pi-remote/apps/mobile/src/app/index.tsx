@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ProcessInfo, ProjectItem, SessionListItem } from "@pi-remote/protocol";
 import { ConfirmDialog, ConnStatus, ErrorDialog, TrustDialog } from "../ds/common";
 import { canRestart, closeProcess, closeText, restartText } from "../lib/process";
-import { filesSupported, useTransfers } from "../state/transfers";
+import { filesSupported, isPendingOffer, useTransfers } from "../state/transfers";
 import { Button, Choice, Field, Pad, Row, Sheet, Spinner, StatusText, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { baseName, plainPreview, processTitle, relTime } from "../lib/format";
@@ -38,7 +38,7 @@ export function roleLine(p: ProcessInfo): string | undefined {
 
 const descendants = (n: Node): ProcessInfo[] => n.children.flatMap((c) => [c.info, ...descendants(c)]);
 
-function ProcMenu(props: { info?: ProcessInfo; onClose: () => void; onRestart: (i: ProcessInfo) => void; onCloseProc: (i: ProcessInfo) => void }) {
+function ProcMenu(props: { info?: ProcessInfo; onClose: () => void; onReload: (i: ProcessInfo) => void; onRestart: (i: ProcessInfo) => void; onCloseProc: (i: ProcessInfo) => void }) {
   const i = props.info;
   const pick = (fn: () => void) => () => { props.onClose(); fn(); };
   return (
@@ -46,6 +46,7 @@ function ProcMenu(props: { info?: ProcessInfo; onClose: () => void; onRestart: (
       {i ? (
         <>
           <Choice a11y="proc-menu-open" label="Open" sub="go to the conversation" strong onPress={pick(() => openProcess(i.processId))} />
+          <Choice a11y="proc-menu-reload" label="Reload pi" sub="reload extensions, skills and prompts in this pi; the conversation goes on" strong onPress={pick(() => props.onReload(i))} />
           {canRestart(i) ? <Choice a11y="proc-menu-restart" label="Restart pi" sub="quit and reopen this conversation with current extensions and tools" strong onPress={pick(() => props.onRestart(i))} /> : null}
           <Choice a11y="proc-menu-quit" label="Close pi" sub="quit pi on the computer; the conversation stays on disk" strong onPress={pick(() => props.onCloseProc(i))} />
         </>
@@ -54,25 +55,55 @@ function ProcMenu(props: { info?: ProcessInfo; onClose: () => void; onRestart: (
   );
 }
 
+/** "team of 3 · 1 working" — what hangs under a pi, said on its own row so the tree reads before the rows do. */
+function crewLine(n: Node): { text: string; busy: number; asks: number } {
+  const all = descendants(n);
+  const team = all.filter((d) => d.role.kind === "team_member").length;
+  const subs = all.length - team;
+  const busy = all.filter((d) => d.status === "running").length;
+  const asks = all.filter((d) => d.status === "waiting_ui").length;
+  const parts = [team ? `team of ${team}` : "", subs ? `${subs} subagent${subs > 1 ? "s" : ""}` : ""].filter(Boolean);
+  return { text: parts.join(" + "), busy, asks };
+}
+
 function ProcRows({ node, depth, index, onMenu }: { node: Node; depth: number; index: string; onMenu: (info: ProcessInfo) => void }) {
   const p = usePalette();
   const info = node.info;
-  const desc = descendants(node);
-  const subWaiting = desc.filter((d) => d.status === "waiting_ui").length;
   const role = roleLine(info);
   const accent = info.status === "waiting_ui" ? p.pink : info.status === "running" ? p.blue : undefined;
+  const crew = node.children.length ? crewLine(node) : undefined;
+  const rail = crew?.asks ? p.pink : p.blue;
   return (
     <>
-      <Row a11y={`proc-${info.processId}`} index={index} indexColor={accent} accent={accent} onPress={() => openProcess(info.processId)} onLongPress={() => onMenu(info)}
-        style={depth ? { paddingLeft: depth * 18 } : undefined}
+      <Row a11y={`proc-${info.processId}`} index={depth ? undefined : index} gutter={depth ? 10 : undefined} indexColor={accent} accent={depth ? undefined : accent} onPress={() => openProcess(info.processId)} onLongPress={() => onMenu(info)}
+        style={depth ? { paddingVertical: 12 } : undefined}
         trailing={<StatusText status={info.status} count={info.pendingUiCount} a11y={`proc-status-${info.processId}`} />}>
-        {role ? <Txt v="label" color={p.blue}>{depth ? "↳ " : ""}{role}</Txt> : null}
+        {role ? <Txt v="label" color={info.role.kind === "team_member" ? p.blue : p.soft}>{role}</Txt> : null}
         <Txt v={depth ? "lead" : "title"} lines={2}>{processTitle(info)}</Txt>
         <Txt v="mono" soft lines={1} style={{ fontSize: 11 }}>{baseName(info.cwd)} — {info.model?.id ?? "no model"}</Txt>
         {info.lastText ? <Txt v="small" soft lines={2}>{plainPreview(info.lastText)}</Txt> : null}
-        {subWaiting ? <Txt v="label" color={p.pink}>● {subWaiting} subtask{subWaiting > 1 ? "s" : ""} need{subWaiting > 1 ? "" : "s"} you</Txt> : null}
+        {crew ? (
+          <View accessibilityLabel={`proc-crew-${info.processId}`} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
+            <View style={{ width: 8, height: 8, backgroundColor: rail, transform: [{ rotate: "45deg" }] }} />
+            <Txt v="label" color={rail} style={{ fontFamily: F.monoBold }}>{crew.text}</Txt>
+            {crew.busy ? <Txt v="label" color={p.blue}>· {crew.busy} working</Txt> : null}
+            {crew.asks ? <Txt v="label" color={p.pink}>· {crew.asks} need{crew.asks > 1 ? "" : "s"} you</Txt> : null}
+          </View>
+        ) : null}
       </Row>
-      {depth < 3 ? node.children.map((c, i) => <ProcRows key={c.info.processId} node={c} depth={depth + 1} index={`${index}.${i + 1}`} onMenu={onMenu} />) : null}
+      {depth < 3 && node.children.length ? (
+        // Members hang off a rail from their lead: the tree is drawn, not only indented.
+        <View accessibilityLabel={`proc-children-${info.processId}`} style={{ marginLeft: MARGIN + 8, borderLeftWidth: 2, borderLeftColor: rail, marginBottom: 6 }}>
+          {node.children.map((c, i) => (
+            <View key={c.info.processId} style={{ flexDirection: "row" }}>
+              <View style={{ width: 12, height: 2, backgroundColor: rail, marginTop: 22 }} />
+              <View style={{ flex: 1 }}>
+                <ProcRows node={c} depth={depth + 1} index={`${index}.${i + 1}`} onMenu={onMenu} />
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </>
   );
 }
@@ -147,7 +178,7 @@ export default function Home() {
   const [menuError, setMenuError] = useState<string | undefined>();
   useStore((s) => s.features);
   const filesOn = filesSupported();
-  const filesWaiting = useTransfers((s) => Object.values(s.items).filter((t) => t.dir === "to_phone" && t.state === "waiting" && !s.local[t.id] && !s.progress[t.id]?.running).length);
+  const filesWaiting = useTransfers((s) => Object.values(s.items).filter((t) => isPendingOffer(s, t)).length);
   const tree = useMemo(() => buildTree(procs), [procs]);
   const waiting = useMemo(() => procs.filter((x) => x.status === "waiting_ui"), [procs]);
   const [sessions, setSessions] = useState<SessionListItem[] | undefined>();
@@ -239,7 +270,7 @@ export default function Home() {
           {procs.length === 0 ? (
             <Pad indent style={{ paddingVertical: 16 }}><Txt v="body" soft a11y="home-no-procs">Nothing is running. Reopen a session below or start a new one.</Txt></Pad>
           ) : tree.map((n, i) => <ProcRows key={n.info.processId} node={n} depth={0} index={String(i + 1).padStart(2, "0")} onMenu={setMenu} />)}
-          {procs.length ? <Pad indent style={{ paddingTop: 8 }}><Txt v="small" soft>Hold a row to restart or close that pi.</Txt></Pad> : null}
+          {procs.length ? <Pad indent style={{ paddingTop: 8 }}><Txt v="small" soft>Hold a row to reload, restart or close that pi.</Txt></Pad> : null}
           <View style={{ height: 8 }} />
         </View>
 
@@ -273,6 +304,7 @@ export default function Home() {
         <Button kind="solid" a11y="home-new" label="Start a new session" arrow="+" onPress={() => router.push("/new")} disabled={conn !== "ready"} />
       </View>
       <ProcMenu info={menu} onClose={() => setMenu(undefined)}
+        onReload={(i) => setAsk({ title: "Reload pi?", body: `Extensions, skills and prompts are reloaded in this pi on the computer.${i.status !== "idle" ? " pi is working now, so it reloads when this run ends." : ""}`, label: "Reload", run: () => call("reload", { processId: i.processId }).then(() => {}, (e) => setMenuError(errText(e))) })}
         onRestart={(i) => setAsk({ ...restartText(i), label: "Restart pi", run: () => flow.restartProcess(i.processId, i.cwd) })}
         onCloseProc={(i) => setAsk({ ...closeText(i), label: "Close pi", danger: true, run: () => closeProcess(i).catch((e) => setMenuError(errText(e))) })} />
       <ConfirmDialog title={ask?.title} body={ask?.body} confirmLabel={ask?.label} danger={ask?.danger} onCancel={() => setAsk(undefined)} onConfirm={() => { const a = ask; setAsk(undefined); if (a) void a.run(); }} />

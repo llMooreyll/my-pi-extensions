@@ -10,7 +10,8 @@ export type UiResponse =
   | { confirmed: boolean }     // confirm
   | { cancelled: true };       // 任意类型；custom 只接受这一种
 
-export interface RpivOption { label: string; description?: string; hasPreview?: boolean }
+/** `preview` is markdown from the tool call arguments (the prompt event only says that one exists). */
+export interface RpivOption { label: string; description?: string; hasPreview?: boolean; preview?: string }
 export interface RpivQuestion { question: string; header: string; multiSelect: boolean; options: RpivOption[] }
 export interface RpivPrompt { toolCallId: string; questions: RpivQuestion[] }
 

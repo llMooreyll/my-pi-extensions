@@ -39,7 +39,7 @@ function Suggestion({ name, prefix, onPick, a11y }: { name: string; prefix: stri
  * Folder completion under the path field: lists the sub-folders of what has been typed so far
  * (asked from the computer), narrowed by the last segment. Picking one appends it and lists its children.
  */
-export function PathSuggest({ value, onChange, onHome }: { value: string; onChange: (t: string) => void; onHome: (home: string) => void }) {
+export function PathSuggest({ value, onChange, onHome, creating }: { value: string; onChange: (t: string) => void; onHome: (home: string) => void; creating?: boolean }) {
   const p = usePalette();
   const cache = useRef(new Map<string, string[]>());
   const [dirs, setDirs] = useState<string[] | undefined>();
@@ -62,7 +62,7 @@ export function PathSuggest({ value, onChange, onHome }: { value: string; onChan
   }, [dir]);
 
   if (!dir) return <Txt v="small" soft style={{ marginTop: 6 }}>Start with / or ~/ to browse the computer's folders.</Txt>;
-  if (error) return <Txt v="small" color={p.pink} a11y="path-error" style={{ marginTop: 6 }}>No such folder on the computer.</Txt>;
+  if (error) return <Txt v="small" soft a11y="path-error" style={{ marginTop: 6 }}>No such folder on the computer yet.</Txt>;
   if (!dirs) return null;
   const q = prefix.toLowerCase();
   const hidden = q.startsWith(".");
@@ -73,7 +73,7 @@ export function PathSuggest({ value, onChange, onHome }: { value: string; onChan
   return (
     <View accessibilityLabel="path-suggestions" style={{ marginTop: 4 }}>
       {shown.map((d, i) => <Suggestion key={d} a11y={`path-suggest-${i}`} name={d} prefix={prefix} onPick={() => onChange(`${dir}${d}/`)} />)}
-      {!shown.length ? <Txt v="small" soft style={{ marginTop: 6 }}>{q ? "No folder starts with that." : "No sub-folders here."}</Txt> : null}
+      {!shown.length && !creating ? <Txt v="small" soft style={{ marginTop: 6 }}>{q ? "No folder starts with that." : "No sub-folders here."}</Txt> : null}
     </View>
   );
 }

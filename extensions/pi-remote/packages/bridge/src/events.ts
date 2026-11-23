@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AssistantDelta } from "../../protocol/src/index.ts";
 import { emitSafe } from "./host-conn.ts";
 import { logError } from "./log.ts";
+import { clearQueued, deliveredQueued } from "./queue.ts";
 import { runReloadNow } from "./remote-op-cmd.ts";
 import { sanitize } from "./sanitize.ts";
 import { buildInfo, lastAssistantText, refreshStatus, summarizeModel } from "./snapshot.ts";
@@ -22,7 +23,12 @@ function on(pi: ExtensionAPI, name: string, fn: (event: Obj) => void): void {
 
 function stripDelta(ev: Obj): AssistantDelta | undefined {
   if (!ev || ev.type === "start" || ev.type === "done" || ev.type === "error") return undefined;
-  const { partial: _p, message: _m, ...rest } = ev;
+  const { partial, message: _m, ...rest } = ev;
+  // pi-ai's toolcall_start carries only contentIndex; the call's id and name are in the partial message.
+  if (ev.type === "toolcall_start") {
+    const block = ((partial as Obj)?.content as Obj[] | undefined)?.[ev.contentIndex as number];
+    return { ...rest, id: String(block?.id ?? ""), toolName: String(block?.name ?? "") } as AssistantDelta;
+  }
   return rest as AssistantDelta;
 }
 
@@ -83,6 +89,7 @@ export function registerEventForwarders(pi: ExtensionAPI): void {
     s.lastText = lastAssistantText();
     s.inflight = undefined;
     s.runningTools.clear();
+    clearQueued();
     emitSafe({ type: "agent_settled", aborted: !!event.aborted, ...(s.lastText ? { lastText: s.lastText } : {}) });
     emitContextUsage();
     s.lastStatus = undefined;   // force an info frame so lastText reaches the list
@@ -107,13 +114,14 @@ export function registerEventForwarders(pi: ExtensionAPI): void {
     const m = event.message as Obj;
     if (isHiddenCustom(m)) return;
     if (m?.role === "assistant") g().inflight = undefined;
+    if (m?.role === "user") deliveredQueued(textOfContent(m.content));
     emitSafe({ type: "message_end", message: sanitize(m) });
     const child = childFileOf(m);
     if (child) { rememberChild(child); emitSafe({ type: "info", info: buildInfo() }); }
   });
 
   on(pi, "tool_execution_start", (event) => {
-    g().runningTools.set(event.toolCallId, { toolName: event.toolName, args: event.args, partialText: "", lastSentAt: 0 });
+    g().runningTools.set(event.toolCallId, { toolName: event.toolName, args: event.args, partialText: "", lastSentAt: 0, startedAt: Date.now() });
     emitSafe({ type: "tool_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args });
   });
 
@@ -142,8 +150,18 @@ export function registerEventForwarders(pi: ExtensionAPI): void {
     emitSafe({ type: "info", info: buildInfo() });
   });
 
-  on(pi, "session_compact", () => {
-    emitSafe({ type: "compaction", phase: "end" });
+  // Fires when compaction begins (manual, near the context limit, or after an overflow); nothing is returned,
+  // so pi's own summary runs unchanged.
+  on(pi, "session_before_compact", (event) => {
+    g().compacting = { reason: event.reason, at: Date.now() };
+    emitSafe({ type: "compaction", phase: "start", reason: event.reason });
+    emitSafe({ type: "info", info: buildInfo() });
+  });
+
+  on(pi, "session_compact", (event) => {
+    g().compacting = undefined;
+    emitSafe({ type: "compaction", phase: "end", reason: event.reason, tokensBefore: event.compactionEntry.tokensBefore });
+    emitSafe({ type: "info", info: buildInfo() });
     emitContextUsage();
   });
 
@@ -151,7 +169,9 @@ export function registerEventForwarders(pi: ExtensionAPI): void {
   on(pi, "turn_end", () => emitContextUsage());
 
   on(pi, "session_compact_failed", (event) => {
-    emitSafe({ type: "compaction", phase: "failed", ...(event.errorMessage ? { error: String(event.errorMessage) } : event.aborted ? { error: "aborted" } : {}) });
+    g().compacting = undefined;
+    emitSafe({ type: "info", info: buildInfo() });
+    emitSafe({ type: "compaction", phase: "failed", reason: event.reason, ...(event.errorMessage ? { error: String(event.errorMessage) } : event.aborted ? { error: "aborted" } : {}) });
   });
 
   on(pi, "session_info_changed", () => emitSafe({ type: "info", info: buildInfo() }));

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { View } from "react-native";
+import { ScrollView, useWindowDimensions, View } from "react-native";
 import type { RpivAnswer, RpivAnswerItem, RpivPrompt, UiRequest, UiResponse } from "@pi-remote/protocol";
 import { Button, Choice, Field, Rule, Sheet, Txt } from "../ds/primitives";
 import { MARGIN, usePalette } from "../ds/tokens";
 import { useTestAction } from "../lib/test-hooks";
+import { Markdown } from "./Markdown";
 
 function useCountdown(timeoutMs?: number): number | undefined {
   const [start] = useState(Date.now());
@@ -39,7 +40,7 @@ function UiRequestView({ req, onRespond }: { req: UiRequest; onRespond: (r: UiRe
       {req.kind === "confirm" ? <Txt v="body">{req.message}</Txt> : null}
       {req.kind === "select" ? (
         <View>
-          {req.options.map((o, i) => <Choice key={i} a11y={`ui-option-${i}`} label={o} disabled={dis} onPress={() => void answer({ value: o })} />)}
+          {req.options.map((o, i) => <Choice key={i} a11y={`ui-option-${i}`} label={o} full disabled={dis} onPress={() => void answer({ value: o })} />)}
         </View>
       ) : null}
       {req.kind === "input" || req.kind === "editor" ? (
@@ -63,16 +64,18 @@ function UiRequestView({ req, onRespond }: { req: UiRequest; onRespond: (r: UiRe
 /** Everything pi is waiting on, docked above the composer in pink so it cannot be missed. */
 export function AttentionDock(props: { ui: UiRequest[]; rpiv: RpivPrompt[]; onRespond: (uiId: string, r: UiResponse) => Promise<void>; onOpenRpiv: (p: RpivPrompt) => void }) {
   const p = usePalette();
+  const { height } = useWindowDimensions();
   const ui = props.ui.filter((u) => !(u.kind === "custom" && u.coveredBy));
   if (!ui.length && !props.rpiv.length) return null;
+  // Questions are shown whole; a long one scrolls inside the dock instead of being cut.
   return (
-    <View accessibilityLabel="attention-dock" style={{ backgroundColor: p.paper, maxHeight: 420 }}>
+    <View accessibilityLabel="attention-dock" style={{ backgroundColor: p.paper }}>
       <Rule weight={3} color={p.pink} />
-      <View style={{ paddingHorizontal: MARGIN, paddingVertical: 12, gap: 16 }}>
+      <ScrollView style={{ maxHeight: Math.round(height * 0.5) }} contentContainerStyle={{ paddingHorizontal: MARGIN, paddingVertical: 12, gap: 16 }} keyboardShouldPersistTaps="handled">
         <Txt v="label" color={p.pink}>● pi is waiting for you</Txt>
         {props.rpiv.map((r) => <RpivLine key={r.toolCallId} prompt={r} onOpen={() => props.onOpenRpiv(r)} />)}
         {ui.map((u) => <UiRequestView key={u.uiId} req={u} onRespond={(r) => props.onRespond(u.uiId, r)} />)}
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -83,7 +86,12 @@ function RpivLine({ prompt, onOpen }: { prompt: RpivPrompt; onOpen: () => void }
   return (
     <View style={{ gap: 6 }}>
       <Txt v="title">{prompt.questions.length === 1 ? "One question" : `${prompt.questions.length} questions`} for you</Txt>
-      <Txt v="small" soft lines={2}>{prompt.questions.map((q) => q.header || q.question).join(" · ")}</Txt>
+      {prompt.questions.map((q, i) => (
+        <View key={i} style={{ gap: 2 }}>
+          {q.header ? <Txt v="label" soft>{prompt.questions.length > 1 ? `${i + 1} · ` : ""}{q.header}</Txt> : null}
+          <Txt v="body">{q.question}</Txt>
+        </View>
+      ))}
       <Button kind="solid" a11y={`rpiv-card-open-${prompt.toolCallId}`} label="Answer" color={p.pink} onPress={onOpen} />
     </View>
   );
@@ -150,11 +158,21 @@ export function RpivSheet({ prompt, onClose, onSubmit }: { prompt?: RpivPrompt; 
             const s = st(page);
             const sel = s.selected.includes(i);
             return (
-              <Choice key={i} a11y={`rpiv-option-${i}`} label={o.label} selected={sel}
-                sub={[o.description, o.hasPreview ? "preview only on the computer" : ""].filter(Boolean).join(" · ")}
+              <Choice key={i} a11y={`rpiv-option-${i}`} label={o.label} selected={sel} full
+                sub={[o.description, o.hasPreview && !o.preview ? "preview only on the computer" : o.preview && !sel ? "has a preview — pick to see it" : ""].filter(Boolean).join(" · ") || undefined}
                 onPress={() => update(page, { ...s, selected: q.multiSelect ? (sel ? s.selected.filter((x) => x !== i) : [...s.selected, i]) : [i], text: q.multiSelect ? s.text : "" })} />
             );
           })}
+          {(() => {
+            // The TUI shows the focused option's preview beside the list; here it follows the list.
+            const shown = st(page).selected.length === 1 ? q.options[st(page).selected[0]!]?.preview : undefined;
+            return shown ? (
+              <View accessibilityLabel="rpiv-preview" style={{ marginTop: 14, borderLeftWidth: 2, borderLeftColor: p.pink, paddingLeft: 12 }}>
+                <Txt v="label" color={p.pink} style={{ marginBottom: 4 }}>preview</Txt>
+                <Markdown text={shown} />
+              </View>
+            ) : null;
+          })()}
           <View style={{ marginTop: 14 }}>
             <Field a11y="rpiv-text" label={q.multiSelect ? "add a note" : "or write your own answer"} value={st(page).text}
               onChangeText={(t) => update(page, { selected: q.multiSelect ? st(page).selected : [], text: t })} />

@@ -1,4 +1,4 @@
-import type { CommandInfo, ForkPoint, ModelSummary, ProcessInfo, ProjectItem, SessionListItem, TreeNodeWire, WireMessage } from "./model.ts";
+import type { CommandInfo, DirEntry, ForkPoint, ModelSummary, ProcessInfo, ProjectItem, SessionListItem, TreeNodeWire, WireMessage } from "./model.ts";
 import type { TransferInfo } from "./files.ts";
 import type { RpivAnswer, RpivPrompt, UiRequest, UiResponse } from "./ui.ts";
 
@@ -13,7 +13,7 @@ export interface Snapshot {
   messages: WireMessage[];           // 活动分支上最近 N 条（含 entryId）
   hasMoreBefore: boolean;
   inflight?: WireMessage;            // 正在流式生成的 assistant 消息
-  runningTools: { toolCallId: string; toolName: string; args: unknown; partialText: string }[];
+  runningTools: { toolCallId: string; toolName: string; args: unknown; partialText: string; elapsedMs?: number }[];
   pendingUi: UiRequest[];
   pendingRpiv: RpivPrompt[];
   extStatus: Record<string, string>;
@@ -35,6 +35,10 @@ export interface OpMap {
   /** 只读查看任意会话文件（例如已结束的子 agent），不启动 pi；7.2.16 */
   /** 列出电脑上某个目录下的子目录，供新建会话时补全路径；path 可用 ~ */
   list_dirs: [{ path: string }, { path: string; home: string; dirs: string[] }];
+  /** Folders and files in a directory on the computer (names, sizes), for mentioning a file to pi. */
+  list_entries: [{ path: string }, { path: string; home: string; entries: DirEntry[] }];
+  /** Create a folder (with missing parents) inside home; created=false when it already existed. */
+  make_dir: [{ path: string }, { path: string; created: boolean }];
   read_session: [{ sessionFile: string; beforeEntryId?: string; limit?: number }, { cwd: string; name?: string; messages: WireMessage[]; hasMoreBefore: boolean }];
   /** Quit a pi (stopping its current run first), then open the same session file in a new pi. Main processes only. */
   restart_process: [{ processId: string; trust: Trust }, { processId: string }];
@@ -48,6 +52,8 @@ export interface OpMap {
   // ---- 转发给 bridge ----
   prompt: [{ processId: string; text: string; images?: ImageInput[]; deliverAs?: DeliverAs }, { accepted: true }];
   abort: [{ processId: string }, {}];
+  /** Take back a message queued while pi works; returns its text. Needs ProcessInfo.canWithdraw. */
+  withdraw_queued: [{ processId: string; text: string }, { text: string }];
   ui_respond: [{ processId: string; uiId: string; response: UiResponse }, {}];
   rpiv_answer: [{ processId: string; answer: RpivAnswer }, { ok: boolean; code?: string; reason?: string }];
   get_history: [{ processId: string; beforeEntryId: string; limit?: number }, { messages: WireMessage[]; hasMoreBefore: boolean }];
@@ -74,7 +80,7 @@ export type OpResult<K extends OpName> = OpMap[K][1];
 
 export const HOSTD_LOCAL_OPS: readonly OpName[] = [
   "list_processes", "list_sessions", "list_projects", "open_session", "new_process",
-  "subscribe", "unsubscribe", "get_settings", "set_setting", "read_session", "list_dirs",
+  "subscribe", "unsubscribe", "get_settings", "set_setting", "read_session", "list_dirs", "list_entries", "make_dir",
   "list_transfers", "upload_begin", "transfer_cancel", "transfer_forget", "restart_process",
 ];
 

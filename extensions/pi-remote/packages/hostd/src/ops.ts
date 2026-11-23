@@ -18,6 +18,8 @@ export const VALIDATORS: Record<OpName, (a: Args) => void> = {
   get_settings: () => {},
   set_setting: (a) => { str(a, "key"); if (!("value" in a)) throw err("bad_request", "value is required"); },
   list_dirs: (a) => { anyStr(a, "path"); },
+  list_entries: (a) => { anyStr(a, "path"); },
+  make_dir: (a) => { str(a, "path"); },
   read_session: (a) => { str(a, "sessionFile"); optStr(a, "beforeEntryId"); optInt(a, "limit", 1, 1000); },
   restart_process: (a) => { pid(a); oneOf(a, "trust", ["approve", "deny"]); },
   list_transfers: () => {},
@@ -37,6 +39,7 @@ export const VALIDATORS: Record<OpName, (a: Args) => void> = {
     if (!(a.text as string).trim() && !(Array.isArray(imgs) && imgs.length)) throw err("bad_request", "text is empty");
   },
   abort: pid,
+  withdraw_queued: (a) => { pid(a); str(a, "text"); },
   ui_respond: (a) => {
     pid(a); str(a, "uiId");
     const r = obj(a, "response");
@@ -63,8 +66,8 @@ export const VALIDATORS: Record<OpName, (a: Args) => void> = {
 };
 
 export const SIDE_EFFECT_OPS: ReadonlySet<string> = new Set([
-  "prompt", "abort", "ui_respond", "rpiv_answer", "set_model", "set_thinking", "compact", "navigate_tree", "fork",
-  "new_session", "switch_session", "set_name", "reload", "shutdown", "open_session", "new_process", "set_setting", "restart_process",
+  "prompt", "abort", "withdraw_queued", "ui_respond", "rpiv_answer", "set_model", "set_thinking", "compact", "navigate_tree", "fork",
+  "new_session", "switch_session", "set_name", "reload", "shutdown", "open_session", "new_process", "set_setting", "restart_process", "make_dir",
 ]);
 // upload_begin and transfer_cancel are audited by transfers.ts with file names.
 

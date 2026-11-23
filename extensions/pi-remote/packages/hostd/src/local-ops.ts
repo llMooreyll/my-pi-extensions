@@ -1,8 +1,8 @@
 import type { Trust } from "../../protocol/src/index.ts";
 import { registry } from "./registry.ts";
 import { readSession } from "./session-reader.ts";
-import { listProjects, listSessions } from "./sessions-index.ts";
-import { listDirs } from "./dirs.ts";
+import { listProjects, listSessions, withOrigins } from "./sessions-index.ts";
+import { listDirs, listEntries, makeDir } from "./dirs.ts";
 import { getSettings, setSetting } from "./settings-service.ts";
 import { openSession, restartProcess, spawnPi } from "./spawner.ts";
 import { cancelTransfer, forgetTransfer, inboxDir, listTransfers, uploadBegin } from "./transfers.ts";
@@ -22,9 +22,11 @@ export async function runLocalOp(op: string, a: Args, deviceId?: string): Promis
     case "get_settings": return done(getSettings());
     case "set_setting": return done(await setSetting(a.key as string, a.value));
     case "list_dirs": return done(await listDirs(String(a.path)));
+    case "list_entries": return done(await listEntries(String(a.path)));
+    case "make_dir": return done(await makeDir(String(a.path)));
     case "read_session": return done(readSession(a.sessionFile as string, a.beforeEntryId as string | undefined, (a.limit as number | undefined) ?? 200));
     case "restart_process": return done(await restartProcess(a.processId as string, a.trust as Trust));
-    case "list_transfers": return done({ transfers: listTransfers(), inboxDir: inboxDir() });
+    case "list_transfers": return done({ transfers: await withOrigins(listTransfers()), inboxDir: inboxDir() });
     case "upload_begin": return done({ transfer: uploadBegin(a as { name: string; size: number; mime?: string; processId?: string }, deviceId) });
     case "transfer_cancel": cancelTransfer(a.id as string, deviceId); return done({});
     case "transfer_forget": forgetTransfer(a.id as string); return done({});

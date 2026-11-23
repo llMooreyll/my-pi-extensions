@@ -22,8 +22,11 @@ import { Composer } from "../../session/Composer";
 import { filesSupported } from "../../state/transfers";
 import { canRestart, closeProcess, closeText, restartText } from "../../lib/process";
 import { OutlineSheet } from "../../session/Outline";
-import { CompactSheet, ForkSheet, InfoSheet, ModelSheet, ResumeSheet, ThinkingSheet } from "../../session/Sheets";
+import { CompactBar, CompactSheet } from "../../session/Compaction";
+import { ForkSheet, InfoSheet, ModelSheet, ResumeSheet, ThinkingSheet } from "../../session/Sheets";
 import { Transcript, type TranscriptHandle } from "../../session/Transcript";
+import type { Queued } from "../../state/types";
+import { splitAttachments } from "../../lib/attach";
 
 type Confirm = { title: string; body?: string; label?: string; danger?: boolean; run: () => Promise<void> };
 
@@ -89,6 +92,18 @@ export default function SessionScreen() {
   const [panelsOpen, setPanelsOpen] = useState<boolean | undefined>(undefined);
   const flow = useOpenFlow();
   const transcript = useRef<TranscriptHandle>(null);
+  // Take a queued message back: it leaves pi's queue and its words return to the input for another try.
+  const withdraw = useCallback(async (q: Queued) => {
+    try {
+      const r = await call("withdraw_queued", { processId: pid, text: q.text });
+      store.removeQueued(pid, q.id);
+      const body = splitAttachments(r.text).body.trim();
+      if (body) setText((cur) => (cur.trim() ? `${body}\n\n${cur}` : body));
+    } catch (e) {
+      if (errCode(e) === "not_found") store.removeQueued(pid, q.id);
+      setError(errCode(e) === "not_found" ? "pi has already read this message." : errText(e));
+    }
+  }, [pid]);
   const info = view?.info ?? procInfo;
   // An unsent message belongs to the conversation, not to the screen: restore it when coming back.
   const draftKey = info?.sessionId || undefined;
@@ -305,7 +320,8 @@ export default function SessionScreen() {
         {loadError ? <Txt v="small" color={p.danger} style={{ padding: MARGIN }}>{loadError}</Txt> : null}
 
         {view ? (
-          <Transcript ref={transcript} messages={view.messages} inflight={view.inflight} running={view.runningTools} queued={view.queued} hasMoreBefore={view.hasMoreBefore} onLoadMore={loadMore} hideThinking={hideThinking} />
+          <Transcript ref={transcript} messages={view.messages} inflight={view.inflight} running={view.runningTools} queued={view.queued} hasMoreBefore={view.hasMoreBefore} onLoadMore={loadMore} hideThinking={hideThinking}
+            onWithdraw={info?.canWithdraw ? withdraw : undefined} cwd={info?.cwd} />
         ) : (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
             {conn === "ready" && procInfo ? <Spinner /> : <Txt v="em" soft>{conn === "ready" ? "" : "Not connected."}</Txt>}
@@ -340,12 +356,13 @@ export default function SessionScreen() {
         ) : null}
 
         <CrewTray children={children} all={Object.values(procsMap)} />
+        <CompactBar since={view?.compactingSince} reason={info?.compacting?.reason} />
         <AttentionDock ui={view?.pendingUi ?? []} rpiv={view?.pendingRpiv ?? []} onRespond={respondUi} onOpenRpiv={setRpivOpen} />
         <Composer
           disabled={!ready}
           disabledReason={conn !== "ready" ? "Not connected to the computer." : undefined}
           running={running}
-          imagesAllowed={!!info?.model?.input.includes("image")}
+          imagesAllowed={!!info?.model?.input?.includes("image")}
           commands={commands}
           text={text}
           setText={setText}
@@ -353,6 +370,7 @@ export default function SessionScreen() {
           onAbort={() => void doCall(() => call("abort", { processId: pid }))}
           onOpenCommands={() => setSheet("deck")}
           files={filesOn ? { processId: pid, ids: fileIds, setIds: setFileIds } : undefined}
+          cwd={info?.cwd}
         />
       </Screen>
 
@@ -366,7 +384,9 @@ export default function SessionScreen() {
       ) : null}
       {sheet === "fork" ? <ForkSheet processId={pid} onClose={() => setSheet(undefined)} onPrefill={setText} /> : null}
       {sheet === "resume" && info ? <ResumeSheet processId={pid} cwd={info.cwd} currentFile={info.sessionFile} onClose={() => setSheet(undefined)} /> : null}
-      {sheet === "compact" ? <CompactSheet processId={pid} onClose={() => setSheet(undefined)} /> : null}
+      {sheet === "compact" ? <CompactSheet usage={info?.contextUsage} busy={!!view?.compactingSince}
+        onRun={(instructions) => { setSheet(undefined); void doCall(() => call("compact", { processId: pid, ...(instructions ? { customInstructions: instructions } : {}) }, 620_000)); }}
+        onClose={() => setSheet(undefined)} /> : null}
       {(sheet === "session" || sheet === "rename") && info ? <InfoSheet info={info} renameFirst={sheet === "rename"} onClose={() => setSheet(undefined)} /> : null}
       <RpivSheet prompt={rpivOpen} onClose={() => setRpivOpen(undefined)} onSubmit={(answer) => call("rpiv_answer", { processId: pid, answer })} />
       <ConfirmDialog title={confirm?.title} body={confirm?.body} confirmLabel={confirm?.label} danger={confirm?.danger} onCancel={() => setConfirm(undefined)} onConfirm={() => { const c = confirm; setConfirm(undefined); if (c) void c.run(); }} />

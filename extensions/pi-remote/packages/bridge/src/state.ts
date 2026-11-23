@@ -28,13 +28,14 @@ export interface BridgeGlobal {
   rpivOpen: Map<string, RpivPrompt>;
   remoteOps: Map<string, (cmdCtx: unknown) => Promise<unknown>>;
   inflight?: unknown;
-  runningTools: Map<string, { toolName: string; args: unknown; partialText: string; lastSentAt: number }>;
+  runningTools: Map<string, { toolName: string; args: unknown; partialText: string; lastSentAt: number; startedAt?: number }>;
   extStatus: Map<string, string>;
   extWidgets: Map<string, { lines: string[]; placement: Placement }>;
   lastText?: string;
   lastActiveAt?: number;
   lastStatus?: string;
   reloadPending: boolean;
+  compacting?: { reason: "manual" | "threshold" | "overflow"; at: number };
   childSessionFiles: string[];
   widgetFactories: Map<string, { factory: Function; placement: Placement; lastText?: string }>;
   widgetTimer?: ReturnType<typeof setInterval>;

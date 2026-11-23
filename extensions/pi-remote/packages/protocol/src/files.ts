@@ -15,6 +15,9 @@ export type TransferErrorCode =
   | "cancelled"
   | "io";
 
+/** The conversation a transfer belongs to, captured when it was registered (the pi may be gone later). */
+export interface TransferOrigin { cwd: string; title?: string; sessionFile?: string }
+
 export interface TransferInfo {
   id: string;                  // 22 chars base64url (16 random bytes)
   dir: TransferDir;
@@ -27,6 +30,7 @@ export interface TransferInfo {
   note?: string;
   processId?: string;
   sessionId?: string;
+  origin?: TransferOrigin;
   createdAt: number;
   updatedAt: number;
   expiresAt?: number;

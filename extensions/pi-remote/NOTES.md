@@ -180,3 +180,34 @@
       - 之前有一次测试，cwd 在 /tmp 下，pi 先退出了，重开时才被拒绝。这就是改为先检查后退出的原因。
     - **实测**：dev-client 对运行中的 pi 重启用时约 3.5 秒，历史完整保留。Waydroid 上长按关闭、命令面板重启（含信任对话框）、`/quit`、命令面板关闭都通过。
 70. **Waydroid 安装卡住的真正原因**：Google Play 保护机制弹出"Send app for a security check?"等待点击（Finsky VerifyApps），安装就挂在那里。处理方式是在安装时用 `wd.mjs taptext "Don't send"` 点掉，不修改系统设置。第 67 条中提到的"adb install 偶尔卡住"也是这个原因。
+71. **工具与扩展消息的显示（toolView.ts、ToolCard、CustomCard）**：
+    - **盘点**：先盘点当前启用的扩展（依据 settings `packages` 与各包的 `pi` 字段），共 24 个工具、13 类 sendMessage 消息。
+      - pi-board 覆盖了 write/edit，多出 `message` 参数，显示为 "↳ 原因"。
+      - 其余：web-access 的 search/fetch/source_check/get_search_content；subagent/team 系列；read_video、transcribe_file、video_*、view_open；codemode（`nestedCalls` 列在展开里）。
+    - **卡片布局**：左侧色条表示工具类别（文件/命令=墨色，网络/代理/团队=蓝，问用户/发手机=粉，媒体=灰，出错=红），表头为动词加耗时，目标用粗等宽字，其下依次是原因、正文、结果。
+    - **耗时来源**：已完成的工具取 toolResult 的 `durationMs`（pi 记录在结果消息里）。运行中的工具从 `tool_start` 到达手机时开始计时；快照里带 `elapsedMs`，打开页面时能接着计时。
+    - **扩展消息**：统一为"色条 + 表头"；web-search 系列、team_notice、model fallback 等简短通知只占一行。
+    - **崩溃修复**：pi-ai 的 `toolcall_start` 事件不带 id 和 name，这两项只在 partial 里，而 bridge 原先把 partial 整个丢掉。旧卡片只是显示 "undefined"，新卡片会调用 name 的方法而崩溃。现在 bridge 从 partial 里取出这两项；App 也能容忍旧 bridge 不带名字的情况。
+    - **测试构建**：会逐秒刷新的计时（工具耗时、压缩计时）在测试构建里保持不动，原因同 Spinner：uiautomator 读不了一直在变的窗口。
+72. **撤回排队消息（steer/followUp）**：
+    - **限制**：pi 的扩展 API 没有提供修改队列的接口，`clearQueue` 只存在于 AgentSession。
+    - **做法**：bridge 在自己所在的 tmux pane 里按 pi 的 "Restore queued messages" 键（`app.message.dequeue`，默认 alt+up，会读取 keybindings.json），把队列全部倒回编辑器。然后取出要撤回的那条，把手机排的其余消息按原样重新排队（图片也保留），编辑器恢复成电脑端原来的内容；电脑端自己排的消息留在编辑器里，与在电脑上按这个键的效果相同。
+    - **适用范围**：只在 pi 运行于 tmux 中、且绑定了这个键时可用，以 `ProcessInfo.canWithdraw` 标记，hostd 启动的 pi 都满足。有对话框打开时拒绝操作，因为按键会落到对话框上。
+    - **副作用**：电脑端状态栏会闪过一次 "Restored N queued messages to editor"。
+    - **实测**：撤回 steer 后，follow-up 照常送达；电脑端已输入的文字保留；已经被读取的消息返回"pi has already read this message"。
+73. **文件管理**：
+    - **记录会话来源**：transfer 新增 `origin`（cwd、标题、会话文件），由 hostd 在登记时根据 registry 填写。对旧记录，list 时用会话索引按 sessionId 补上，标题取会话名或首条消息。
+    - **文件页结构**：依次为 待接收、传输中、按会话分组、暂不接收。分组可折叠，并能跳到对应会话；查不到来源的记录合并为一组 "Earlier files"。
+    - **暂不接收**：仅在手机端生效，id 列表存在 kv 里，并随 hostd 的列表一起清理。被标记的文件不再算作待接收（首页角标不计数），也不会自动下载；点下载即自动取消标记。
+74. **其余新增**：
+    - **首页长按**：菜单新增 Reload。
+    - **ask_user_question 完整显示**：问题和选项全文显示，Choice 增加 `full` 模式。选项预览（preview）从 bridge 里正在运行的工具参数中取出（事件本身不带预览），手机上选中该项后显示预览。
+    - **引用电脑上的文件**：新 op `list_entries`；输入框的 Attach 面板中加入 "File on the computer"，从会话目录开始浏览，插入 pi 格式的 `@path`，含空格的路径加引号。
+    - **新目录**：新 op `make_dir`，仅允许在 home 下创建，符号链接会解析后再检查。在 New session 输入一个不存在的路径时，提示将新建该目录，按钮变为 "Create … and start pi"。
+    - **首页树**：子进程挂在一条色条上，每行带一个连接短线；父行显示 "team of N + M subagents · 正在工作数 · 需要你处理的数"。子行不再显示编号。
+    - **compact**：
+      - bridge 在 `session_before_compact` 时发出 start，`info.compacting` 让中途打开页面的手机也能看到进行中的状态。
+      - 压缩进行时，输入框上方显示压缩条（原因与计时）。
+      - 对话记录中原来的分隔线改为压缩标记（压缩前的 token 数，摘要折叠，未展开时预览前两行）。
+      - Compact 面板显示上下文占用，并提供三个常用保留项。
+      - 手动压缩失败只弹对话框，不再额外弹一次 toast。

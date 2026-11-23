@@ -1,6 +1,7 @@
 import { VERSION } from "@earendil-works/pi-coding-agent";
 import type { ForkPoint, ModelSummary, ProcessInfo, ProcessStatus, Snapshot, TreeNodeWire, WireMessage } from "../../protocol/src/index.ts";
 import { emitSafe } from "./host-conn.ts";
+import { canWithdraw } from "./queue.ts";
 import { detectRole } from "./role.ts";
 import { entryMessage, sanitize } from "./sanitize.ts";
 import { g, type Binding } from "./state.ts";
@@ -45,10 +46,12 @@ export function buildInfo(): ProcessInfo {
   const base = {
     processId: s.processId, pid: process.pid, role: detectRole(), childSessionFiles: [...s.childSessionFiles],
     ...(process.env.TMUX_PANE ? { tmuxPane: process.env.TMUX_PANE } : {}),
+    ...(canWithdraw() ? { canWithdraw: true } : {}),
     spawnedByHostd: !!process.env.PI_REMOTE_SPAWN_TOKEN, piVersion: VERSION, compat: s.compat,
     status: currentStatus(), pendingUiCount: s.pendingUi.size + s.rpivOpen.size,
     ...(s.lastText ? { lastText: s.lastText } : {}), lastSeq: s.seq,
     ...(lastActiveAt() ? { lastActiveAt: lastActiveAt() } : {}),
+    ...(s.compacting ? { compacting: { reason: s.compacting.reason, elapsedMs: Date.now() - s.compacting.at } } : {}),
   };
   if (!b) return { ...base, cwd: process.cwd(), sessionId: "", thinkingLevel: "off" };
   const ctx = b.ctx;
@@ -94,7 +97,7 @@ export function getSnapshot(maxMessages: number): Snapshot {
     messages,
     hasMoreBefore: all.length > messages.length,
     ...(s.inflight ? { inflight: sanitize(s.inflight) } : {}),
-    runningTools: [...s.runningTools].map(([toolCallId, t]) => ({ toolCallId, toolName: t.toolName, args: t.args, partialText: t.partialText })),
+    runningTools: [...s.runningTools].map(([toolCallId, t]) => ({ toolCallId, toolName: t.toolName, args: t.args, partialText: t.partialText, ...(t.startedAt ? { elapsedMs: Date.now() - t.startedAt } : {}) })),
     pendingUi: [...s.pendingUi.values()].map((p) => p.req),
     pendingRpiv: [...s.rpivOpen.values()],
     extStatus: Object.fromEntries(s.extStatus),

@@ -71,26 +71,6 @@ export function ThinkingSheet({ processId, onClose }: { processId: string; onClo
   );
 }
 
-export function CompactSheet({ processId, onClose }: { processId: string; onClose: () => void }) {
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-  const run = async () => {
-    setBusy(true); setError(undefined);
-    try { await call("compact", { processId, ...(text.trim() ? { customInstructions: text.trim() } : {}) }, 620_000); onClose(); }
-    catch (e) { setError(errText(e)); }
-    finally { setBusy(false); }
-  };
-  return (
-    <Sheet visible a11y="compact-sheet" kicker="this session" title="Compact" onClose={onClose}
-      footer={<Button kind="solid" a11y="compact-run" label={busy ? "Summarising the conversation…" : "Compact now"} busy={busy} onPress={() => void run()} />}>
-      <Txt v="small" soft style={{ marginVertical: 12 }}>Replaces older messages with a summary to free context. The full history stays in the session file.</Txt>
-      <Field a11y="compact-input" label="what the summary should keep (optional)" value={text} onChangeText={setText} multiline />
-      <Err text={error} a11y="compact-error" />
-    </Sheet>
-  );
-}
-
 export function ForkSheet({ processId, onClose, onPrefill }: { processId: string; onClose: () => void; onPrefill: (t: string) => void }) {
   const [points, setPoints] = useState<ForkPoint[] | undefined>();
   const [error, setError] = useState<string | undefined>();

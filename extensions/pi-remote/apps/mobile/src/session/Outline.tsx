@@ -8,7 +8,7 @@ import { plainPreview, stripAnsi, textOf } from "../lib/format";
 import { useTestAction } from "../lib/test-hooks";
 import { call, errText } from "../net/connection";
 import { Seg, useTreePanel } from "./Sheets";
-import { toolSummary } from "./toolSummary";
+import { describeTool } from "./toolView";
 
 type Step = "tool" | "toolError" | "text" | "error" | "notice";
 
@@ -56,7 +56,8 @@ export function buildTurns(messages: WireMessage[]): Turn[] {
           const name = String(b.name ?? "tool");
           t.tools.set(name, (t.tools.get(name) ?? 0) + 1);
           callIndex.set(String(b.id), { turn: t, i: t.calls.length, step: t.steps.length });
-          t.calls.push({ id: String(b.id), line: toolSummary(name, b.arguments).split("\n")[0]!, error: false });
+          const v = describeTool(name, b.arguments, undefined);
+          t.calls.push({ id: String(b.id), line: `${v.verb} ${v.target}`.split("\n")[0]!, error: false });
           t.steps.push("tool");
         } else if (b.type === "text" && b.text?.trim()) {
           t.answer = stripAnsi(b.text);

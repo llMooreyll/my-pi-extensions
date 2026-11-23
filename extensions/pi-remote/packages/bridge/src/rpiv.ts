@@ -12,6 +12,7 @@ const BLOCKED = "rpiv:ask-user:blocked";
 const ANSWER = "rpiv:ask-user:answer";
 const ANSWER_RESULT = "rpiv:ask-user:answer-result";
 
+const PREVIEW_MAX = 8000;
 const openedAt = new Map<string, number>();
 const resultWaiters = new Map<string, (v: { ok?: boolean; code?: string; reason?: string }) => void>();
 
@@ -20,11 +21,20 @@ export function registerRpiv(pi: ExtensionAPI): void {
     try {
       const p = raw as { toolCallId?: string; questions?: any[] };
       if (!g().enabled || typeof p?.toolCallId !== "string") return;
+      // The event leaves preview text out on purpose; the running tool's arguments still have it.
+      const args = g().runningTools.get(p.toolCallId)?.args as { questions?: { options?: { preview?: unknown }[] }[] } | undefined;
+      const previewOf = (qi: number, oi: number): string | undefined => {
+        const v = args?.questions?.[qi]?.options?.[oi]?.preview;
+        return typeof v === "string" && v ? v.slice(0, PREVIEW_MAX) : undefined;
+      };
       const prompt: RpivPrompt = {
         toolCallId: p.toolCallId,
-        questions: (p.questions ?? []).map((q: any) => ({
+        questions: (p.questions ?? []).map((q: any, qi: number) => ({
           question: String(q.question ?? ""), header: String(q.header ?? ""), multiSelect: !!q.multiSelect,
-          options: (q.options ?? []).map((o: any) => ({ label: String(o.label ?? ""), ...(o.description ? { description: String(o.description) } : {}), ...(o.hasPreview ? { hasPreview: true } : {}) })),
+          options: (q.options ?? []).map((o: any, oi: number) => {
+            const preview = o.hasPreview ? previewOf(qi, oi) : undefined;
+            return { label: String(o.label ?? ""), ...(o.description ? { description: String(o.description) } : {}), ...(o.hasPreview ? { hasPreview: true } : {}), ...(preview ? { preview } : {}) };
+          }),
         })),
       };
       g().rpivOpen.set(prompt.toolCallId, prompt);

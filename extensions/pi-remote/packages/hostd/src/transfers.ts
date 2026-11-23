@@ -3,11 +3,12 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, realpathSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, resolve, sep } from "node:path";
-import type { OfferFilesArgs, TransferDir, TransferErrorCode, TransferInfo, TransferState } from "../../protocol/src/index.ts";
+import type { OfferFilesArgs, TransferDir, TransferErrorCode, TransferInfo, TransferOrigin, TransferState } from "../../protocol/src/index.ts";
 import { audit } from "./audit.ts";
 import { loadDevices } from "./devices.ts";
 import { err } from "./errors.ts";
 import { readJson, writeJsonAtomic } from "./fsutil.ts";
+import { registry } from "./registry.ts";
 import { log } from "./log.ts";
 import { CONFIG_DIR, STATE_DIR } from "./paths.ts";
 import { runtime } from "./runtime.ts";
@@ -139,6 +140,13 @@ function resolveOffered(cwd: string, p: string): string {
   return real;
 }
 
+function originOf(processId: string | undefined, cwd?: string): TransferOrigin | undefined {
+  const info = processId ? registry.get(processId)?.info : undefined;
+  const dir = info?.cwd ?? cwd;
+  if (!dir) return undefined;
+  return { cwd: dir, ...(info?.sessionName ? { title: info.sessionName.slice(0, 200) } : {}), ...(info?.sessionFile ? { sessionFile: info.sessionFile } : {}) };
+}
+
 /** Called by the bridge tool send_to_phone. All-or-nothing: on any failure nothing stays registered. */
 export async function offerFiles(a: OfferFilesArgs): Promise<TransferInfo[]> {
   if (!loadDevices().length) throw err("no_device", "No phone is paired with this computer");
@@ -148,6 +156,7 @@ export async function offerFiles(a: OfferFilesArgs): Promise<TransferInfo[]> {
   const now = Date.now();
   const expiresAt = now + runtime.config.files.offerTtlHours * 3_600_000;
   const made: Rec[] = [];
+  const origin = originOf(a.processId, a.cwd);
   try {
     for (const p of a.paths) {
       if (typeof p !== "string" || !p.trim()) throw err("bad_request", "empty path");
@@ -156,7 +165,7 @@ export async function offerFiles(a: OfferFilesArgs): Promise<TransferInfo[]> {
       const id = newId();
       const base: Rec = {
         id, dir: "to_phone", name: basename(real), size: 0, state: "waiting", bytesDone: 0, computerPath: real,
-        processId: a.processId, ...(a.sessionId ? { sessionId: a.sessionId } : {}), ...(a.note ? { note: a.note.slice(0, 500) } : {}),
+        processId: a.processId, ...(a.sessionId ? { sessionId: a.sessionId } : {}), ...(origin ? { origin } : {}), ...(a.note ? { note: a.note.slice(0, 500) } : {}),
         createdAt: now, updatedAt: now, expiresAt,
       };
       if (st.isFile()) {
@@ -242,9 +251,11 @@ export function uploadBegin(a: { name: string; size: number; mime?: string; proc
   const id = newId();
   const part = join(partialDir(), `${id}.part`);
   writeFileSync(part, "", { mode: 0o600 });
+  const origin = originOf(a.processId);
   const r: Rec = {
     id, dir: "to_computer", name: cleanName(a.name), size: a.size, ...(a.mime ? { mime: a.mime.slice(0, 120) } : {}),
     state: "waiting", bytesDone: 0, ...(a.processId ? { processId: a.processId } : {}),
+    ...(origin ? { origin } : {}),
     createdAt: now, updatedAt: now, expiresAt: now + runtime.config.files.offerTtlHours * 3_600_000, part, ...(deviceId ? { deviceId } : {}),
   };
   recs.set(id, r);

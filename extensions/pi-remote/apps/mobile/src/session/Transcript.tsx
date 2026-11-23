@@ -1,22 +1,23 @@
-import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { createContext, forwardRef, memo, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { Pressable, ScrollView, View, type ScrollViewInstance, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { WireMessage } from "@pi-remote/protocol";
 import { Button, Txt } from "../ds/primitives";
 import { F, GUTTER, MARGIN, usePalette } from "../ds/tokens";
 import { stripAnsi, textOf } from "../lib/format";
 import { useTestAction } from "../lib/test-hooks";
-import type { AssistantDraft, Block as ContentBlock, Queued } from "../state/types";
+import type { AssistantDraft, Block as ContentBlock, Queued, RunningTool } from "../state/types";
+import { CompactionMark } from "./Compaction";
 import { CustomCard } from "./CustomCard";
 import { AnchorContext, type Anchor, FoldBar, useAnchor } from "./anchor";
 import { Markdown } from "./Markdown";
 import { SelectContext, SelectSheet, useSelectText } from "./SelectSheet";
-import { ToolCard } from "./ToolCard";
+import { ToolCard, ToolCwdContext } from "./ToolCard";
 import { splitAttachments, type AttachedLine } from "../lib/attach";
 
 type Item = (
   | { key: string; kind: "msg"; m: WireMessage; idx: number }
   | { key: string; kind: "draft"; d: AssistantDraft }
-  | { key: string; kind: "tool"; id: string; name: string; args: unknown; partialText: string }
+  | { key: string; kind: "tool"; id: string; name: string; args: unknown; partialText: string; startedAt: number }
   | { key: string; kind: "queued"; q: Queued }
 ) & { label?: boolean; ctx: Ctx };
 
@@ -33,9 +34,21 @@ function speaker(i: Item): string {
   }
 }
 
-interface Ctx { results: Map<string, WireMessage>; running: Record<string, { toolName: string; args: unknown; partialText: string }>; hideThinking: boolean }
+/** Takes a queued message back from pi; absent when this pi cannot do that. */
+const WithdrawContext = createContext<((q: Queued) => Promise<void>) | undefined>(undefined);
+
+function WithdrawButton({ q }: { q: Queued }) {
+  const p = usePalette();
+  const withdraw = useContext(WithdrawContext);
+  const [busy, setBusy] = useState(false);
+  if (!withdraw) return null;
+  return <Button compact a11y={`queued-withdraw-${q.id}`} label={busy ? "taking back…" : "take back"} color={p.pink} disabled={busy}
+    onPress={async () => { setBusy(true); try { await withdraw(q); } finally { setBusy(false); } }} />;
+}
+
+interface Ctx { results: Map<string, WireMessage>; running: Record<string, RunningTool>; hideThinking: boolean }
 const NO_CTX: Ctx = { results: new Map(), running: {}, hideThinking: false };
-const EMPTY_RUNS: Record<string, { toolName: string; args: unknown; partialText: string }> = {};
+const EMPTY_RUNS: Record<string, RunningTool> = {};
 
 /**
  * Every entry hangs a small label in the margin column: YOU, PI, §. With `select`, the whole margin column is
@@ -164,12 +177,13 @@ const Row = memo(function Row({ item }: { item: Item }) {
               <Txt v="label" color={q.mode === "steer" ? p.blue : p.soft} style={{ fontFamily: F.monoBold, fontSize: 9.5 }}>{q.mode === "steer" ? "queued · steer" : "queued · after run"}</Txt>
             </View>
             <Txt v="small" soft lines={1} style={{ flex: 1, fontSize: 12 }}>{q.mode === "steer" ? "pi reads it at its next break" : "pi reads it when this run ends"}</Txt>
+            <WithdrawButton q={q} />
           </View>
         </Margin>
       </View>
     );
   }
-  if (item.kind === "tool") return <Margin label=""><ToolCard id={item.id} name={item.name} args={item.args} running={{ partialText: item.partialText }} /></Margin>;
+  if (item.kind === "tool") return <Margin label=""><ToolCard id={item.id} name={item.name} args={item.args} running={{ partialText: item.partialText, startedAt: item.startedAt }} /></Margin>;
   const m = item.m as WireMessage & Record<string, any>;
   const a11y = `msg-${item.idx}`;
   switch (m.role) {
@@ -209,7 +223,7 @@ const Row = memo(function Row({ item }: { item: Item }) {
         </Margin>
       );
     case "custom": return <Margin label={lab("§")} a11y={a11y} select={messageText(m).trim() || undefined}><CustomCard m={m} idx={item.idx} /></Margin>;
-    case "compactionSummary": return <Divider label="context compacted" text={String(m.summary ?? "")} a11y={a11y} />;
+    case "compactionSummary": return <CompactionMark summary={String(m.summary ?? "")} tokensBefore={typeof m.tokensBefore === "number" ? m.tokensBefore : undefined} fromHook={!!m.fromHook} at={typeof m.timestamp === "number" ? m.timestamp : typeof m.timestamp === "string" ? Date.parse(m.timestamp) : undefined} a11y={a11y} />;
     case "branchSummary": return <Divider label="summary of the abandoned branch" text={String(m.summary ?? "")} a11y={a11y} />;
     default: return null;
   }
@@ -248,7 +262,7 @@ interface RowGeometry {
   held: { current: boolean };
 }
 
-type Run = { toolName: string; args: unknown; partialText: string };
+type Run = RunningTool;
 
 /** Tool call ids a message or draft refers to. */
 function callIds(content: unknown): string[] {
@@ -273,6 +287,9 @@ const sameDeps = (a: unknown[], b: unknown[]) => a.length === b.length && a.ever
 export const Transcript = forwardRef<TranscriptHandle, {
   messages: WireMessage[]; inflight?: AssistantDraft; queued?: Queued[]; running?: Record<string, Run>;
   hasMoreBefore: boolean; onLoadMore?: () => Promise<void>; hideThinking?: boolean; header?: ReactElement | null;
+  onWithdraw?: (q: Queued) => Promise<void>;
+  /** The session folder: tool paths inside it are shown relative. */
+  cwd?: string;
 }>(function Transcript(props, ref) {
   const p = usePalette();
   const scrollRef = useRef<ScrollViewInstance>(null);
@@ -309,7 +326,7 @@ export const Transcript = forwardRef<TranscriptHandle, {
       raw.push({ key: "inflight", deps: [d, hideThinking, ...subDeps(ids)], speaker: "pi", build: (label) => ({ key: "inflight", kind: "draft", d, label, ctx: ctxFor(ids) }) });
     }
     for (const [id, t] of Object.entries(running)) if (!calls.has(id)) {
-      raw.push({ key: `run-${id}`, deps: [t], speaker: "pi", build: (label) => ({ key: `run-${id}`, kind: "tool", id, name: t.toolName, args: t.args, partialText: t.partialText, label, ctx: NO_CTX }) });
+      raw.push({ key: `run-${id}`, deps: [t], speaker: "pi", build: (label) => ({ key: `run-${id}`, kind: "tool", id, name: t.toolName, args: t.args, partialText: t.partialText, startedAt: t.startedAt, label, ctx: NO_CTX }) });
     }
     // Queued messages are not in the conversation yet, so they close the list.
     for (const q of props.queued ?? []) raw.push({ key: q.id, deps: [q], speaker: "you", build: (label) => ({ key: q.id, kind: "queued", q, label, ctx: NO_CTX }) });
@@ -405,6 +422,8 @@ export const Transcript = forwardRef<TranscriptHandle, {
   const [selectText, setSelectText] = useState<string | undefined>();
   return (
     <SelectContext.Provider value={setSelectText}>
+    <WithdrawContext.Provider value={props.onWithdraw}>
+    <ToolCwdContext.Provider value={props.cwd}>
     <View style={{ flex: 1 }}>
       <ScrollView
         ref={scrollRef}
@@ -442,6 +461,8 @@ export const Transcript = forwardRef<TranscriptHandle, {
       ) : null}
       <SelectSheet text={selectText} onClose={() => setSelectText(undefined)} />
     </View>
+    </ToolCwdContext.Provider>
+    </WithdrawContext.Provider>
     </SelectContext.Provider>
   );
 });

@@ -4,7 +4,7 @@ import { formatBytes, type TransferInfo } from "@pi-remote/protocol";
 import { Button, Txt } from "../ds/primitives";
 import { F, usePalette } from "../ds/tokens";
 import { relTime } from "../lib/format";
-import { cancel, forget, openLocal, removeLocal, saveToFolder, shareLocal, startDownload, useTransfers } from "../state/transfers";
+import { cancel, dismiss, forget, openLocal, removeLocal, saveToFolder, shareLocal, startDownload, useTransfers } from "../state/transfers";
 
 /** Thin bar under a moving file; the filled part is the share already acknowledged. */
 export function ProgressLine({ value, color }: { value: number; color: string }) {
@@ -29,11 +29,12 @@ function daysLeft(at: number): string {
  * One file in either direction: name, size, where it stands, and what can be done with it now.
  * `known` covers files mentioned in old messages after hostd forgot them.
  */
-export function FileRow(props: { id: string; known?: { name: string; size: number }; full?: boolean; origin?: string }) {
+export function FileRow(props: { id: string; known?: { name: string; size: number }; full?: boolean; origin?: string; bare?: boolean }) {
   const p = usePalette();
   const t = useTransfers((s) => s.items[props.id]) as TransferInfo | undefined;
   const pr = useTransfers((s) => s.progress[props.id]);
   const local = useTransfers((s) => !!s.local[props.id]);
+  const aside = useTransfers((s) => !!s.dismissed[props.id]);
   const [note, setNote] = useState<{ text: string; bad?: boolean } | undefined>();
   const a = (s: string) => `file-${s}-${props.id}`;
   const name = t?.name ?? props.known?.name ?? "file";
@@ -70,9 +71,10 @@ export function FileRow(props: { id: string; known?: { name: string; size: numbe
     else if (t.state === "failed") { status = t.error?.message ?? "failed"; statusColor = p.danger; }
     else {
       const until = t.expiresAt ? ` · ${daysLeft(t.expiresAt)}` : "";
-      status = pr?.error ? pr.error : pr?.bytes ? `paused at ${pct(pr.bytes, size)}%` : t.state === "done" ? `downloaded before, not on this phone now${until}` : `waiting${until}`;
+      status = pr?.error ? pr.error : aside ? `not now — kept on the computer${until}` : pr?.bytes ? `paused at ${pct(pr.bytes, size)}%` : t.state === "done" ? `downloaded before, not on this phone now${until}` : `waiting${until}`;
       if (pr?.error) statusColor = p.danger;
-      actions.push({ label: pr?.bytes ? "resume" : t.state === "done" ? "download again" : "download", a11y: a("download"), run: () => startDownload(t.id), kind: "outline", color: p.pink });
+      actions.push({ label: pr?.bytes ? "resume" : t.state === "done" ? "download again" : "download", a11y: a("download"), run: () => startDownload(t.id), kind: "outline", color: aside ? undefined : p.pink });
+      if (t.state === "waiting" && !aside) actions.push({ label: "not now", a11y: a("dismiss"), run: () => dismiss([t.id]) });
     }
   } else {
     if (t.state === "done") { status = "saved on the computer"; statusColor = p.ok; }
@@ -100,7 +102,7 @@ export function FileRow(props: { id: string; known?: { name: string; size: numbe
         {running || (bytes > 0 && !local && (t?.state === "waiting" || t?.state === "active")) ? <ProgressLine value={size ? bytes / size : 1} color={running ? p.blue : p.faint} /> : null}
         {!toPhone && t?.state === "done" && t.computerPath ? <Txt v="mono" soft selectable style={{ fontSize: 11, marginTop: 2 }}>{t.computerPath}</Txt> : null}
         {props.full && t?.note ? <Txt v="small" soft style={{ marginTop: 2 }}>“{t.note}”</Txt> : null}
-        {props.full && (props.origin || t) ? <Txt v="small" soft style={{ marginTop: 2, fontSize: 12 }}>{[props.origin, t ? relTime(t.createdAt) : undefined].filter(Boolean).join(" · ")}</Txt> : null}
+        {props.full && (props.origin || t) ? <Txt v="small" soft style={{ marginTop: 2, fontSize: 12 }}>{[props.bare ? undefined : props.origin, t ? relTime(t.createdAt) : undefined].filter(Boolean).join(" · ")}</Txt> : null}
         {actions.length ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 14, marginTop: 8 }}>
             {actions.map((x) => <Button key={x.a11y} a11y={x.a11y} label={x.label} kind={x.kind ?? "text"} compact color={x.color} onPress={() => { setNote(undefined); void x.run(); }} />)}

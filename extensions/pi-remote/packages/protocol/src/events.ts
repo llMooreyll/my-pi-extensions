@@ -2,6 +2,8 @@ import type { ContextUsageWire, ModelSummary, ProcessInfo, WireMessage } from ".
 import type { RpivPrompt, UiRequest } from "./ui.ts";
 
 /** assistant 流式增量。来自 pi 的 assistantMessageEvent，去掉了 partial / message 字段 */
+export type CompactionReason = "manual" | "threshold" | "overflow";
+
 export type AssistantDelta =
   | { type: "text_start"; contentIndex: number }
   | { type: "text_delta"; contentIndex: number; delta: string }
@@ -26,7 +28,7 @@ export type BridgeEvent =
   | { type: "tool_end"; toolCallId: string; toolName: string; isError: boolean; durationMs?: number }
   | { type: "model_changed"; model: ModelSummary }
   | { type: "thinking_changed"; level: string }
-  | { type: "compaction"; phase: "end" | "failed"; error?: string }
+  | { type: "compaction"; phase: "start" | "end" | "failed"; reason?: CompactionReason; tokensBefore?: number; error?: string }
   | { type: "context_usage"; usage: ContextUsageWire }
   | { type: "ui_request"; req: UiRequest }
   | { type: "ui_closed"; uiId: string; by: "local" | "remote" }

@@ -1,5 +1,5 @@
 import { SessionManager, type SessionInfo } from "@earendil-works/pi-coding-agent";
-import type { ProjectItem, SessionListItem } from "../../protocol/src/index.ts";
+import type { ProjectItem, SessionListItem, TransferInfo } from "../../protocol/src/index.ts";
 import { registry } from "./registry.ts";
 
 let cache: { at: number; items: SessionInfo[] } | undefined;
@@ -46,4 +46,23 @@ export async function listProjects(): Promise<ProjectItem[]> {
     else p.lastModified = now;
   }
   return [...map.values()].sort((a, b) => b.lastModified.localeCompare(a.lastModified));
+}
+
+/**
+ * Fill in the conversation of transfers made before hostd recorded it (or before the session had a name), from the
+ * session files: a list on the phone grouped by conversation needs a name for each.
+ */
+export async function withOrigins(list: TransferInfo[]): Promise<TransferInfo[]> {
+  const needs = list.filter((t) => !t.origin?.title && (t.origin?.sessionFile || t.sessionId));
+  if (!needs.length) return list;
+  const sessions = await allSessions();
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const byPath = new Map(sessions.map((s) => [s.path, s]));
+  return list.map((t) => {
+    if (!needs.includes(t)) return t;
+    const s = (t.origin?.sessionFile ? byPath.get(t.origin.sessionFile) : undefined) ?? (t.sessionId ? byId.get(t.sessionId) : undefined);
+    if (!s) return t;
+    const title = (s.name || s.firstMessage || "").replace(/\s+/g, " ").trim().slice(0, 120);
+    return { ...t, origin: { cwd: t.origin?.cwd ?? s.cwd, sessionFile: s.path, ...(title ? { title } : {}) } };
+  });
 }

@@ -22,6 +22,8 @@ export type ProcessRole =
   | { kind: "team_member"; memberId: string; name: string; agent?: string; write: boolean;
       branch?: string; worktree?: string; leadPid: number; runDir?: string };
 
+export interface DirEntry { name: string; dir: boolean; size?: number; mtime?: number }
+
 export interface ProcessInfo {
   processId: string;
   pid: number;
@@ -30,7 +32,9 @@ export interface ProcessInfo {
   parentProcessId?: string;
   /** bridge 上报：本进程启动过的子 agent 会话文件（最多 50 个，新的在前），供 hostd 推导父子关系 */
   childSessionFiles: string[];
-  tmuxPane?: string;        // $TMUX_PANE，例如 "%12"
+  tmuxPane?: string;
+  /** The bridge can take queued messages back (pi runs in tmux and has a key for "restore queued messages"). */
+  canWithdraw?: boolean;        // $TMUX_PANE，例如 "%12"
   spawnedByHostd: boolean;
   piVersion: string;
   compat: "ok" | "untested";
@@ -46,6 +50,8 @@ export interface ProcessInfo {
   lastActiveAt?: number;
   lastText?: string;        // 最近一次 agent_settled 时最后一条 assistant 文本的前 120 字符
   contextUsage?: ContextUsageWire;
+  /** Set while pi summarises the conversation; elapsedMs is measured when the info is built. */
+  compacting?: { reason: "manual" | "threshold" | "overflow"; elapsedMs: number };
   lastSeq: number;
 }
 

@@ -1,5 +1,5 @@
 import type { AssistantDelta, BridgeEvent, Snapshot, WireMessage } from "@pi-remote/protocol";
-import { textOf } from "../lib/format";
+import { ktok, textOf } from "../lib/format";
 import type { AssistantDraft, Block, ProcessView, Toast } from "./types";
 
 let toastSeq = 0;
@@ -7,7 +7,7 @@ const toast = (text: string, level: string): Toast => ({ id: `t${++toastSeq}`, t
 
 export function fromSnapshot(s: Snapshot): ProcessView {
   const runningTools: ProcessView["runningTools"] = {};
-  for (const t of s.runningTools) runningTools[t.toolCallId] = { toolName: t.toolName, args: t.args, partialText: t.partialText };
+  for (const t of s.runningTools) runningTools[t.toolCallId] = { toolName: t.toolName, args: t.args, partialText: t.partialText, startedAt: Date.now() - (t.elapsedMs ?? 0) };
   return {
     seq: s.seq,
     info: s.info,
@@ -22,7 +22,14 @@ export function fromSnapshot(s: Snapshot): ProcessView {
     toasts: [],
     queued: [],
     lastViewedAt: Date.now(),
+    ...(s.info.compacting ? { compactingSince: Date.now() - s.info.compacting.elapsedMs } : {}),
   };
+}
+
+/** Keep the phone-side start time while info says pi is compacting. */
+function compactingSince(prev: number | undefined, info: ProcessView["info"]): number | undefined {
+  if (!info.compacting) return undefined;
+  return prev ?? Date.now() - info.compacting.elapsedMs;
 }
 
 function draftFromMessage(m: WireMessage): AssistantDraft {
@@ -40,7 +47,8 @@ function applyDelta(draft: AssistantDraft | undefined, d: AssistantDelta): Assis
     case "thinking_start": content[i] = { type: "thinking", thinking: "" }; break;
     case "thinking_delta": content[i] = { type: "thinking", thinking: (cur?.thinking ?? "") + d.delta }; break;
     case "thinking_end": content[i] = { type: "thinking", thinking: d.content }; break;
-    case "toolcall_start": content[i] = { type: "toolCall", id: d.id, name: d.toolName, arguments: {}, argsText: "" }; break;
+    // Older bridges sent toolcall_start without id and name (pi-ai puts them only in the partial message).
+    case "toolcall_start": content[i] = { type: "toolCall", id: d.id ?? "", name: d.toolName ?? "", arguments: {}, argsText: "" }; break;
     case "toolcall_delta": content[i] = { ...(cur ?? { type: "toolCall", id: "", name: "", arguments: {} }), argsText: (cur?.argsText ?? "") + d.delta } as Block; break;
     case "toolcall_end": content[i] = d.toolCall as Block; break;
   }
@@ -55,7 +63,7 @@ export function applyEvent(v: ProcessView, ev: BridgeEvent, seq: number): Reduce
   const n: ProcessView = { ...v, seq };
   switch (ev.type) {
     case "session_changed": n.info = ev.info; n.queued = []; return { view: n, needsResync: true };
-    case "info": n.info = ev.info; break;
+    case "info": n.info = ev.info; n.compactingSince = compactingSince(v.compactingSince, ev.info); break;
     case "agent_start": break;
     // Once pi is idle nothing is waiting any more: delivered, or dropped by an abort.
     case "agent_settled": n.inflight = undefined; n.runningTools = {}; n.queued = []; break;
@@ -72,7 +80,7 @@ export function applyEvent(v: ProcessView, ev: BridgeEvent, seq: number): Reduce
         if (at >= 0) n.queued = v.queued.filter((_, i) => i !== at);
       }
       break;
-    case "tool_start": n.runningTools = { ...v.runningTools, [ev.toolCallId]: { toolName: ev.toolName, args: ev.args, partialText: "" } }; break;
+    case "tool_start": n.runningTools = { ...v.runningTools, [ev.toolCallId]: { toolName: ev.toolName, args: ev.args, partialText: "", startedAt: Date.now() } }; break;
     case "tool_update": {
       const t = v.runningTools[ev.toolCallId];
       if (t) n.runningTools = { ...v.runningTools, [ev.toolCallId]: { ...t, partialText: ev.partialText } };
@@ -82,7 +90,13 @@ export function applyEvent(v: ProcessView, ev: BridgeEvent, seq: number): Reduce
     case "model_changed": n.info = { ...v.info, model: ev.model }; break;
     case "thinking_changed": n.info = { ...v.info, thinkingLevel: ev.level }; break;
     case "compaction":
-      n.toasts = [...v.toasts, toast(ev.phase === "end" ? "Context compacted" : `Compaction failed${ev.error ? `: ${ev.error}` : ""}`, ev.phase === "end" ? "info" : "error")];
+      if (ev.phase === "start") { n.compactingSince = v.compactingSince ?? Date.now(); break; }
+      n.compactingSince = undefined;
+      // A manual compaction that fails is reported by whoever asked for it (the phone shows the error of its call).
+      if (ev.phase === "failed" && ev.reason === "manual") break;
+      n.toasts = [...v.toasts, toast(ev.phase === "end"
+        ? `Context compacted${ev.tokensBefore ? ` · ${ktok(ev.tokensBefore)} tokens summarised` : ""}`
+        : ev.error && /^compaction failed/i.test(ev.error) ? ev.error : `Compaction failed${ev.error ? `: ${ev.error}` : ""}`, ev.phase === "end" ? "info" : "error")];
       if (ev.phase === "end") return { view: n, needsResync: true };
       break;
     case "context_usage": n.info = { ...v.info, contextUsage: ev.usage }; break;

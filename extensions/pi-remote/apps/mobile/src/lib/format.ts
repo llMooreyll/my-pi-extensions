@@ -47,3 +47,6 @@ export const stripAnsi = (s: string) => s.replace(ANSI, "");
 export function plainPreview(s: string): string {
   return stripAnsi(s).replace(/```[\s\S]*?```/g, " ").replace(/^[#>*\-\s]+/gm, "").replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
 }
+
+/** 142300 -> "142k", 1000000 -> "1M" */
+export const ktok = (n: number) => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));

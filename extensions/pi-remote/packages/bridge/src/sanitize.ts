@@ -85,7 +85,7 @@ export function entryMessage(entry: unknown): WireMessage | undefined {
     case "custom_message":
       if (e.display !== true) return undefined;
       return { role: "custom", customType: e.customType, content: stripImages(e.content), details: e.details, timestamp: e.timestamp, entryId: e.id as string };
-    case "compaction": return { role: "compactionSummary", summary: e.summary, timestamp: e.timestamp, entryId: e.id as string };
+    case "compaction": return { role: "compactionSummary", summary: e.summary, tokensBefore: e.tokensBefore, ...(e.fromHook ? { fromHook: true } : {}), timestamp: e.timestamp, entryId: e.id as string };
     case "branch_summary": return { role: "branchSummary", summary: e.summary, timestamp: e.timestamp, entryId: e.id as string };
     default: return undefined;
   }

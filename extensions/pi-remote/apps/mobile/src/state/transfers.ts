@@ -18,11 +18,13 @@ interface TransfersState {
   progress: Record<string, Progress>;
   /** Downloads whose finished file is on the phone. */
   local: Record<string, true>;
+  /** Offers set aside with "not now": kept on the computer, not downloaded, not counted as waiting. */
+  dismissed: Record<string, true>;
   inboxDir?: string;
   loaded: boolean;
 }
 
-export const useTransfers = create<TransfersState>(() => ({ items: {}, progress: {}, local: {}, loaded: false }));
+export const useTransfers = create<TransfersState>(() => ({ items: {}, progress: {}, local: {}, dismissed: {}, loaded: false }));
 const set = useTransfers.setState;
 const get = useTransfers.getState;
 
@@ -56,6 +58,44 @@ function partBytes(t: TransferInfo): number {
   try { const f = new File(receivedDir(), t.id, `${t.name}.part`); return f.exists ? f.size : 0; } catch { return 0; }
 }
 
+// ------------------------------------------------------------------ "not now"
+
+const DISMISSED_KEY = "files.dismissed";
+let dismissedLoaded = false;
+
+async function loadDismissed(): Promise<void> {
+  if (dismissedLoaded) return;
+  dismissedLoaded = true;
+  try {
+    const ids = JSON.parse((await kv.get(DISMISSED_KEY)) ?? "[]") as unknown;
+    if (Array.isArray(ids)) set({ dismissed: Object.fromEntries(ids.filter((x) => typeof x === "string").map((x) => [x, true as const])) });
+  } catch { /* unreadable: start empty */ }
+}
+
+function saveDismissed(d: Record<string, true>): void {
+  set({ dismissed: d });
+  void kv.set(DISMISSED_KEY, JSON.stringify(Object.keys(d))).catch(() => {});
+}
+
+/** Waiting offers the phone has not set aside: what the badge and the "waiting" list count. */
+export function isPendingOffer(s: TransfersState, t: TransferInfo): boolean {
+  return t.dir === "to_phone" && t.state === "waiting" && !s.local[t.id] && !s.progress[t.id]?.running && !s.progress[t.id]?.queued && !s.dismissed[t.id];
+}
+
+/** Set offers aside without downloading them; they stay on the computer until they expire. */
+export function dismiss(ids: string[]): void {
+  const d = { ...get().dismissed };
+  for (const id of ids) { d[id] = true; if (jobs.get(id)?.kind === "get" && !jobs.get(id)?.lane) void cancel(id); }
+  saveDismissed(d);
+}
+
+export function undismiss(ids: string[]): void {
+  const d = { ...get().dismissed };
+  let n = 0;
+  for (const id of ids) if (d[id]) { delete d[id]; n++; }
+  if (n) saveDismissed(d);
+}
+
 // ------------------------------------------------------------------ list sync
 
 async function refresh(): Promise<void> {
@@ -66,6 +106,10 @@ async function refresh(): Promise<void> {
     for (const t of r.transfers) items[t.id] = t;
     const progress = { ...get().progress };
     for (const t of r.transfers) if (t.dir === "to_phone" && !progress[t.id]) { const b = partBytes(t); if (b) progress[t.id] = { bytes: b, running: false }; }
+    await loadDismissed();
+    // Ids hostd no longer knows can go; the list must stay small for the phone's key store.
+    const dismissed = Object.fromEntries(Object.keys(get().dismissed).filter((id) => items[id]).map((id) => [id, true as const]));
+    if (Object.keys(dismissed).length !== Object.keys(get().dismissed).length) saveDismissed(dismissed);
     set({ items, inboxDir: r.inboxDir, local: scanLocal(items), progress, loaded: true });
     pump();
   } catch (e) { testLog("transfers", { error: errText(e) }); }
@@ -144,7 +188,7 @@ function enqueue(j: Job): void {
 }
 
 /** Start or resume a download to the phone. */
-export function startDownload(id: string): void { enqueue({ id, kind: "get", attempts: 0 }); }
+export function startDownload(id: string): void { undismiss([id]); enqueue({ id, kind: "get", attempts: 0 }); }
 
 /** Register each file on the computer, then upload it. Returns the transfers in order. */
 export async function uploadFiles(files: File[], processId?: string): Promise<TransferInfo[]> {

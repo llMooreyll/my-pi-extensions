@@ -2,6 +2,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { HIDDEN_COMMAND, type ImageInput, type RpivAnswer, type UiResponse } from "../../protocol/src/index.ts";
 import { emitSafe } from "./host-conn.ts";
 import { reloadWhenIdle, runWithCommandCtx } from "./remote-op-cmd.ts";
+import { rememberQueued, withdrawQueued } from "./queue.ts";
 import { rpivAnswer } from "./rpiv.ts";
 import { getForkPoints, getHistory, getSnapshot, getTree, need, summarizeModel } from "./snapshot.ts";
 import { g } from "./state.ts";
@@ -36,6 +37,7 @@ async function opPrompt(a: Args): Promise<{ accepted: true }> {
   // Extension commands run immediately even while streaming; templates/skills need a delivery mode then.
   const deliverAs = idle ? undefined : (a.deliverAs ?? "followUp");
   b.pi.sendUserMessage(content, { ...(deliverAs ? { deliverAs } : {}), expandPromptTemplates: true });
+  if (deliverAs && !isCommand) rememberQueued({ text, content, mode: deliverAs });
   return { accepted: true };
 }
 
@@ -50,6 +52,7 @@ const HANDLERS: Record<string, (a: Args) => unknown | Promise<unknown>> = {
   get_history: (a) => getHistory(String(a.beforeEntryId), a.limit ?? 100),
   prompt: opPrompt,
   abort: () => { need().ctx.abort(); return {}; },
+  withdraw_queued: (a) => withdrawQueued(String(a.text ?? "")),
   ui_respond: (a) => {
     need();
     const p = g().pendingUi.get(String(a.uiId));

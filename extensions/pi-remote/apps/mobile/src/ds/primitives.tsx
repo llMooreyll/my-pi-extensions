@@ -57,6 +57,8 @@ export function Rule(props: { color?: string; weight?: number; style?: StyleProp
 export function Row(props: {
   children: ReactNode; a11y?: string; onPress?: () => void; onLongPress?: () => void; index?: string; indexColor?: string; trailing?: ReactNode;
   disabled?: boolean; first?: boolean; accent?: string; style?: StyleProp<ViewStyle>; dense?: boolean; indexStyle?: StyleProp<TextStyle>;
+  /** Width of the index column; nested rows (drawn with their own rail) use a narrow one. */
+  gutter?: number;
 }) {
   const p = usePalette();
   useTestAction(props.a11y, props.onPress, !props.disabled);
@@ -67,7 +69,7 @@ export function Row(props: {
       borderTopWidth: props.first ? 1 : 0, borderBottomWidth: 1, borderColor: p.faint,
       backgroundColor: pressed ? p.tint : "transparent", opacity: props.disabled ? 0.4 : 1,
     }, props.style]}>
-      <View style={{ width: GUTTER + MARGIN, paddingLeft: MARGIN }}>
+      <View style={{ width: props.gutter ?? GUTTER + MARGIN, paddingLeft: props.gutter === undefined ? MARGIN : 0 }}>
         {props.accent ? <View style={{ position: "absolute", left: 0, top: -15, bottom: -15, width: 3, backgroundColor: props.accent }} /> : null}
         {props.index ? <Txt v="label" color={props.indexColor ?? p.soft} style={props.indexStyle}>{props.index}</Txt> : null}
       </View>
@@ -215,7 +217,8 @@ export function Toggle(props: { value: boolean; onChange: (v: boolean) => void; 
 }
 
 /** A choice in a list: pink arrow marks the current one. */
-export function Choice(props: { label: string; sub?: string; selected?: boolean; onPress: () => void; a11y: string; disabled?: boolean; indent?: number; strong?: boolean }) {
+/** `full` shows label and note in whole, in reading type: for choices whose wording matters (questions from pi). */
+export function Choice(props: { label: string; sub?: string; selected?: boolean; onPress: () => void; a11y: string; disabled?: boolean; indent?: number; strong?: boolean; full?: boolean }) {
   const p = usePalette();
   useTestAction(props.a11y, props.onPress, !props.disabled);
   return (
@@ -223,8 +226,10 @@ export function Choice(props: { label: string; sub?: string; selected?: boolean;
       style={({ pressed }) => ({ flexDirection: "row", alignItems: "baseline", paddingVertical: 12, paddingLeft: (props.indent ?? 0) * 14, borderBottomWidth: 1, borderBottomColor: p.faint, backgroundColor: pressed ? p.tint : "transparent", opacity: props.disabled ? 0.4 : 1 })}>
       <Txt v="lead" color={props.selected ? p.pink : p.faint} style={{ width: 24 }}>{props.selected ? "→" : "·"}</Txt>
       <View style={{ flex: 1 }}>
-        <Txt v={props.selected || props.strong ? "bodyBold" : "body"} lines={3}>{props.label}</Txt>
-        {props.sub ? <Txt v="mono" soft lines={2} style={{ fontSize: 11 }}>{props.sub}</Txt> : null}
+        <Txt v={props.selected || props.strong ? "bodyBold" : "body"} lines={props.full ? undefined : 3}>{props.label}</Txt>
+        {props.sub ? (props.full
+          ? <Txt v="small" soft style={{ marginTop: 2 }}>{props.sub}</Txt>
+          : <Txt v="mono" soft lines={2} style={{ fontSize: 11 }}>{props.sub}</Txt>) : null}
       </View>
     </Pressable>
   );
