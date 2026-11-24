@@ -13,7 +13,9 @@ Pi Coding Agent 扩展合集仓库。包含自建扩展与基于上游修改的�
 | [pi-video](extensions/pi-video) | `read_video` 工具与 `/read-video` 命令 | 新编写 | 把本地视频放进模型上下文；`/read-video` 用 pi-input-plus 的选择器选 mp4，在输入框插入 `name.mp4[绝对路径]` | [README](extensions/pi-video/README.md) |
 | [pi-board](extensions/pi-board) | 基于计划文档的任务面板：任务、决定、冲突与每次代码改动的说明集中显示在 tmux 窗格 | 新编写 | `docs/board/` 计划文档格式与写入前校验、write/edit 必填 `message`、改动记录（含团队成员）、分栏面板与“本轮改动”框、`Board` widget、`/board` 命令 | [README](extensions/pi-board/README.md) |
 | [pi-interactive-subagents](extensions/pi-interactive-subagents) | 终端复用器非阻塞子代理与协同团队 | HazAT/pi-interactive-subagents | 有序模型回退链、基于 Git worktree 隔离分支的团队模式（team_* 工具）、agent_before_settle 退出时序修复、tmux 下子代理与成员放入后台 window（`PI_SUBAGENT_TMUX_LAYOUT=split` 恢复分屏）、`pi.subagents.background.v1` 后台进程服务与 widget 点击跳转 | [README](extensions/pi-interactive-subagents/README.md) |
-| [statusline-pi](extensions/statusline-pi) | 底部状态栏（费用、速度、Git、上下文区间） | luongnv89/pi-extensions | 异步非阻塞 GitHub PR 查询、边框样式编辑（叠加在已有输入框上，不替换输入框组件）、实时 TPS 速度统计、统一上下文区间比例计算 | [README](extensions/statusline-pi/README.md) |
+| [statusline-pi](extensions/statusline-pi) | 底部状态栏与输入框边框状态（费用、速度、Git、上下文区间） | luongnv89/pi-extensions | 异步非阻塞 GitHub PR 查询、模型/上下文/速度画在输入框边框上（叠加在已有输入框上，不替换输入框组件）、实时 tok/s 与 TTFT、统一上下文区间比例计算、按 `BORDER_STATUS_SLOTS` 把其他扩展的 `setStatus` 状态画在边框上 | [README](extensions/statusline-pi/README.md) |
+| [pi-cache-timer](extensions/pi-cache-timer) | 提示词缓存倒计时与发送前压缩提醒 | 新编写 | 输入框下边框显示缓存剩余时间（经 statusline-pi；未加载时显示在 Pi 底栏）；缓存过期或换模型且上下文 ≥ 50k 或预计多付 ≥ $0.20 时，发送前询问先压缩、直接发送或取消；`~/.pi/agent/pi-cache-timer.json` 配置阈值与缓存时长 | [README](extensions/pi-cache-timer/README.md) |
+| [pi-trigger](extensions/pi-trigger) | AI 自定时唤醒与外部触发器 | 新编写 | `schedule` 工具（一次性/间隔/每日定时，按会话持久化）；触发消息以卡片显示；`trigger` widget；`/trigger` 命令配置暂停、按会话覆写压缩策略、`keep`/`rebase` 上下文策略、`@alias` 与每日预算；发送前调用 pi-cache-timer 的 `prepareSend`；pi-hostd 内置触发中心（目录/脚本/模块/webhook/CLI 来源、路由、持久队列、唤醒已关闭的会话） | [README](extensions/pi-trigger/README.md) |
 | [pi-language-tutor](extensions/pi-language-tutor) | 语言学习与 Prompt 写作检查 | mackt/pi-language-tutor | 新增 /dismiss 命令临时隐藏面板、写作对比忽略大小写差异 | [README](extensions/pi-language-tutor/README.md) |
 | [pi-voice](extensions/pi-voice) | 本地语音识别（ASR）与系统级语音转写服务 | earendil-works/pi-voice | 通过 `Symbol.for("pi.asr.v1")` 与 `pi.events` 对外提供同进程 ASR 服务，新增音频字节流解码 | [README](extensions/pi-voice/README.md) |
 
@@ -22,9 +24,14 @@ Pi Coding Agent 扩展合集仓库。包含自建扩展与基于上游修改的�
 在终端中执行对应扩展的安装命令：
 
 ```zsh
-# statusline-pi（需先构建）
-cd ~/Projects/Pi-extension-dev/extensions/statusline-pi && npm run build
+# statusline-pi（Pi 直接加载 src/index.ts，无需构建）
 pi install ~/Projects/Pi-extension-dev/extensions/statusline-pi
+
+# pi-cache-timer（倒计时显示在输入框边框上需要 statusline-pi）
+pi install ~/Projects/Pi-extension-dev/extensions/pi-cache-timer
+
+# pi-trigger（外部触发与唤醒已关闭的会话需要 pi-remote 的 pi-hostd 与 bridge；触发前压缩需要 pi-cache-timer）
+pi install ~/Projects/Pi-extension-dev/extensions/pi-trigger
 
 # pi-interactive-subagents
 pi install ~/Projects/Pi-extension-dev/extensions/pi-interactive-subagents
@@ -63,6 +70,8 @@ pi install ~/Projects/Pi-extension-dev/extensions/pi-remote/packages/bridge
 {
   "packages": [
     "~/Projects/Pi-extension-dev/extensions/statusline-pi",
+    "~/Projects/Pi-extension-dev/extensions/pi-cache-timer",
+    "~/Projects/Pi-extension-dev/extensions/pi-trigger",
     "~/Projects/Pi-extension-dev/extensions/pi-interactive-subagents",
     "~/Projects/Pi-extension-dev/extensions/pi-session-view",
     "~/Projects/Pi-extension-dev/extensions/pi-language-tutor",
@@ -86,7 +95,9 @@ my-pi-extensions/
 │   ├── pi-session-view/          # 全屏会话大纲与 Neovim 查看器
 │   ├── pi-webview/               # 浏览器文档阅读与视频学习提问
 │   ├── pi-interactive-subagents/ # 终端复用器子代理与长期团队协同
-│   ├── statusline-pi/            # 底部状态栏
+│   ├── statusline-pi/            # 底部状态栏与输入框边框状态
+│   ├── pi-cache-timer/           # 缓存倒计时与发送前压缩提醒
+│   ├── pi-trigger/               # AI 自定时与外部触发器
 │   ├── pi-language-tutor/        # 外语学习与写作检查
 │   ├── pi-voice/                 # 本地语音识别（ASR）服务
 │   ├── pi-input-plus/            # 输入框扩展：文件选择器、粘贴预览
@@ -103,7 +114,7 @@ my-pi-extensions/
 
 仓库整体采用 [GNU General Public License v3.0 (GPL-3.0)](LICENSE) 许可。
 
-自写扩展均采用 GPL-3.0-or-later，Copyright (c) 2026 llMooreyll：`pi-remote`、`pi-session-view`、`pi-webview`、`pi-input-plus`、`pi-video`、`pi-board`、`pi-home`、`pi-cpa-usage`。
+自写扩展均采用 GPL-3.0-or-later，Copyright (c) 2026 llMooreyll：`pi-remote`、`pi-session-view`、`pi-webview`、`pi-input-plus`、`pi-video`、`pi-board`、`pi-home`、`pi-cpa-usage`、`pi-cache-timer`、`pi-trigger`。
 
 第三方分叉扩展保留各上游原作者的 MIT 版权声明与许可文本：
 - `statusline-pi`: MIT License, Copyright (c) 2024 luongnv89（见 [extensions/statusline-pi/LICENSE](extensions/statusline-pi/LICENSE)）
