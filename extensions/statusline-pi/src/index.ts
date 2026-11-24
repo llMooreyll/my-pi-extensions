@@ -30,6 +30,15 @@ const SPEED_RENDER_THROTTLE_MS = 250;
 const NARROW_BRANCH_WIDTH_RATIO = 0.55;
 const MIN_NARROW_BRANCH_WIDTH = 8;
 
+/**
+ * Extension statuses (`ctx.ui.setStatus` keys) drawn on the editor border instead of the footer.
+ * Producers only set their status; this table owns where it appears, and without statusline-pi
+ * Pi's own footer still shows it.
+ */
+const BORDER_STATUS_SLOTS: Readonly<Record<string, "bottom-left">> = {
+	"cache-timer": "bottom-left",
+};
+
 interface ModelIdentity {
 	provider?: string;
 	id?: string;
@@ -76,6 +85,19 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 	// Read by the border renderers on the editor; undefined draws the editor's own borders.
 	let borderSource: StatusBorderSource | undefined;
 	let editorInstalled = false;
+	// Pi hands extension statuses only to the footer factory; the border reads them through this.
+	let readExtensionStatuses: (() => ReadonlyMap<string, string> | undefined) | undefined;
+
+	function borderStatuses(slot: "bottom-left"): string[] {
+		const statuses = readExtensionStatuses?.();
+		if (!statuses) return [];
+		const texts: string[] = [];
+		for (const [key, text] of statuses) {
+			// The border must stay one line: pi-input-plus maps clicks assuming one row per border.
+			if (BORDER_STATUS_SLOTS[key] === slot && text) texts.push(text.replace(/[\r\n\t]+/g, " "));
+		}
+		return texts;
+	}
 
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
@@ -85,6 +107,7 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		editorInstalled = false;
+		readExtensionStatuses = undefined;
 		if (refreshTimer) clearInterval(refreshTimer);
 		refreshTimer = undefined;
 		renderRequested = undefined;
@@ -186,7 +209,8 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		// Model, context and speed live on the editor border; the footer keeps the rest.
 		borderSource = {
 			top: (width: number): BorderSegments => formatTopBorder(ctx, pi, width),
-			bottom: (width: number): BorderSegments => formatBottomBorder(ctx, speed.snapshot(), width),
+			bottom: (width: number): BorderSegments =>
+				formatBottomBorder(ctx, speed.snapshot(), width, borderStatuses("bottom-left")),
 		};
 		installBorderEditor(ctx);
 
@@ -197,6 +221,7 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 			});
 
 			renderRequested = () => tui.requestRender();
+			readExtensionStatuses = () => footerData.getExtensionStatuses?.();
 
 			return {
 				dispose() {
@@ -212,9 +237,9 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 					const changed = gitInfo.changedFiles;
 					const separator = theme.fg("borderMuted", " │ ");
 
-					const extensionStatuses = Array.from(footerData.getExtensionStatuses?.().values() ?? []).map((status) =>
-						truncateToWidth(status, width),
-					);
+					const extensionStatuses = Array.from(footerData.getExtensionStatuses?.() ?? [])
+						.filter(([key]) => BORDER_STATUS_SLOTS[key] === undefined)
+						.map(([, status]) => truncateToWidth(status, width));
 
 					return formatResponsiveStatusline(
 						{
@@ -254,6 +279,7 @@ export default function statuslinePiExtension(pi: ExtensionAPI) {
 		if (refreshTimer) clearInterval(refreshTimer);
 		refreshTimer = undefined;
 		renderRequested = undefined;
+		readExtensionStatuses = undefined;
 		notifiedGptContextBreakpoint = false;
 		ctx.ui.setFooter(undefined);
 		borderSource = undefined;
@@ -536,10 +562,15 @@ function formatTopBorder(ctx: ExtensionContext, pi: ExtensionAPI, width: number)
 	};
 }
 
-function formatBottomBorder(ctx: ExtensionContext, speed: SpeedSnapshot, width: number): BorderSegments {
+function formatBottomBorder(
+	ctx: ExtensionContext,
+	speed: SpeedSnapshot,
+	width: number,
+	leftStatuses: string[] = [],
+): BorderSegments {
 	const theme = ctx.ui.theme;
 	return {
-		left: "",
+		left: leftStatuses.length > 0 ? ` ${leftStatuses.join(theme.fg("dim", " · "))} ` : "",
 		right: ` ${formatSpeed(theme, speed, width < NARROW_BORDER_WIDTH)} `,
 	};
 }
