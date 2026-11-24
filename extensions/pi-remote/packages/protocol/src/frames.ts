@@ -3,7 +3,8 @@ import type { BridgeEvent } from "./events.ts";
 import type { ProcessInfo } from "./model.ts";
 import type { LaneFromClient, LaneFromHost, TransferInfo } from "./files.ts";
 
-export type BridgeInternalOp = "get_snapshot" | "reload_when_idle";
+/** Ops hostd sends to a bridge that phone clients cannot call; trigger_deliver comes from hostd's trigger hub. */
+export type BridgeInternalOp = "get_snapshot" | "reload_when_idle" | "trigger_deliver";
 
 // ---------- bridge ↔ hostd（Unix socket，NDJSON） ----------
 export type BridgeToHost =

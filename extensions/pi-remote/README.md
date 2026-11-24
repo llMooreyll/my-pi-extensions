@@ -107,6 +107,7 @@ Then scan the QR code in the app.
 | Moved to a new computer | `node packages/hostd/src/main.ts export <file>` on the old one, `… import <file>` on the new one |
 | Logs | `~/.local/state/pi-remote/` (`hostd.log`, `audit.jsonl`, `bridge-<pid>.log`) |
 | Processes started by hostd | `tmux attach -t pi-remote` |
+| External triggers ([pi-trigger](../pi-trigger)) | `node packages/hostd/src/main.ts trigger status`; send one with `… trigger send @alias <text>`; config in `~/.pi/agent/pi-trigger/hub.json` |
 | Type check | `npm run typecheck` |
 
 ## Security

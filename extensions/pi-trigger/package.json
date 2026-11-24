@@ -1,0 +1,25 @@
+{
+  "name": "pi-trigger",
+  "version": "0.1.0",
+  "description": "Self-scheduled wake-ups for the agent, external triggers routed to named sessions through pi-hostd, and a cache-aware delivery path",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "trigger",
+    "schedule"
+  ],
+  "author": "llMooreyll",
+  "license": "GPL-3.0-or-later",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}

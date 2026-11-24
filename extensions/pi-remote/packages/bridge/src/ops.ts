@@ -41,6 +41,22 @@ async function opPrompt(a: Args): Promise<{ accepted: true }> {
   return { accepted: true };
 }
 
+/** Provided by the pi-trigger extension on globalThis[Symbol.for("pi.trigger.v1")]. */
+const TRIGGER_SYMBOL = Symbol.for("pi.trigger.v1");
+interface TriggerService { version: 1; accept(sessionFile: string, items: unknown[]): { accepted: string[] } }
+
+/** Events from the trigger hub in hostd, for the session open in this process. */
+function opTriggerDeliver(a: Args): { accepted: string[] } {
+  const service = (globalThis as unknown as Record<symbol, TriggerService | undefined>)[TRIGGER_SYMBOL];
+  if (service?.version !== 1 || typeof service.accept !== "function") throw err("unsupported", "pi-trigger is not loaded in this pi");
+  try {
+    return service.accept(String(a.sessionFile ?? ""), Array.isArray(a.items) ? a.items : []);
+  } catch (e) {
+    const o = e as { code?: unknown; message?: unknown };
+    throw err(typeof o?.code === "string" ? o.code : "internal", String(o?.message ?? e));
+  }
+}
+
 function textOfContent(c: unknown): string {
   if (typeof c === "string") return c;
   if (!Array.isArray(c)) return "";
@@ -120,6 +136,7 @@ const HANDLERS: Record<string, (a: Args) => unknown | Promise<unknown>> = {
   set_name: (a) => { need().pi.setSessionName(String(a.name)); return {}; },
   reload: () => { need(); reloadWhenIdle(); return {}; },
   reload_when_idle: () => { reloadWhenIdle(); return {}; },
+  trigger_deliver: opTriggerDeliver,
   shutdown: () => { need().ctx.shutdown(); return {}; },
 };
 

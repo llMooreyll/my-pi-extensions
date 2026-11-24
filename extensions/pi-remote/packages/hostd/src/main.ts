@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, renameSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import qrcode from "qrcode-terminal";
@@ -10,6 +12,9 @@ import { ensureDir, readJson, writeJsonAtomic } from "./fsutil.ts";
 import { createIdentity, identityExists, loadIdentity, validateIdentity } from "./identity.ts";
 import { CONFIG_DIR, CONFIG_FILE, IDENTITY_FILE, STATUS_FILE } from "./paths.ts";
 import { serve } from "./serve.ts";
+import { DROP_DIR, HUB_CONFIG_FILE, HUB_STORE_FILE, isTarget, loadHubConfig } from "./triggers/config.ts";
+import { aliasMap, readSessionStates } from "./triggers/hub.ts";
+import type { PendingDelivery } from "./triggers/types.ts";
 
 const USAGE = `usage: pi-hostd <command>
   init [--name <name>] [--force]
@@ -24,7 +29,9 @@ const USAGE = `usage: pi-hostd <command>
   devices list
   devices revoke <id>
   export <file>
-  import <file> [--force] [--keep-name]`;
+  import <file> [--force] [--keep-name]
+  trigger send <@alias|session.jsonl> <text...> [--title <title>] [--kind <kind>]
+  trigger status`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -185,6 +192,32 @@ async function main(): Promise<void> {
       saveConfig(cfg);
       saveDevices(devices);
       out(`imported host ${identity.hostId} with ${devices.length} device(s); restart pi-hostd to apply`);
+      return;
+    }
+    case "trigger": {
+      const sub = args.shift();
+      if (sub === "send") {
+        const title = flag(args, "--title");
+        const kind = flag(args, "--kind") ?? "message";
+        const target = args.shift();
+        const text = args.join(" ").trim();
+        if (!target || !text) die("usage: pi-hostd trigger send <@alias|session.jsonl> <text...> [--title <title>] [--kind <kind>]");
+        if (!isTarget(target)) die(`invalid target ${target}: use @alias or an absolute .jsonl session file`);
+        // The hub watches the drop folder; write-then-rename so it never reads a partial file.
+        const file = join(DROP_DIR, `${Date.now()}-${randomUUID().slice(0, 8)}.json`);
+        writeJsonAtomic(`${file}.tmp`, { source: "cli", kind, target, text, ...(title ? { title } : {}) });
+        renameSync(`${file}.tmp`, file);
+        out(`queued for ${target}; pi-hostd delivers it within a few seconds (pi-hostd must be running)`);
+      } else if (sub === "status") {
+        const { config, problems } = loadHubConfig();
+        out(`config: ${HUB_CONFIG_FILE}${existsSync(HUB_CONFIG_FILE) ? "" : " (missing, defaults)"}`);
+        for (const p of problems) out(`  problem: ${p}`);
+        out(`hub: ${config.enabled ? "enabled" : "disabled"}, ${config.sources.length} source(s), ${config.routes.length} route(s), webhook ${config.webhook.enabled ? `${config.webhook.host}:${config.webhook.port}` : "off"}`);
+        const aliases = aliasMap(readSessionStates());
+        out(aliases.size ? `aliases:\n${[...aliases].map(([a, f]) => `  @${a} → ${f}`).join("\n")}` : "aliases: none");
+        const pending = readJson<{ pending?: PendingDelivery[] }>(HUB_STORE_FILE)?.pending ?? [];
+        out(pending.length ? `pending:\n${pending.map((p) => `  ${p.item.key} → ${p.target} (attempts ${p.attempts})`).join("\n")}` : "pending: none");
+      } else die(USAGE);
       return;
     }
     default:

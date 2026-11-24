@@ -16,6 +16,7 @@ import { registry } from "./registry.ts";
 import { startRelayClient, type RelayClient } from "./relay-client.ts";
 import { runtime } from "./runtime.ts";
 import { loadTransfers, onTransferChange, startTransferSweeper } from "./transfers.ts";
+import { startTriggerHub, type TriggerHub } from "./triggers/hub.ts";
 
 const SDK_VERSION = "1.5.0";
 
@@ -52,6 +53,8 @@ export async function serve(): Promise<void> {
   onTransferChange((info) => hub.broadcastTransfer(info));
   try { loadTransfers(); } catch (e) { log.warn("could not load transfers", e); }
   startTransferSweeper();
+  let triggers: TriggerHub | undefined;
+  try { triggers = startTriggerHub(); } catch (e) { log.error("trigger hub failed to start", e); }
 
   let relay: RelayClient | undefined;
   let direct: DirectServer | undefined;
@@ -92,7 +95,7 @@ export async function serve(): Promise<void> {
   // Status should reflect relay changes quickly as well.
   setInterval(writeStatus, 1_000).unref();
 
-  const shutdown = () => { log.info("shutting down"); relay?.stop(); direct?.close(); hub.stop(); setTimeout(() => process.exit(0), 200); };
+  const shutdown = () => { log.info("shutting down"); triggers?.stop(); relay?.stop(); direct?.close(); hub.stop(); setTimeout(() => process.exit(0), 200); };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }
