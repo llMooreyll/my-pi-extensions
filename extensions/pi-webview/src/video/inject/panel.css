@@ -161,7 +161,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .list::-webkit-scrollbar { display: none; }
 .list:not(.active) { opacity: 0; transform: translateY(12px); visibility: hidden; pointer-events: none; transition: opacity 0.18s, transform 0.26s var(--ease), visibility 0s 0.26s; }
 .cues { padding: 6px 0 56px; }
-.pv.hot .cues { scroll-snap-type: y proximity; }
+/* Snapping only while the learner scrolls by hand; the fullscreen wheel sets the position itself. */
+.pv.hot:not([data-mode="full"]) .cues, .pv[data-mode="full"].flat .cues { scroll-snap-type: y proximity; }
 .qa { padding: 8px 16px 40px; }
 
 .empty { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 48px 16px; color: var(--fg2); text-align: center; }
@@ -377,6 +378,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .s-row.link { transition: background 0.15s; }
 .s-row.link .ic { width: 14px; height: 14px; color: var(--fg3); }
 .s-row.link:hover { background: var(--fill); }
+.s-label.accent { color: var(--blue); }
 .s-now { padding: 10px 12px; line-height: 1.45; }
 .s-course { color: var(--fg2); font-size: 12px; }
 .s-ep { font-weight: 600; font-size: 13.5px; }
@@ -450,18 +452,25 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .reopen[data-mode="full"]:not(.show) { opacity: 0; transform: translateY(-8px); }
 
 .overlay { position: fixed; transform: translateX(-50%); text-align: center; pointer-events: none; width: max-content; }
+/* Annotations from the subtitle file (WebVTT ruby): a gloss under (or over) its word. Settings → Annotations. */
+ruby { ruby-position: var(--rtp, under); }
+/* Centred, not spread letter by letter across a long base word. */
+rt { font-size: var(--rts, 0.6em); opacity: var(--rto, 0.85); line-height: 1.15; ruby-align: center; -webkit-text-stroke: 0; }
+
+/* Every value is a setting (Settings → Line on the video). */
 .overlay span {
   display: inline-block;
   padding: 0.16em 0.6em 0.2em;
-  border-radius: 12px;
-  background: rgb(18 18 22 / 0.4);
-  backdrop-filter: blur(18px) saturate(160%);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border-radius: var(--orad, 12px);
+  background: rgb(18 18 22 / var(--obg, 0.4));
+  backdrop-filter: blur(var(--oblur, 18px)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--oblur, 18px)) saturate(160%);
   color: #fff;
   font-size: var(--ofs, 24px);
+  font-weight: var(--ow, 400);
   line-height: 1.35;
   white-space: pre-wrap;
-  text-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+  text-shadow: 0 1px 3px rgb(0 0 0 / var(--osh, 0.5)), 0 0 12px rgb(0 0 0 / calc(var(--osh, 0.5) * 0.6));
 }
 
 .toast { position: fixed; left: 50%; bottom: 28px; padding: 9px 16px; border-radius: 14px; font-size: 13px; transform: translateX(-50%); transition: opacity 0.25s, transform 0.35s var(--spring), visibility 0s; }
@@ -491,7 +500,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   top: 0;
   bottom: 0;
   right: 0;
-  width: calc(var(--cw) * 2.3);
+  width: calc(var(--vw, var(--cw)) * 2 + 90px); /* at rest: as wide as the lines need */
   background: radial-gradient(ellipse 100% 72% at 100% 50%, rgb(0 0 0 / 0.5) 0%, rgb(0 0 0 / 0.3) 40%, rgb(0 0 0 / 0.1) 70%, rgb(0 0 0 / 0) 100%);
   transition: width 0.45s var(--ease);
 }
@@ -504,6 +513,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   transition: opacity 0.35s;
 }
 .pv[data-mode="full"].hot .veil::after { opacity: 1; }
+.pv[data-mode="full"].hot:not(.tuning) .veil { width: calc(var(--cw) * 2.3); }
 .pv[data-mode="full"][data-view="qa"] .veil { width: calc(var(--dw) * 2); }
 .pv[data-mode="full"][data-side="left"] .veil { right: auto; left: 0; transform: scaleX(-1); }
 
@@ -537,6 +547,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pv[data-mode="full"] .body { position: absolute; top: 0; bottom: 0; right: 0; width: calc(var(--cw) + 64px); pointer-events: auto; }
 .pv[data-mode="full"][data-view="qa"] .body { top: 64px; bottom: 120px; width: calc(var(--dw) + var(--edge) + 14px); }
 .pv[data-mode="full"][data-side="left"] .body { right: auto; left: 0; }
+.pv[data-mode="full"] .list { overflow-x: hidden; } /* lines pushed past the edge must not scroll sideways */
 .pv[data-mode="full"] .cues {
   padding: 47vh 0;
   mask-image: linear-gradient(to bottom, transparent 0, #000 13%, #000 84%, transparent 100%);
@@ -557,24 +568,34 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   color: rgb(255 255 255 / 0.9);
   text-shadow: 0 1px 2px rgb(0 0 0 / 0.55), 0 0 14px rgb(0 0 0 / 0.3);
   transform-origin: left center;
-  transform: translateX(var(--x, 420px)) scale(var(--s, 0.74));
-  opacity: var(--o, 0);
-  transition: transform 0.46s var(--ease), opacity 0.4s var(--ease), background 0.2s, border-radius 0.2s;
+  /* Lines on screen are placed and animated by the wheel script (inline styles and the --so/--ul/--bar
+     variables). The values here are those of the open list; lines off screen never need others. No rule
+     depends on the hover state, so opening the list restyles only the lines on screen, not thousands. */
+  opacity: var(--lo, 0.6);
+  transition: background 0.2s, border-radius 0.2s;
 }
+.pv[data-mode="full"] .cue .tx { text-wrap: balance; }
+/* Hidden copy of a line, used to measure how wide its wrapped text is. */
+.measure { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; white-space: pre-wrap; word-break: break-word; text-wrap: balance; font-size: var(--ffs, 22px); line-height: 1.3; }
+.pv:not([data-mode="full"]) .measure { display: none; }
 .pv[data-mode="full"] .cue .t { display: none; }
 .pv[data-mode="full"] .cue .tx { color: inherit; }
-.pv[data-mode="full"] .cue.cur { background: none; color: #fff; font-weight: 640; }
-.pv[data-mode="full"] .cue.cur::before { content: ""; position: absolute; left: 4px; top: 12px; bottom: 12px; width: 3px; border-radius: 2px; background: var(--accent); opacity: 0; transition: opacity 0.3s; }
-.pv[data-mode="full"].flat .cue { transform: none; opacity: 0.8; transition: transform 0.32s var(--ease), opacity 0.26s, background 0.2s; }
-.pv[data-mode="full"].flat .cue.cur { opacity: 1; }
-.pv[data-mode="full"].flat .cue.cur::before { opacity: 1; }
+/* Emphasis by paint only (outline, glow): a heavier weight would rewrap the line and shift the list. */
+.pv[data-mode="full"] .cue.cur {
+  background: none;
+  color: #fff;
+  -webkit-text-stroke: var(--wb, 0.4px) currentColor;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.7), 0 0 18px rgb(0 0 0 / var(--wg, 0.55)), 0 0 36px rgb(0 0 0 / calc(var(--wg, 0.55) * 0.55));
+}
+.pv[data-mode="full"] .cue.cur::before { content: ""; position: absolute; left: 4px; top: 12px; bottom: 12px; width: 3px; border-radius: 2px; background: var(--accent); opacity: var(--bar, 1); }
+.pv[data-mode="full"] .cue.cur, .pv[data-mode="full"] .cue.sel { opacity: 1; }
 .pv[data-mode="full"] .cue:hover { background: rgb(255 255 255 / 0.1); opacity: 1; }
-.pv[data-mode="full"] .cue.sel { background: rgb(10 132 255 / 0.42); opacity: max(var(--o, 0), 0.92); }
-.pv[data-mode="full"].flat .cue.sel { opacity: 1; }
+.pv[data-mode="full"] .cue.sel { background: rgb(10 132 255 / 0.42); }
 .pv[data-mode="full"] .cue.sel + .cue.sel { margin-top: 0; }
 .pv[data-mode="full"] .add { border-color: rgb(255 255 255 / 0.5); color: #fff; }
-.pv[data-mode="full"]:not(.flat) .add { opacity: 0; pointer-events: none; }
-.pv[data-mode="full"]:not(.flat) .cue.sel .add { opacity: 1; }
+/* On the wheel the buttons would sit past the screen edge; a dotted underline marks lines with Q&A instead. */
+.pv[data-mode="full"] .cue .side { opacity: var(--so, 1); }
+.pv[data-mode="full"] .cue.asked .tx { text-decoration: underline dotted color-mix(in srgb, var(--accent) calc(var(--ul, 0) * 85%), transparent); text-decoration-thickness: 2px; text-underline-offset: 0.22em; }
 
 .pv[data-mode="full"] .qa .card {
   margin-bottom: 10px;
@@ -591,7 +612,17 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 
 .pv[data-mode="full"] .foot { position: absolute; right: var(--edge); bottom: 20px; width: var(--dw); padding: 0; border: 0; pointer-events: auto; z-index: 5; }
 .pv[data-mode="full"][data-side="left"] .foot { right: auto; left: var(--edge); }
-.pv[data-mode="full"] .foot:not(.show) { opacity: 0; transform: translateY(14px); visibility: hidden; pointer-events: none; transition: opacity 0.2s, transform 0.28s var(--ease), visibility 0s 0.28s; }
+/* The composer's glass parts fade one by one. Fading the foot (or the dock / chip row) as a whole would
+   make it a backdrop root: the blurred parts inside would show unblurred while fading, then snap. */
+.pv[data-mode="full"] .foot { transition: transform 0.32s var(--ease), visibility 0s; }
+.pv[data-mode="full"] .foot:not(.show) { transform: translateY(14px); visibility: hidden; pointer-events: none; transition: transform 0.28s var(--ease), visibility 0s 0.28s; }
+.pv[data-mode="full"] .dock, .pv[data-mode="full"] .ctx { opacity: 1; }
+.pv[data-mode="full"] .foot :is(textarea, .c-row > .ib, .c-status, .ctx-chip, .dock-in) {
+  transition: opacity 0.24s var(--ease), background 0.2s, border-color 0.2s, box-shadow 0.25s, color 0.18s, scale 0.2s var(--spring);
+}
+.pv[data-mode="full"] .foot:not(.show) :is(textarea, .c-row > .ib, .c-status, .ctx-chip, .dock-in),
+.pv[data-mode="full"] .dock:not(.show) .dock-in,
+.pv[data-mode="full"] .ctx:not(.show) .ctx-chip { opacity: 0; }
 .pv[data-mode="full"][data-view="qa"] .dock { display: none; }
 .pv[data-mode="full"] .dock-in { --glass-hi: rgb(30 30 36 / 0.5); font-size: 14px; }
 .pv[data-mode="full"] .composer textarea {
@@ -613,3 +644,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 
 .pv[data-mode="full"] .sheet { right: var(--edge); left: auto; width: 360px; max-height: calc(100vh - 120px); pointer-events: auto; z-index: 7; }
 .pv[data-mode="full"][data-side="left"] .sheet { right: auto; left: var(--edge); }
+/* Settings open in fullscreen: the sheet moves beside the wheel, so style changes can be watched live.
+   The class stays while the sheet closes, so it fades out in place. */
+.pv[data-mode="full"] .sheet.beside { right: calc(var(--cw) + 48px); }
+.pv[data-mode="full"][data-side="left"] .sheet.beside { right: auto; left: calc(var(--cw) + 48px); }

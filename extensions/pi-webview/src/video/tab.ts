@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CdpConnection, CdpEvent } from "./cdp.ts";
 import { SITE_DOM, siteFor, toMeta, type VideoMeta } from "./sites.ts";
-import type { VideoSettings, VideoStore } from "./store.ts";
+import { DEFAULT_SETTINGS, SETTING_LIMITS, type VideoSettings, type VideoStore } from "./store.ts";
 import { type Cue, findSubtitleFiles, loadSubtitles, matchSubtitleFile } from "./subtitles.ts";
 
 // The world name is per process: Runtime.addBinding installs the binding into every context with this
@@ -349,6 +349,8 @@ export class VideoTab {
       type: "init",
       meta: this.metaPayload(),
       settings: this.host.store.settings,
+      defaults: DEFAULT_SETTINGS,
+      limits: SETTING_LIMITS,
       cues: this.subtitle?.cues ?? [],
       subtitle: this.subtitlePayload(),
       files: this.files.map((f) => shortPath(f, this.host.cwd())),

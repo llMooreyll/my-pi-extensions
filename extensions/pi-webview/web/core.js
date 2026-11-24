@@ -123,6 +123,27 @@
   const tab = $(".tab");
   const slip = $(".slip");
   const slipText = $(".slip textarea");
+
+  // Keys typed into our own inputs must not reach the page's hotkeys (f / space / arrows ...).
+  // This window-capture listener runs before any page listener registered later and stops the
+  // event; default text editing is unaffected. Because the stop also skips the input's own
+  // listeners, inputs register their keydown handler through onTypingKey and it is called here.
+  const typingKeys = new WeakMap();
+  const onTypingKey = (el, fn) => typingKeys.set(el, fn);
+  for (const type of ["keydown", "keypress", "keyup"]) {
+    addEventListener(
+      type,
+      (e) => {
+        const path = e.composedPath();
+        const target = path[0];
+        if (!path.includes(host) || !(target instanceof HTMLElement)) return;
+        if (!target.isContentEditable && !/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+        if (type === "keydown") typingKeys.get(target)?.(e);
+        e.stopImmediatePropagation();
+      },
+      true,
+    );
+  }
   const panel = $(".panel");
   const composer = $(".composer textarea");
   const dock = $(".dock");
@@ -934,7 +955,7 @@
     const askBtn = foot.querySelector(".ask");
     attachMic(mic, ta);
     askBtn.addEventListener("click", () => sendFollowUp(d));
-    ta.addEventListener("keydown", (e) => {
+    onTypingKey(ta, (e) => {
       if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -1459,7 +1480,7 @@
   }
   attachMic($(".composer .mic"), composer);
   $(".send").addEventListener("click", sendComposer);
-  composer.addEventListener("keydown", (e) => {
+  onTypingKey(composer, (e) => {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -2062,7 +2083,7 @@
   attachMic($(".slip .mic"), slipText);
   $(".slip .ask").addEventListener("click", () => send("ask"));
   $(".slip .pin").addEventListener("click", () => send("pin"));
-  slipText.addEventListener("keydown", (e) => {
+  onTypingKey(slipText, (e) => {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();

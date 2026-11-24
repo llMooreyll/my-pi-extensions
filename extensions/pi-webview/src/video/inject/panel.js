@@ -137,7 +137,11 @@
   let pending = null; // { rid, timer } the question in flight
   const timers = [];
   const docStyles = [];
-  const wheelRows = new Set();
+  let defaults = null; // default settings and numeric ranges, from pi
+  let limits = null;
+  const RUBY_KEYS = ["rubyPosition", "rubySize", "rubyOpacity"];
+  const OVERLAY_KEYS = ["overlayFontSize", "overlayWeight", "overlayBg", "overlayBlur", "overlayShadow", "overlayRadius", "overlayBottom", "overlayWidth"];
+  const WHEEL_KEYS = ["wheelRadius", "wheelBend", "wheelEdge", "wheelSize", "wheelDim", "wheelOpacity", "wheelBlur", "wheelGlow", "wheelBold", "listOpacity"];
 
   // ---------- DOM ----------
   document.getElementById(HOST_ID)?.remove();
@@ -168,7 +172,8 @@
   ui.ticks = el("div", { class: "ticks" });
   ui.rail = el("div", { class: "rail" }, ui.ticks, ui.thumb);
   ui.now = el("button", { class: "now pill" }, icon("play"), "Back to current");
-  ui.body = el("div", { class: "body" }, ui.cues, ui.qa, ui.rail, ui.now);
+  ui.measure = el("div", { class: "measure", "aria-hidden": "true" });
+  ui.body = el("div", { class: "body" }, ui.cues, ui.qa, ui.rail, ui.now, ui.measure);
 
   // Foot: the dock (answers for the selection), context chips and the one composer.
   ui.dockList = el("div", { class: "d-threads" });
@@ -280,11 +285,13 @@
     return ans;
   }
 
-  const rowOf = (i) => (i >= 0 ? ui.cues.querySelector(`.cue[data-i="${i}"]`) : null);
+  const rowOf = (i) => (i >= 0 ? (rowEls[i] ?? null) : null);
   const linesOf = (a, b) => cues.slice(a, b + 1).map((c) => ({ start: c.start, end: c.end, text: c.text }));
 
   /** The list follows playback unless the learner is working with it. */
-  const following = () => !!settings?.follow && !settings.collapsed && !hot && !drag && (mode === "full" || !userScrolled);
+  const following = () => !!settings?.follow && !settings.collapsed && (!hot || tuning()) && !drag && (mode === "full" || !userScrolled);
+  /** Fullscreen with Settings open: the wheel stays a wheel so style changes show live. */
+  const tuning = () => mode === "full" && sheet === "settings";
 
   function updateCurrent() {
     if (!video || inAd() || !cues.length) {
@@ -302,10 +309,21 @@
       if (following()) centerCurrent(true);
       renderRail();
     }
-    const span = ui.overlay.firstChild;
-    const text = active >= 0 ? cues[active].text : "";
-    if (span.textContent !== text) span.textContent = text;
+    if (active !== overlayCue) {
+      overlayCue = active;
+      const span = ui.overlay.firstChild;
+      if (active >= 0) cueText(span, cues[active]);
+      else span.textContent = "";
+    }
     placeOverlay();
+  }
+  let overlayCue = -1; // the cue shown on the video
+
+  /** Put a cue's text into `node`; annotations (ruby) sit beside their base words. */
+  function cueText(node, c) {
+    if (!c.ruby) node.textContent = c.text;
+    else node.replaceChildren(...c.ruby.map((p) => (typeof p === "string" ? p : el("ruby", null, p[0], el("rt", { text: p[1] })))));
+    return node;
   }
 
   let programmatic = 0;
@@ -315,39 +333,245 @@
     const box = ui.cues;
     box.scrollTo({ top: row.offsetTop - box.clientHeight / 2 + row.offsetHeight / 2, behavior: smooth ? "smooth" : "auto" });
   }
-  const centerCurrent = (smooth) => scrollToRow(rowOf(current), smooth);
+  /** In the fullscreen wheel the drum keeps the current line centred by itself. */
+  const centerCurrent = (smooth) => {
+    if (mode === "full" && !flat) return smooth ? applyWheel() : snapWheel();
+    scrollToRow(rowOf(current), smooth);
+  };
 
-  /** Full layout: lines recede to the right (off screen if need be) and fade with distance from the current one. */
-  const WHEEL_SPAN = 9;
+  // ---------- full layout: the subtitle wheel ----------
+  // Lines sit on a drum seen from the front. The farther a line is from the current one along the drum,
+  // the more it turns away and sinks: it moves closer to its neighbours, is squashed, smaller, dimmer and
+  // softer. Every line is also shrink-wrapped to its own words and pushed against the screen edge, so at
+  // rest the strip is only as wide as the text needs.
+  //
+  // The wheel is animated by script, not CSS transitions: one spring rolls the drum to the current line,
+  // another blends between the wheel and the flat list (hover). Both keep their velocity when the target
+  // changes mid-way, so every motion can be interrupted and redirected without a jump. Only the lines on
+  // screen are touched; the rest of a long subtitle never animates.
+  const measured = new Map(); // index → widest wrapped line, px, at the current column width
+  let measureKey = "";
+  let wheelExtent = 0; // px from the screen edge covered by the clearly visible lines
+  let rowEls = []; // .cue rows by cue index
+  const wheel = { pos: 0, v: 0, f: 0, fv: 0, raf: 0, last: 0, synced: false, styled: new Set() };
+
+  /**
+   * Width of the widest line of cue `i` as wrapped in the column (lines are balanced, so this is tight).
+   * The current line is emphasised only with paint (outline, glow, scale), never a heavier font: a
+   * different weight would wrap it differently and make the list jump when it becomes current.
+   */
+  function textWidth(i, avail) {
+    let w = measured.get(i);
+    if (w !== undefined) return w;
+    const m = ui.measure;
+    m.style.width = `${avail}px`;
+    cueText(m, cues[i]);
+    const box = m.getBoundingClientRect();
+    // Rects are on screen; the ratio undoes any scale an ancestor animation applies.
+    const unit = box.width ? m.offsetWidth / box.width : 1;
+    const range = document.createRange();
+    range.selectNodeContents(m);
+    w = 0;
+    for (const r of range.getClientRects()) w = Math.max(w, (r.right - box.left) * unit);
+    w = Math.min(avail, Math.ceil(w) + 1);
+    measured.set(i, w);
+    return w;
+  }
+
+  function syncScroll(box, H) {
+    wheel.synced = true;
+    const want = wheel.pos - H / 2;
+    if (Math.abs(box.scrollTop - want) < 0.5) return;
+    programmatic = Date.now();
+    box.scrollTop = want;
+  }
+
+  /** Critically damped spring step: no overshoot, and velocity carries over when the target moves. */
+  function spring(x, v, target, dt, omega) {
+    const d = x - target;
+    const e = Math.exp(-omega * dt);
+    const tmp = (v + omega * d) * dt;
+    return [target + (d + tmp) * e, (v - omega * tmp) * e];
+  }
+
+  const centerOf = (row) => row.offsetTop + row.offsetHeight / 2;
+  const wheelTarget = () => {
+    const row = rowEls[current] ?? rowEls[0];
+    return row ? centerOf(row) : wheel.pos;
+  };
+
+  function clearWheelStyles() {
+    for (const r of wheel.styled) r.removeAttribute("style");
+    wheel.styled.clear();
+  }
+
+  /** Something the wheel depends on changed (current line, settings, size, selection): animate to it. */
   function applyWheel() {
-    for (const r of wheelRows) r.removeAttribute("style");
-    wheelRows.clear();
-    if (mode !== "full" || current < 0) return;
-    const away = settings?.side === "left" ? -1 : 1; // recede toward the screen edge
-    for (let d = -WHEEL_SPAN; d <= WHEEL_SPAN; d++) {
-      const row = rowOf(current + d);
-      if (!row) continue;
-      const a = Math.abs(d);
-      const x = d === 0 ? 0 : away * Math.min(360, 18 * a + 4 * a * a);
-      const o = d === 0 ? 1 : Math.max(0, 0.6 - 0.075 * a);
-      const s = d === 0 ? 1 : Math.max(0.74, 0.9 - 0.025 * a);
-      row.style.cssText = `--x:${x}px;--o:${o.toFixed(3)};--s:${s.toFixed(3)}`;
-      wheelRows.add(row);
+    if (mode !== "full") {
+      cancelAnimationFrame(wheel.raf);
+      wheel.raf = 0;
+      clearWheelStyles();
+      wheelExtent = 0;
+      ui.veil.style.removeProperty("--vw");
+      return;
     }
+    if (wheel.raf) return;
+    wheel.last = performance.now();
+    wheel.raf = requestAnimationFrame(wheelFrame);
+  }
+
+  /** Put the drum on the current line at once (layout change, entering fullscreen). */
+  function snapWheel() {
+    wheel.pos = wheelTarget();
+    wheel.v = 0;
+    wheel.f = wheel.fv = 0;
+    if (flat) wheel.f = 1;
+    applyWheel();
+  }
+
+  function wheelFrame(now) {
+    wheel.raf = 0;
+    if (mode !== "full") return applyWheel();
+    if (!rowEls.length) return clearWheelStyles();
+    const dt = Math.min(0.05, Math.max(0.001, (now - wheel.last) / 1000));
+    wheel.last = now;
+    const box = ui.cues;
+    const H = box.clientHeight;
+    if (!H) return; // the subtitle list is hidden (Q&A view); resume when it shows
+    const fTarget = flat ? 1 : 0;
+    [wheel.f, wheel.fv] = spring(wheel.f, wheel.fv, fTarget, dt, 17);
+    let target = wheel.pos;
+    let rolled = false;
+    if (fTarget === 1) {
+      // The list is open: line up the scroll with the drum once, then the learner scrolls and the drum follows.
+      if (!wheel.synced) syncScroll(box, H);
+      wheel.pos = box.scrollTop + H / 2;
+      wheel.v = 0;
+    } else {
+      target = wheelTarget();
+      [wheel.pos, wheel.v] = spring(wheel.pos, wheel.v, target, dt, 11);
+      rolled = Math.abs(wheel.pos - target) < 0.3 && Math.abs(wheel.v) < 2;
+      // The drum rolls by transforms alone; scrolling every frame costs a repaint of the whole strip.
+      // The scroll position catches up once the drum stops, so the list opens where the wheel is.
+      if (rolled) syncScroll(box, H);
+      else wheel.synced = false;
+    }
+    const top = box.scrollTop + H / 2; // the viewport centre in list coordinates, as scrolled
+    const f = Math.min(1, Math.max(0, wheel.f));
+    const settled = Math.abs(wheel.f - fTarget) < 0.002 && Math.abs(wheel.fv) < 0.02 && (fTarget === 1 || rolled);
+
+    if (settled && fTarget === 1) {
+      // Fully open: plain CSS takes over (hover, selection), nothing per line.
+      wheel.f = 1;
+      clearWheelStyles();
+      return;
+    }
+
+    const probe = rowEls[current] ?? rowEls[0];
+    const text = probe.querySelector(".tx");
+    const avail = text.clientWidth;
+    const rowW = probe.offsetWidth;
+    const cs = getComputedStyle(probe);
+    const pl = parseFloat(cs.paddingLeft) || 0;
+    // Annotations change how wide a line is: their size is part of the key.
+    const key = `${avail}|${cs.fontSize}|${settings.rubySize}|${settings.rubyPosition}`;
+    if (key !== measureKey) {
+      measureKey = key;
+      measured.clear();
+    }
+    const st = settings;
+    const R = (H * st.wheelRadius) / 100; // drum radius
+    const P = R * 2.4; // viewing distance
+    const edge = st.wheelEdge;
+    const right = st.side !== "left";
+    const lo = st.listOpacity / 100;
+    const reach = Math.max(R * 1.5, H / 2 + 80); // every line on screen, wheel or list
+
+    // First row whose centre is past pos − reach (rows are in order).
+    let a = 0;
+    let b = rowEls.length - 1;
+    while (a < b) {
+      const mid = (a + b) >> 1;
+      if (centerOf(rowEls[mid]) < wheel.pos - reach) a = mid + 1;
+      else b = mid;
+    }
+    // Read and measure everything first, then write: interleaving would force a layout per line.
+    const out = [];
+    let extent = 0;
+    for (let i = a; i < rowEls.length; i++) {
+      const row = rowEls[i];
+      const yc = centerOf(row);
+      const s = yc - wheel.pos;
+      if (s > reach) break;
+      const isCur = i === current;
+      const raw = s / R;
+      const th = Math.max(-1.5, Math.min(1.5, raw));
+      const cos = Math.cos(th);
+      const kp = P / (P - R * (cos - 1)); // perspective shrink of a point sunk to R·(cos−1)
+      const ys = R * Math.sin(th) * kp; // where the drum puts it, from the viewport centre
+      const k = (isCur ? 1 : st.wheelSize / 100) * kp;
+      const push = ((1 - cos) * avail * st.wheelBend) / 100; // the rim also bends toward the screen edge
+      const w = textWidth(i, avail);
+      // transform-origin is the row's left centre: put the end (right side) or start (left side) of the text at the edge.
+      const txW = right ? rowW - edge + push - k * (pl + w) : edge - push - k * pl;
+      // Every other line is dimmed (grey, not just transparent), so the current one stands out on any frame.
+      let oW = isCur ? 1 : Math.abs(raw) > 1.5 ? 0 : (st.wheelOpacity / 100) * cos ** 2.2;
+      if (row.classList.contains("sel")) oW = Math.max(oW, 0.92);
+      const blurW = isCur ? 0 : st.wheelBlur * Math.min(1, 0.08 + 1.2 * (1 - cos));
+      const dimW = isCur ? 1 : (st.wheelDim / 100) * (1 - 0.32 * (1 - cos));
+      const oF = isCur || row.classList.contains("sel") ? 1 : lo;
+      // Blend wheel → list by f.
+      const g = 1 - f;
+      const tx = txW * g;
+      const dy = (ys - (yc - top)) * g;
+      const sc = k + (1 - k) * f;
+      const deg = ((-th * 180) / Math.PI) * g;
+      const o = oW + (oF - oW) * f;
+      const blur = blurW * g;
+      const dim = dimW + (1 - dimW) * f;
+      out.push([row, tx, dy, sc, deg, o, blur, dim]);
+      if (oW > 0.3) extent = Math.max(extent, edge - push + k * w);
+    }
+    const seen = new Set();
+    const per = Math.round(P);
+    for (const [row, tx, dy, sc, deg, o, blur, dim] of out) {
+      const rs = row.style;
+      rs.transition = "none";
+      rs.transform = `translate(${tx.toFixed(2)}px,${dy.toFixed(2)}px) scale(${sc.toFixed(4)}) perspective(${per}px) rotateX(${deg.toFixed(2)}deg)`;
+      rs.opacity = o.toFixed(3);
+      rs.filter = blur > 0.05 || dim < 0.995 ? `blur(${blur.toFixed(2)}px) brightness(${dim.toFixed(3)})` : "none";
+      rs.setProperty("--so", f.toFixed(3)); // end buttons fade in with the list
+      rs.setProperty("--bar", f.toFixed(3)); // the current-line marker of the list
+      rs.setProperty("--ul", (1 - f).toFixed(3)); // the Q&A underline of the wheel
+      seen.add(row);
+    }
+    for (const r of wheel.styled) if (!seen.has(r)) r.removeAttribute("style");
+    wheel.styled = seen;
+
+    if (fTarget === 0 && Math.abs(extent - wheelExtent) > 2) {
+      wheelExtent = extent;
+      // On the veil only: a custom property on the panel would restyle every line of the subtitle.
+      ui.veil.style.setProperty("--vw", `${Math.round(extent)}px`);
+    }
+    if (!settled) wheel.raf = requestAnimationFrame(wheelFrame);
   }
 
   function syncFlat() {
-    const next = mode === "full" && (hot || !!drag);
+    const next = mode === "full" && (hot || !!drag) && !tuning();
     if (next === flat) return;
     flat = next;
     ui.panel.classList.toggle("flat", flat);
+    applyWheel();
   }
 
   function renderCues() {
     ui.cues.textContent = "";
     current = -1;
     selection = null;
-    wheelRows.clear();
+    clearWheelStyles();
+    rowEls = [];
+    measured.clear();
+    overlayCue = -2;
     if (!cues.length) {
       ui.cues.append(
         el(
@@ -368,7 +592,7 @@
           "div",
           { class: "cue", "data-i": i },
           el("span", { class: "t", text: fmt(c.start) }),
-          el("span", { class: "tx", text: c.text }),
+          cueText(el("span", { class: "tx" }), c),
           el(
             "span",
             { class: "side" },
@@ -379,9 +603,9 @@
       );
     });
     ui.cues.append(frag);
+    rowEls = [...ui.cues.children];
     renderMarks();
     updateCurrent();
-    applyWheel();
     centerCurrent(false);
     renderFoot();
   }
@@ -500,14 +724,16 @@
   // ---------- selection, dock and composer ----------
   function renderSelection() {
     for (const row of ui.cues.querySelectorAll(".cue.sel")) row.classList.remove("sel", "sel-a", "sel-b");
-    if (!selection) return;
-    for (let i = selection.a; i <= selection.b; i++) {
-      const row = rowOf(i);
-      if (!row) continue;
-      row.classList.add("sel");
-      if (i === selection.a) row.classList.add("sel-a");
-      if (i === selection.b) row.classList.add("sel-b");
+    if (selection) {
+      for (let i = selection.a; i <= selection.b; i++) {
+        const row = rowOf(i);
+        if (!row) continue;
+        row.classList.add("sel");
+        if (i === selection.a) row.classList.add("sel-a");
+        if (i === selection.b) row.classList.add("sel-b");
+      }
     }
+    applyWheel(); // selected lines stay readable on the wheel
   }
 
   function select(a, b = a) {
@@ -631,7 +857,7 @@
   function updateFootVisibility() {
     const inFoot = root.activeElement && ui.foot.contains(root.activeElement);
     const running = dockThreads().some((t) => t.status === "running");
-    const show = mode === "side" || hot || !!inFoot || !!ui.ta.value.trim() || !!pending || running || (dockPinned && ui.dock.classList.contains("show"));
+    const show = mode === "side" || (hot && !tuning()) || !!inFoot || !!ui.ta.value.trim() || !!pending || running || (dockPinned && ui.dock.classList.contains("show"));
     ui.foot.classList.toggle("show", show);
   }
 
@@ -785,7 +1011,15 @@
 
   ui.cues.addEventListener("wheel", markUserScroll, { passive: true });
   ui.cues.addEventListener("touchmove", markUserScroll, { passive: true });
-  ui.cues.addEventListener("scroll", () => updateThumb(), { passive: true });
+  ui.cues.addEventListener(
+    "scroll",
+    () => {
+      updateThumb();
+      // The wheel owns the scroll position; a stray scroll (Settings open) rolls back to the current line.
+      if (mode === "full" && !flat && Date.now() - programmatic > 100) applyWheel();
+    },
+    { passive: true },
+  );
   ui.qa.addEventListener("scroll", () => updateThumb(), { passive: true });
 
   // ---------- hover: decided by geometry, so the rail, gaps and the foot all count as "inside" ----------
@@ -800,6 +1034,11 @@
     if (sheet) parts.push(ui.sheet);
     const rects = parts.map((n) => n.getBoundingClientRect()).filter((r) => r.width);
     if (!rects.length) return false;
+    // At rest only the lines themselves count, not the whole column: the video beside them stays usable.
+    if (!hot && view === "cues" && wheelExtent) {
+      const b = rects[0];
+      rects[0] = { left: b.right - wheelExtent - 40, right: b.left + wheelExtent + 40, width: 1 };
+    }
     // The whole strip at the screen edge, from the leftmost part to the edge.
     if (settings.side === "right") return x >= Math.min(...rects.map((r) => r.left)) - 16;
     return x <= Math.max(...rects.map((r) => r.right)) + 16;
@@ -832,7 +1071,9 @@
     if (!on && following()) centerCurrent(true);
   }
 
+  let lastPointer = null;
   const onPointerMove = (e) => {
+    lastPointer = { x: e.clientX, y: e.clientY };
     if (drag) return;
     setHot(inZone(e.clientX, e.clientY));
   };
@@ -1000,8 +1241,11 @@
     if (name === "subs") send({ type: "files" });
     const r = ui.controls.getBoundingClientRect();
     ui.sheet.style.top = `${Math.round(r.bottom + 8)}px`;
+    // Fullscreen Settings sit beside the wheel. Kept after closing, so the sheet fades out where it was.
+    ui.sheet.classList.toggle("beside", mode === "full" && (name === "settings" || back === "settings"));
     renderSheet(dir || "in");
     ui.sheet.classList.add("open");
+    syncTuning();
     if (name === "subs") subs.input?.focus({ preventScroll: true });
   }
   function closeSheet() {
@@ -1011,6 +1255,20 @@
     ui.sheet.classList.remove("open");
     ui.ccBtn.classList.remove("active");
     ui.setBtn.classList.remove("active");
+    // The sheet counted as part of the strip. If the pointer is now outside, leave at once rather than
+    // opening the list for the usual exit delay.
+    if (hot && lastPointer && !inZone(lastPointer.x, lastPointer.y)) {
+      clearTimeout(hotTimer);
+      hotTimer = 0;
+      applyHot(false);
+    }
+    syncTuning();
+  }
+  function syncTuning() {
+    ui.panel.classList.toggle("tuning", tuning());
+    syncFlat();
+    updateFootVisibility();
+    placeOverlay();
   }
   ui.ccBtn.addEventListener("click", () => (sheet === "subs" ? closeSheet() : openSheet("subs")));
   ui.setBtn.addEventListener("click", () => (sheet === "settings" ? closeSheet() : openSheet("settings")));
@@ -1052,6 +1310,7 @@
     );
   };
   const row = (label, control) => el("div", { class: "s-row" }, el("span", { class: "s-label", text: label }), control);
+  const resetRow = (label, keys) => el("button", { class: "s-row link", "data-act": "reset", "data-keys": keys.join(",") }, el("span", { class: "s-label accent", text: label }));
   const group = (title, ...rows) => el("section", { class: "group" }, title ? el("h4", { text: title }) : null, el("div", { class: "rows" }, rows));
   const sheetHead = (title, ...extra) =>
     el(
@@ -1086,8 +1345,26 @@
           "Subtitles",
           el("button", { class: "s-row link", "data-act": "subs" }, el("span", { class: "s-label", text: "File" }), el("span", { class: "s-value", text: subtitle ? subtitle.path.split("/").pop() : "Off" }), icon("chevron")),
           row("Hide site captions", sw("hideNative")),
-          row("Line on the video", sw("overlay")),
-          row("Video line size", stepper("overlayFontSize", 2)),
+        ),
+        group(
+          "Annotations",
+          row("Position", segmented("rubyPosition", [["under", "Below"], ["over", "Above"]])),
+          row("Size (% of the text)", stepper("rubySize", 5)),
+          row("Opacity (%)", stepper("rubyOpacity", 5)),
+          resetRow("Reset the annotation style", RUBY_KEYS),
+        ),
+        group(
+          "Line on the video",
+          row("Show (side panel or panel hidden)", sw("overlay")),
+          row("Text size", stepper("overlayFontSize", 2)),
+          row("Weight", stepper("overlayWeight", 100)),
+          row("Background (%)", stepper("overlayBg", 5)),
+          row("Background blur (px)", stepper("overlayBlur", 2)),
+          row("Text shadow (%)", stepper("overlayShadow", 10)),
+          row("Corner radius (px)", stepper("overlayRadius", 2)),
+          row("Height above the bottom (%)", stepper("overlayBottom", 1)),
+          row("Widest (% of the video)", stepper("overlayWidth", 2)),
+          resetRow("Reset the video line style", OVERLAY_KEYS),
         ),
         group(
           "Side panel",
@@ -1096,6 +1373,20 @@
           row("Line spacing", stepper("lineHeight", 0.1, 1)),
         ),
         group("Fullscreen", row("Width (% of screen)", stepper("fullWidth", 1)), row("Text size", stepper("fullFontSize", 2))),
+        group(
+          "Fullscreen wheel",
+          row("Wheel radius (% of height)", stepper("wheelRadius", 2)),
+          row("Bend toward the edge (%)", stepper("wheelBend", 2)),
+          row("Gap to the edge (px)", stepper("wheelEdge", 2)),
+          row("Other lines: size (%)", stepper("wheelSize", 2)),
+          row("Other lines: brightness (%)", stepper("wheelDim", 4)),
+          row("Other lines: opacity (%)", stepper("wheelOpacity", 4)),
+          row("Other lines: blur (px)", stepper("wheelBlur", 0.2, 1)),
+          row("Current line: glow (%)", stepper("wheelGlow", 5)),
+          row("Current line: weight (px)", stepper("wheelBold", 0.1, 1)),
+          row("Open list: other lines (%)", stepper("listOpacity", 5)),
+          resetRow("Reset the wheel style", WHEEL_KEYS),
+        ),
         group(
           "Layout",
           row("Side", segmented("side", [["left", "Left"], ["right", "Right"]])),
@@ -1325,12 +1616,21 @@
     const file = e.target.closest(".f-row[data-path]");
     if (file) return chooseSubtitle(file.dataset.path);
     if (e.target.closest('[data-act="subs"]')) return openSheet("subs", "settings");
+    const reset = e.target.closest('[data-act="reset"]');
+    if (reset) {
+      if (defaults) changeSettings(Object.fromEntries(reset.dataset.keys.split(",").map((k) => [k, defaults[k]])));
+      return;
+    }
     const b = e.target.closest("[data-set]");
     if (!b || !settings) return;
     const key = b.dataset.set;
     if (b.dataset.toggle) changeSettings({ [key]: !settings[key] });
     else if (b.dataset.value) changeSettings({ [key]: b.dataset.value });
-    else if (b.dataset.step) changeSettings({ [key]: Math.round((settings[key] + Number(b.dataset.step)) * 10) / 10 });
+    else if (b.dataset.step) {
+      const [min, max] = limits?.[key] ?? [-Infinity, Infinity];
+      const next = Math.min(max, Math.max(min, Math.round((settings[key] + Number(b.dataset.step)) * 10) / 10));
+      if (next !== settings[key]) changeSettings({ [key]: next });
+    }
   });
 
   // A press anywhere else in the panel closes the sheet; so does one on the page.
@@ -1348,12 +1648,27 @@
     if (!settings) return;
     const s = settings;
     const p = ui.panel;
+    p.style.setProperty("--wg", String(s.wheelGlow / 100));
+    p.style.setProperty("--wb", `${s.wheelBold}px`);
+    p.style.setProperty("--lo", String(s.listOpacity / 100));
     p.style.setProperty("--w", `${s.width}px`);
     p.style.setProperty("--fs", `${s.fontSize}px`);
     p.style.setProperty("--ffs", `${s.fullFontSize}px`);
     p.style.setProperty("--fwv", String(s.fullWidth));
     p.style.setProperty("--lh", String(s.lineHeight));
-    ui.overlay.style.setProperty("--ofs", `${s.overlayFontSize}px`);
+    // Annotations (ruby) appear in the list, the wheel and the line on the video, which sits outside the panel.
+    for (const st of [p.style, ui.overlay.style]) {
+      st.setProperty("--rtp", s.rubyPosition);
+      st.setProperty("--rts", `${s.rubySize / 100}em`);
+      st.setProperty("--rto", String(s.rubyOpacity / 100));
+    }
+    const o = ui.overlay.style;
+    o.setProperty("--ofs", `${s.overlayFontSize}px`);
+    o.setProperty("--obg", String(s.overlayBg / 100));
+    o.setProperty("--oblur", `${s.overlayBlur}px`);
+    o.setProperty("--ow", String(s.overlayWeight));
+    o.setProperty("--osh", String(s.overlayShadow / 100));
+    o.setProperty("--orad", `${s.overlayRadius}px`);
     for (const node of [p, ui.reopen, ui.toast]) {
       node.dataset.theme = mode === "full" ? "dark" : s.theme;
       node.dataset.side = s.side;
@@ -1392,7 +1707,12 @@
     applySettings();
     if (sheet === "settings") renderSheet();
     send({ type: "settings", settings });
-    if (["fontSize", "fullFontSize", "fullWidth", "width", "lineHeight", "collapsed"].some((k) => k in patch)) requestAnimationFrame(() => centerCurrent(false));
+    if (["fontSize", "fullFontSize", "fullWidth", "width", "lineHeight", "collapsed", "side", ...WHEEL_KEYS, ...RUBY_KEYS].some((k) => k in patch)) {
+      requestAnimationFrame(() => {
+        centerCurrent(false);
+        applyWheel();
+      });
+    }
   }
 
   /** Fullscreen, or a player that fills the window (web fullscreen), switches to the wheel layout. */
@@ -1421,7 +1741,8 @@
 
   function placeOverlay() {
     const span = ui.overlay.firstChild;
-    const on = settings?.overlay && cues.length && video && !inAd() && span.textContent && (mode === "side" || settings.collapsed);
+    // Fullscreen shows it with the panel hidden, and while Settings are open so its style can be tuned.
+    const on = settings?.overlay && cues.length && video && !inAd() && span.textContent && (mode === "side" || settings.collapsed || tuning());
     ui.overlay.hidden = !on;
     if (!on) return;
     const r = video.getBoundingClientRect();
@@ -1430,8 +1751,8 @@
       return;
     }
     ui.overlay.style.left = `${r.left + r.width / 2}px`;
-    ui.overlay.style.bottom = `${Math.max(8, window.innerHeight - r.bottom + r.height * 0.07)}px`;
-    ui.overlay.style.maxWidth = `${Math.round(r.width * 0.86)}px`;
+    ui.overlay.style.bottom = `${Math.max(8, window.innerHeight - r.bottom + (r.height * settings.overlayBottom) / 100)}px`;
+    ui.overlay.style.maxWidth = `${Math.round((r.width * settings.overlayWidth) / 100)}px`;
   }
 
   let toastTimer;
@@ -1575,6 +1896,7 @@
   const onResize = () => {
     placeOverlay();
     renderRail();
+    if (mode === "full") requestAnimationFrame(applyWheel);
   };
   window.addEventListener("resize", onResize);
 
@@ -1598,6 +1920,8 @@
       case "init":
         meta = msg.meta;
         settings = msg.settings;
+        defaults = msg.defaults || null;
+        limits = msg.limits || null;
         files = msg.files || [];
         filesRoot = msg.filesRoot || "";
         subtitle = msg.subtitle || null;
