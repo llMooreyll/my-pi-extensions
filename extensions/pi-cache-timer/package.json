@@ -1,0 +1,22 @@
+{
+  "name": "pi-cache-timer",
+  "version": "0.1.0",
+  "description": "Prompt-cache countdown on the editor border and a compact-before-send prompt when a large cached context has expired",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "prompt-cache"
+  ],
+  "author": "llMooreyll",
+  "license": "GPL-3.0-or-later",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
