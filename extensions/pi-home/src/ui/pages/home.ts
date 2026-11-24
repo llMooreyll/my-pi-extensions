@@ -1,19 +1,29 @@
-import { existsSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import { matchesKey } from "@earendil-works/pi-tui";
 import { DAY_MS, listProjects, mainModel, type Project, sessionTitle, startOfDay, totalTokens } from "../../index/query.ts";
 import type { SessionRecord } from "../../index/types.ts";
 import { liveSessions } from "../../index/actions.ts";
 import { type LaunchTarget, targetArgs } from "../../launch/args.ts";
-import { tildify } from "../../paths.ts";
+import { formatDirInput, projectsRoot, tildify } from "../../paths.ts";
 import type { Surface } from "../../term/canvas.ts";
 import { truncate } from "../../term/width.ts";
 import type { App, Page } from "../app.ts";
 import { BIG_HEIGHT, bigTextScale, bigTextWidth, drawBigText } from "../bigtext.ts";
 import { fmtAgo, fmtCost, fmtTokens, shortModel } from "../format.ts";
-import { ConfirmModal, keyValues, ListView, PromptModal, progressBar, section, selectRow } from "../widgets.ts";
+import { makeDirectory, PathPickerModal } from "../path-picker.ts";
+import { ConfirmModal, keyValues, ListView, progressBar, PromptModal, section, selectRow, TextInput } from "../widgets.ts";
 
 type Focus = "projects" | "sessions";
+type HomeProject = Project & { temporary?: boolean };
+
+function realPathOrSelf(p: string): string {
+	try {
+		return realpathSync(p);
+	} catch {
+		return resolve(p);
+	}
+}
 
 /**
  * Hooks installed by the profile layer (docs/tasks/B-profile.md step B4). Without them pi-home
@@ -45,9 +55,17 @@ export class HomePage implements Page {
 	private focus: Focus = "projects";
 	private readonly projList = new ListView();
 	private readonly sessList = new ListView();
-	private projects: Project[] = [];
+	/** Projects shown in the list: `allProjects` narrowed by the search box. */
+	private projects: HomeProject[] = [];
+	private allProjects: HomeProject[] = [];
+	private launchProjectCwd = "";
+	private readonly search = new TextInput();
+	private searchFocused = false;
 	private sessions: SessionRecord[] = [];
 	private rev = -1;
+	private readonly launchCwd = resolve(process.cwd());
+	private readonly launchRealCwd = realPathOrSelf(this.launchCwd);
+	private userMovedSelection = false;
 
 	private readonly app: App;
 
@@ -65,15 +83,49 @@ export class HomePage implements Page {
 		if (this.rev === idx.revision) return;
 		this.rev = idx.revision;
 		const prevCwd = this.projects[this.projList.selected]?.cwd;
-		this.projects = listProjects(idx.records.values(), this.app.config.pinnedProjects);
-		if (prevCwd) {
-			const i = this.projects.findIndex((p) => p.cwd === prevCwd);
-			if (i >= 0) this.projList.selected = i;
-		} else {
-			// Start on the project pi-home was launched from, if known.
-			const i = this.projects.findIndex((p) => p.cwd === process.cwd());
-			if (i >= 0) this.projList.selected = i;
+		const projects: HomeProject[] = listProjects(idx.records.values(), this.app.config.pinnedProjects);
+		let launchIdx = projects.findIndex((p) => p.cwd === this.launchCwd);
+		if (launchIdx < 0) launchIdx = projects.findIndex((p) => realPathOrSelf(p.cwd) === this.launchRealCwd);
+		if (launchIdx < 0) {
+			const temp: HomeProject = {
+				cwd: this.launchCwd,
+				name: basename(this.launchCwd) || this.launchCwd,
+				sessions: 0,
+				lastActivity: 0,
+				cost: 0,
+				cost7d: 0,
+				exists: existsSync(this.launchCwd),
+				pinned: false,
+				spark: new Array(14).fill(0),
+				temporary: true,
+			};
+			const firstUnpinned = projects.findIndex((p) => !p.pinned);
+			const insertAt = firstUnpinned < 0 ? projects.length : firstUnpinned;
+			projects.splice(insertAt, 0, temp);
+			launchIdx = insertAt;
 		}
+		this.allProjects = projects;
+		this.launchProjectCwd = projects[launchIdx]!.cwd;
+		const keep = this.userMovedSelection && prevCwd ? prevCwd : this.launchProjectCwd;
+		this.applyFilter(keep, this.projList.selected);
+	}
+
+	/**
+	 * Narrow the list to projects whose name or path contains every whitespace-separated search token
+	 * (session titles and file names are not searched), then select `preferCwd`, else `fallback`.
+	 */
+	private applyFilter(preferCwd: string | undefined, fallback: number): void {
+		const tokens = this.search.value.toLowerCase().split(/\s+/).filter(Boolean);
+		this.projects = tokens.length
+			? this.allProjects.filter((p) => {
+					const hay = `${p.name}\n${tildify(p.cwd)}`.toLowerCase();
+					return tokens.every((t) => hay.includes(t));
+				})
+			: this.allProjects;
+		let i = preferCwd ? this.projects.findIndex((p) => p.cwd === preferCwd) : -1;
+		if (i < 0) i = fallback;
+		this.projList.selected = Math.max(0, Math.min(this.projects.length - 1, i));
+		this.lastSel = this.projList.selected;
 		this.loadSessions();
 	}
 
@@ -86,7 +138,7 @@ export class HomePage implements Page {
 			: [];
 	}
 
-	private get project(): Project | undefined {
+	private get project(): HomeProject | undefined {
 		return this.projects[this.projList.selected];
 	}
 
@@ -109,14 +161,31 @@ export class HomePage implements Page {
 	}
 
 	private openPath(): void {
+		const known = new Map<string, number>();
+		for (const p of this.allProjects) {
+			if (!p.temporary && p.exists) known.set(p.cwd, p.sessions);
+		}
 		this.app.modal(
-			new PromptModal("OPEN_DIRECTORY", `${tildify(process.cwd())}/`, (value) => {
-				const p = resolve(value.replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
-				if (!existsSync(p) || !statSync(p).isDirectory()) {
-					this.app.toast(`not a directory: ${value}`, "error");
-					return;
+			new PathPickerModal({
+				initialDir: this.launchCwd,
+				knownProjects: known,
+				onSelect: (cwd) => launchTarget(this.app, { kind: "new", cwd }, null),
+			}),
+		);
+	}
+
+	/** Create a project folder (default ~/Projects/<name>) and open a new pi session in it. */
+	private newProject(): void {
+		const root = projectsRoot();
+		this.app.modal(
+			new PromptModal("NEW_PROJECT", formatDirInput(root), (value) => {
+				try {
+					const cwd = makeDirectory(root, value);
+					if (cwd === root) throw new Error("enter a project name after the path");
+					launchTarget(this.app, { kind: "new", cwd }, null);
+				} catch (e) {
+					this.app.toast(`new project failed: ${e instanceof Error ? e.message : String(e)}`, "error");
 				}
-				launchTarget(this.app, { kind: "new", cwd: p }, null);
 			}),
 		);
 	}
@@ -147,14 +216,70 @@ export class HomePage implements Page {
 		homeHooks.editProfile(this.app, { kind: "new", cwd: p.cwd }, null);
 	}
 
+	captureText(): boolean {
+		return this.searchFocused;
+	}
+
+	paste(text: string): boolean {
+		if (!this.searchFocused) return false;
+		this.search.insert(text);
+		this.onSearchChanged();
+		return true;
+	}
+
+	private onSearchChanged(): void {
+		this.userMovedSelection = true;
+		this.projList.scroll = 0;
+		this.sessList.selected = 0;
+		this.applyFilter(undefined, 0);
+	}
+
+	/** Drop the filter but stay on the project that is currently selected. */
+	private clearSearch(): void {
+		const keep = this.project?.cwd;
+		this.search.set("");
+		this.applyFilter(keep, 0);
+	}
+
+	/** Returns false when focus went back to the list, so the caller handles the key as list navigation. */
+	private searchKey(data: string): boolean {
+		if (matchesKey(data, "escape")) {
+			this.searchFocused = false;
+			this.clearSearch();
+			return true;
+		}
+		if (matchesKey(data, "enter")) {
+			this.searchFocused = false;
+			return true;
+		}
+		if (matchesKey(data, "up") || matchesKey(data, "down")) {
+			this.searchFocused = false;
+			return false;
+		}
+		if (this.search.key(data)) this.onSearchChanged();
+		return true;
+	}
+
 	hints(): string {
-		return this.focus === "projects"
-			? "enter new session  c continue  e profile  o open path  p pin  l sessions  tab next tab  q quit"
-			: "j/k move  enter resume  f fork  e profile  h projects  q quit";
+		if (this.searchFocused) return "type to filter projects  ↑↓ move  enter apply  esc clear";
+		if (this.focus === "projects") {
+			return `enter new session  c continue  e profile  n new project  o open path  p pin  / search${this.search.value ? "  esc clear filter" : ""}  l sessions  tab next tab  q quit`;
+		}
+		return "j/k move  enter resume  f fork  e profile  h projects  q quit";
 	}
 
 	key(data: string): boolean {
 		this.refresh();
+		if (this.searchFocused && this.searchKey(data)) return true;
+		if (data === "/") {
+			this.searchFocused = true;
+			this.focus = "projects";
+			return true;
+		}
+		if (matchesKey(data, "escape") && this.search.value) {
+			this.clearSearch();
+			return true;
+		}
 		if (matchesKey(data, "right")) {
 			if (this.sessions.length) this.focus = "sessions";
 			return true;
@@ -164,7 +289,7 @@ export class HomePage implements Page {
 			return true;
 		}
 		if (data === "c") return this.continueLatest(), true;
-		if (data === "n") return this.newSession(), true;
+		if (data === "n") return this.newProject(), true;
 		if (data === "o") return this.openPath(), true;
 		if (data === "p") return this.togglePin(), true;
 		if (data === "e") return this.editProfile(), true;
@@ -176,6 +301,8 @@ export class HomePage implements Page {
 			const before = this.projList.selected;
 			const used = this.projList.key(data, this.projects.length);
 			if (this.projList.selected !== before) {
+				this.userMovedSelection = true;
+				this.lastSel = this.projList.selected;
 				this.sessList.selected = 0;
 				this.loadSessions();
 			}
@@ -206,7 +333,10 @@ export class HomePage implements Page {
 				y += BIG_HEIGHT + 2;
 			}
 		}
-		y = section(left, 0, y, left.w, "PROJECTS", pal, `${this.projects.length}`);
+		const filtering = this.search.value.trim() !== "";
+		y = section(left, 0, y, left.w, "PROJECTS", pal, filtering ? `${this.projects.length}/${this.allProjects.length}` : `${this.projects.length}`);
+		this.drawSearch(left, y, app);
+		y += 1;
 		const listBox = left.sub(0, y, left.w, left.h - y);
 		const focusedP = this.focus === "projects";
 		listBox.box(0, 0, listBox.w, listBox.h, { fg: focusedP ? pal.p70 : pal.p25 }, "single");
@@ -215,15 +345,18 @@ export class HomePage implements Page {
 			const active = sel && focusedP;
 			if (active) selectRow(row, pal);
 			const st = active ? pal.sel : p.exists ? pal.text : pal.dim;
-			const mark = p.pinned ? "*" : " ";
+			const mark = p.pinned ? "*" : p.temporary ? "+" : " ";
 			row.text(0, 0, `${active ? ">" : sel ? "›" : " "}${mark}`, st);
-			const right = `${p.sessions} · ${fmtAgo(p.lastActivity)}`;
+			const right = p.temporary ? "temp · new" : p.lastActivity > 0 ? `${p.sessions} · ${fmtAgo(p.lastActivity)}` : `${p.sessions} · never`;
 			row.text(3, 0, truncate(p.name, row.w - right.length - 5), st);
 			row.textIn(0, 0, row.w, right, active ? pal.sel : pal.dim, "right");
 		});
+		if (this.projects.length === 0) listBox.text(2, 1, "no matching projects", pal.dim);
 		listBox.hit(0, 0, listBox.w, listBox.h, { onClick: () => (this.focus = "projects") });
 		if (this.projList.selected !== this.lastSel) {
 			this.lastSel = this.projList.selected;
+			this.userMovedSelection = true;
+			this.sessList.selected = 0;
 			this.loadSessions();
 		}
 
@@ -233,6 +366,20 @@ export class HomePage implements Page {
 	}
 
 	private lastSel = -1;
+
+	private drawSearch(s: Surface, y: number, app: App): void {
+		const pal = app.pal;
+		const w = Math.max(1, s.w - 2);
+		s.text(0, y, "/", this.searchFocused ? pal.strong : pal.dim);
+		s.fill(2, y, w, 1, { bg: pal.panelBg });
+		this.search.draw(s, 2, y, w, { fg: pal.p100, bg: pal.panelBg }, this.searchFocused, pal.sel, "filter projects…");
+		s.hit(0, y, s.w, 1, {
+			onClick: () => {
+				this.searchFocused = true;
+				this.focus = "projects";
+			},
+		});
+	}
 
 	private drawRight(s: Surface, app: App): void {
 		const pal = app.pal;

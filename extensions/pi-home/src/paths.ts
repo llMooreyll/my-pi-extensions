@@ -24,5 +24,22 @@ export function tildify(p: string): string {
 	return p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p;
 }
 
+/** Where new project folders are created by default. */
+export const projectsRoot = (): string => join(homedir(), "Projects");
+
+/** Expand a leading ~ or ~/ using the user's home directory. */
+export function expandHome(p: string): string {
+	const h = homedir();
+	if (p === "~") return h;
+	if (p.startsWith("~/")) return join(h, p.slice(2));
+	return p;
+}
+
+/** Format a directory path for interactive editing, ending with a single slash. */
+export function formatDirInput(p: string): string {
+	const t = tildify(p);
+	return t.endsWith("/") ? t : `${t}/`;
+}
+
 /** Root of the pi-home package (two levels above this file). */
 export const packageRoot = (): string => resolve(import.meta.dirname, "..");
