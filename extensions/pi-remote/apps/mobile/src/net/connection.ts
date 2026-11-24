@@ -182,6 +182,9 @@ class Connection {
 export const connection = new Connection();
 
 export function call<K extends OpName>(op: K, args: OpArgs<K>, timeoutMs?: number): Promise<OpResult<K>> {
+  if (typeof window !== "undefined" && (window as any).__MOCK_OPS__?.[op]) {
+    return Promise.resolve((window as any).__MOCK_OPS__[op](args));
+  }
   return connection.request(op, args, timeoutMs);
 }
 

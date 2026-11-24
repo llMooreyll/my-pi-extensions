@@ -7,3 +7,5 @@ apps/mobile/ios/
 .playwright-mcp/
 *.apk
 relay-secret
+learning/
+docs/

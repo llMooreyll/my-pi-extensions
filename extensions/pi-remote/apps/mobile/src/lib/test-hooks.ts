@@ -82,6 +82,9 @@ let installed = false;
 export function installTestHooks(): void {
   if (!TEST_HOOKS || installed) return;
   installed = true;
+  if (typeof window !== "undefined") {
+    (window as any).__PIREMOTE_TEST__ = { handleTestUrl, registeredLabels, setters, actions, commands, dump: () => dumpProvider?.() };
+  }
   // URLs reach handleTestUrl through app/+native-intent.tsx (before the router sees them).
   testLog("ready", {});
 }

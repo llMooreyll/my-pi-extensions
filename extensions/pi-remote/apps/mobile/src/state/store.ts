@@ -160,3 +160,8 @@ export const store = {
     if (v) set({ views: { ...get().views, [pid]: { ...v, pendingUi: v.pendingUi.filter((u) => u.uiId !== uiId) } } });
   },
 };
+
+if (typeof window !== "undefined") {
+  (window as any).__PIREMOTE_STORE__ = useStore;
+  (window as any).__PIREMOTE_STORE_OBJ__ = store;
+}
